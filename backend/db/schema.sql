@@ -17,7 +17,7 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE asset_type AS ENUM ('image', 'icon', 'video', 'audio', 'illustration', 'font', 'template', 'background');
+    CREATE TYPE asset_type AS ENUM ('image', 'icon', 'video', 'audio', 'illustration', 'font', 'template', 'background', 'sticker', 'frame', 'other');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;

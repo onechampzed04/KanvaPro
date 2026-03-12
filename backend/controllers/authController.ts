@@ -16,7 +16,8 @@ export const register = async (req: Request, res: Response) => {
   const { email, password, name } = req.body;
 
   try {
-    const existingUser = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+    // 1. Sửa db.get -> db.getOne và ? -> $1
+    const existingUser = await db.getOne('SELECT * FROM users WHERE email = $1', [email]);
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
@@ -24,17 +25,19 @@ export const register = async (req: Request, res: Response) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const id = uuidv4();
 
-    await db.run(`
+    // 2. Sửa db.run -> db.execute và dùng $1, $2...
+    await db.execute(`
       INSERT INTO users (id, email, password_hash, name, is_verified)
-      VALUES (?, ?, ?, ?, false)
+      VALUES ($1, $2, $3, $4, false)
     `, [id, email, hashedPassword, name]);
 
     const otp = generateOtp();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await db.run(`
+    // Chú ý: Đảm bảo bạn đã có bảng otps trong Postgres
+    await db.execute(`
       INSERT INTO otps (user_id, code, type, expires_at)
-      VALUES (?, ?, 'registration', ?)
+      VALUES ($1, $2, 'registration', $3)
     `, [id, otp, expiresAt]);
 
     try {
@@ -54,9 +57,9 @@ export const verifyOtp = async (req: Request, res: Response) => {
   const { userId, otp, type } = req.body;
 
   try {
-    const otpRecord = await db.get(`
+    const otpRecord = await db.getOne(`
       SELECT * FROM otps 
-      WHERE user_id = ? AND code = ? AND type = ? AND expires_at > NOW()
+      WHERE user_id = $1 AND code = $2 AND type = $3 AND expires_at > NOW()
       ORDER BY created_at DESC LIMIT 1
     `, [userId, otp, type]);
 
@@ -65,25 +68,26 @@ export const verifyOtp = async (req: Request, res: Response) => {
     }
 
     if (type === 'registration') {
-      await db.run('UPDATE users SET is_verified = true WHERE id = ?', [userId]);
+      await db.execute('UPDATE users SET is_verified = true WHERE id = $1', [userId]);
     }
 
-    await db.run('DELETE FROM otps WHERE id = ?', [otpRecord.id]);
+    await db.execute('DELETE FROM otps WHERE id = $1', [otpRecord.id]);
 
-    const user: User = await db.get('SELECT id, email, name, role FROM users WHERE id = ?', [userId]);
+    const user: User = await db.getOne('SELECT id, email, name, role FROM users WHERE id = $1', [userId]);
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.cookie('token', token, { 
       httpOnly: true, 
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000 
     });
 
+    // 3. Sửa lỗi name: user.name (Thêm fallback || '')
     const userDto: UserDTO = {
       id: user.id,
       email: user.email,
-      name: user.name,
+      name: user.name || '', 
       role: user.role
     };
 
@@ -98,7 +102,7 @@ export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
   try {
-    const user: User = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+    const user: User = await db.getOne('SELECT * FROM users WHERE email = $1', [email]);
     if (!user) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
@@ -115,9 +119,9 @@ export const login = async (req: Request, res: Response) => {
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await db.run(`
+    await db.execute(`
       INSERT INTO otps (user_id, code, type, expires_at)
-      VALUES (?, ?, 'login', ?)
+      VALUES ($1, $2, 'login', $3)
     `, [user.id, otp, expiresAt]);
 
     try {
@@ -139,13 +143,13 @@ export const getMe = async (req: Request, res: Response) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
-    const user: User = await db.get('SELECT id, email, name, role FROM users WHERE id = ?', [decoded.id]);
+    const user: User = await db.getOne('SELECT id, email, name, role FROM users WHERE id = $1', [decoded.id]);
     if (!user) return res.status(401).json({ error: 'User not found' });
     
     const userDto: UserDTO = {
       id: user.id,
       email: user.email,
-      name: user.name,
+      name: user.name || '',
       role: user.role
     };
 

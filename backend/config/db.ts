@@ -1,59 +1,32 @@
 import { Pool } from 'pg';
-import dotenv from 'dotenv';
+import 'dotenv/config'; // Đảm bảo load env ngay tại đây
 
-dotenv.config();
+const connectionString = process.env.DATABASE_URL;
 
-// Database Interface
-export interface DBAdapter {
-  query(sql: string, params?: any[]): Promise<any[]>;
-  get(sql: string, params?: any[]): Promise<any>;
-  run(sql: string, params?: any[]): Promise<any>;
-  exec(sql: string): Promise<void>;
-  close(): Promise<void>;
-}
+const pool = new Pool({
+  connectionString,
+});
 
-// PostgreSQL Implementation
-class PostgresAdapter implements DBAdapter {
-  private pool: Pool;
+// Kiểm tra kết nối khi khởi động
+pool.on('connect', () => {
+  console.log('✅ Connected to PostgreSQL');
+});
 
-  constructor() {
-    const connectionString = process.env.DATABASE_URL || 'postgres://postgres:123123@localhost:5432/KanvaPro';
-    this.pool = new Pool({
-      connectionString,
-    });
-    console.log('PostgreSQL Adapter Initialized');
-  }
-
-  private normalizeSql(sql: string): string {
-    let i = 1;
-    return sql.replace(/\?/g, () => `$${i++}`);
-  }
-
-  async query(sql: string, params: any[] = []): Promise<any[]> {
-    const res = await this.pool.query(this.normalizeSql(sql), params);
-    return res.rows;
-  }
-
-  async get(sql: string, params: any[] = []): Promise<any> {
-    const res = await this.pool.query(this.normalizeSql(sql), params);
+export default {
+  // Dùng thuần query của pg
+  query: (text: string, params?: any[]) => pool.query(text, params),
+  
+  // Hàm tiện ích để lấy 1 dòng (giống db.get cũ)
+  async getOne(text: string, params?: any[]) {
+    const res = await pool.query(text, params);
     return res.rows[0];
-  }
+  },
 
-  async run(sql: string, params: any[] = []): Promise<any> {
-    const res = await this.pool.query(this.normalizeSql(sql), params);
+  // Hàm thực thi không cần trả về row (giống db.run cũ)
+  async execute(text: string, params?: any[]) {
+    const res = await pool.query(text, params);
     return { rowCount: res.rowCount };
-  }
+  },
 
-  async exec(sql: string): Promise<void> {
-    await this.pool.query(sql);
-  }
-
-  async close(): Promise<void> {
-    await this.pool.end();
-  }
-}
-
-// Export a single Postgres instance
-const db: DBAdapter = new PostgresAdapter();
-
-export default db;
+  close: () => pool.end(),
+};

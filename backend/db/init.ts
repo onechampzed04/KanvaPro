@@ -8,36 +8,30 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function initDb() {
-  console.log('Initializing PostgreSQL database...');
-
   try {
-    // Load Postgres Schema from the local backend/db directory
     const schemaPath = path.join(__dirname, 'schema.sql');
     if (fs.existsSync(schemaPath)) {
       const schema = fs.readFileSync(schemaPath, 'utf8');
-      await db.exec(schema);
-      console.log('PostgreSQL schema applied successfully.');
-    } else {
-      console.error('CRITICAL: Schema file not found at', schemaPath);
-      return;
+      await db.query(schema); // Postgres dùng query cho tất cả
+      console.log('✅ Schema applied.');
     }
 
-    // Seed Demo User
     const demoEmail = 'demo@example.com';
-    const existingUser = await db.get('SELECT * FROM users WHERE email = ?', [demoEmail]);
+    // ĐỔI THÀNH $1
+    const existingUser = await db.getOne('SELECT * FROM users WHERE email = $1', [demoEmail]);
+
     if (!existingUser) {
       console.log('Creating demo user...');
       const id = uuidv4();
       const passwordHash = await bcrypt.hash('password', 10);
       
-      await db.run(`
+      // ĐỔI THÀNH $1, $2, $3, $4, $5
+      await db.execute(`
         INSERT INTO users (id, email, password_hash, name, role)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5)
       `, [id, demoEmail, passwordHash, 'Demo User', 'user']);
     }
-
-    console.log('Database initialization complete.');
   } catch (error) {
-    console.error('Database initialization failed:', error);
+    console.error('❌ Database init failed:', error);
   }
 }
