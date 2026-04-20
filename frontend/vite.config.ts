@@ -23,6 +23,10 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        '/assets': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
       },
       hmr: process.env.DISABLE_HMR !== 'true',
     },

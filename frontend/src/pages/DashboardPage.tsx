@@ -51,7 +51,7 @@ export default function DashboardPage() {
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-xl">C</div>
-          <h1 className="text-xl font-bold text-gray-800">Canva Clone</h1>
+          <h1 className="text-xl font-bold text-gray-800">Kanva Pro</h1>
         </div>
         <div className="flex items-center gap-4">
           <Link to="/pricing" className="px-4 py-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-white font-bold rounded-full text-sm hover:shadow-lg transition transform hover:scale-105">

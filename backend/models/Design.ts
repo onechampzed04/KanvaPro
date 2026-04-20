@@ -27,6 +27,8 @@ export interface DesignPage {
     background_asset_id?: string;
     duration?: number;
     transition?: Record<string, any>; // JSONB {type: "fade", duration: 0.5}
+    thumbnail?: string;
+    created_at: Date;
 }
 
 // Đây là định nghĩa cho thuộc tính properties cực kỳ linh hoạt của bạn

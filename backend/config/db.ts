@@ -1,7 +1,17 @@
 import { Pool } from 'pg';
-import 'dotenv/config'; // Đảm bảo load env ngay tại đây
+import dotenv from 'dotenv';
+
+// 1. ÉP HỆ THỐNG PHẢI ĐỌC FILE .ENV NGAY LẬP TỨC TẠI DÒNG NÀY
+dotenv.config();
 
 const connectionString = process.env.DATABASE_URL;
+
+// 2. CHECK XEM ĐÃ ĐỌC ĐƯỢC CHƯA? NẾU CHƯA THÌ BÁO LỖI VÀ DỪNG SERVER LUÔN
+if (!connectionString) {
+  console.error("❌ LỖI NGHIÊM TRỌNG: Không tìm thấy biến DATABASE_URL trong file .env!");
+  console.error("👉 Hãy kiểm tra lại xem file .env có nằm đúng ở thư mục 'backend' không nhé.");
+  process.exit(1); 
+}
 
 const pool = new Pool({
   connectionString,
@@ -9,10 +19,11 @@ const pool = new Pool({
 
 // Kiểm tra kết nối khi khởi động
 pool.on('connect', () => {
-  console.log('✅ Connected to PostgreSQL');
+  console.log('✅ Connected to PostgreSQL on Neon.tech!');
 });
 
 export default {
+  connect: () => pool.connect(),
   // Dùng thuần query của pg
   query: (text: string, params?: any[]) => pool.query(text, params),
   

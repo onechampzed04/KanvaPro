@@ -52,7 +52,7 @@ export const saveDesign = async (designId: string, payload: any) => {
     return response.json();
 };
 
-export const updateDesignFull = async (designId: string, data: { title: string, elements: any[] }) => {
+export const updateDesignFull = async (designId: string, data: { title: string, pages: any[] }) => {
   const token = localStorage.getItem('token');
   const response = await fetch(`/api/designs/${designId}`, {
     method: 'PUT',

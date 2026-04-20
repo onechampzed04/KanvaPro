@@ -27,8 +27,18 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       
-      setUserId(data.userId);
-      setShowOtp(true);
+      if (data.user.is_verified === false) 
+      {
+        setUserId(data.userId);
+        setShowOtp(true);
+        console.log("OTP sent to email, waiting for verification...");
+      }
+      else 
+      {
+         console.log("Odsadsadsa...");
+        login(data.user);
+        navigate('/');
+      };
     } catch (err: any) {
       setError(err.message);
     } finally {

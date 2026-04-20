@@ -20,4 +20,5 @@ export interface UserDTO {
   name: string;
   role: string;
   avatar_url?: string;
+  is_verified: boolean;
 }

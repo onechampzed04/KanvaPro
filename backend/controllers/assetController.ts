@@ -1,40 +1,22 @@
 import { Request, Response } from 'express';
 import db from '../config/db';
 import { Asset } from '../models/Asset';
+import { AssetType } from '../models/enums';
+import { assetService } from '../services/assetService';
 
 export const searchAssets = async (req: Request, res: Response) => {
   const { q, type, category } = req.query;
 
   try {
-    let sql = 'SELECT * FROM assets WHERE 1=1';
-    const params: any[] = [];
-    let paramIndex = 1; // Bộ đếm để tạo $1, $2, $3...
-
-    if (q) {
-      // PostgreSQL: ILIKE để search không phân biệt hoa thường
-      // Dùng $1, $2 thay cho ?
-      sql += ` AND (name ILIKE $${paramIndex} OR $${paramIndex + 1} = ANY(tags))`;
-      params.push(`%${q}%`, q);
-      paramIndex += 2;
-    }
-
-    if (type) {
-      sql += ` AND type = $${paramIndex}`;
-      params.push(type);
-      paramIndex++;
-    }
-
-    if (category) {
-      sql += ` AND category_id = $${paramIndex}`;
-      params.push(category);
-      paramIndex++;
-    }
-
-    sql += ' ORDER BY created_at DESC LIMIT 50';
-
-    // Chú ý: PostgreSQL trả về object, chúng ta lấy .rows
-    const result = await db.query(sql, params);
-    const assets: Asset[] = result.rows;
+    const result = await assetService.searchAssets(q as string, type as string, category as string);
+    const assets: Asset[] = result.map((row: any) => ({
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      url: row.url,
+      is_premium: row.is_premium,
+      created_at: row.created_at
+    }));
 
     // Trả về dữ liệu mẫu nếu DB trống (để bạn dễ test giao diện ban đầu)
     if (assets.length === 0 && !q && !type) {
@@ -55,8 +37,8 @@ export const searchAssets = async (req: Request, res: Response) => {
 
 export const getAssetCategories = async (req: Request, res: Response) => {
   try {
-    const result = await db.query('SELECT * FROM asset_categories ORDER BY name ASC');
-    res.json({ categories: result.rows });
+    const categories = await assetService.getAssetCategories();
+    res.json({ categories });
   } catch (error) {
     console.error('Get Categories Error:', error);
     res.status(500).json({ error: 'Failed to fetch categories' });

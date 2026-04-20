@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../config/db';
 import { sendOtpEmail } from '../services/emailService';
 import { User, UserDTO } from '../models/User';
+import { authService } from '../services/authService';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
 
@@ -17,7 +18,7 @@ export const register = async (req: Request, res: Response) => {
 
   try {
     // 1. Sửa db.get -> db.getOne và ? -> $1
-    const existingUser = await db.getOne('SELECT * FROM users WHERE email = $1', [email]);
+    const existingUser = await authService.findByEmail(email);
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
@@ -26,19 +27,13 @@ export const register = async (req: Request, res: Response) => {
     const id = uuidv4();
 
     // 2. Sửa db.run -> db.execute và dùng $1, $2...
-    await db.execute(`
-      INSERT INTO users (id, email, password_hash, name, is_verified)
-      VALUES ($1, $2, $3, $4, false)
-    `, [id, email, hashedPassword, name]);
+    authService.create({ id, email, password_hash: hashedPassword, name, is_verified: false });
 
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     // Chú ý: Đảm bảo bạn đã có bảng otps trong Postgres
-    await db.execute(`
-      INSERT INTO otps (user_id, code, type, expires_at)
-      VALUES ($1, $2, 'registration', $3)
-    `, [id, otp, expiresAt]);
+    authService.createOtp(id, otp, 'registration', expiresAt);
 
     try {
       await sendOtpEmail(email, otp, 'registration');
@@ -57,11 +52,7 @@ export const verifyOtp = async (req: Request, res: Response) => {
   const { userId, otp, type } = req.body;
 
   try {
-    const otpRecord = await db.getOne(`
-      SELECT * FROM otps 
-      WHERE user_id = $1 AND code = $2 AND type = $3 AND expires_at > NOW()
-      ORDER BY created_at DESC LIMIT 1
-    `, [userId, otp, type]);
+    const otpRecord = await authService.OtpRecord(userId, otp, type);
 
     if (!otpRecord) {
       return res.status(400).json({ error: 'Invalid or expired OTP' });
@@ -71,9 +62,11 @@ export const verifyOtp = async (req: Request, res: Response) => {
       await db.execute('UPDATE users SET is_verified = true WHERE id = $1', [userId]);
     }
 
-    await db.execute('DELETE FROM otps WHERE id = $1', [otpRecord.id]);
-
-    const user: User = await db.getOne('SELECT id, email, name, role FROM users WHERE id = $1', [userId]);
+    authService.deleteOtp(otpRecord.id);
+    const user = await authService.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found after verification' });
+    }
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.cookie('token', token, { 
@@ -82,13 +75,13 @@ export const verifyOtp = async (req: Request, res: Response) => {
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000 
     });
-
     // 3. Sửa lỗi name: user.name (Thêm fallback || '')
     const userDto: UserDTO = {
       id: user.id,
       email: user.email,
       name: user.name || '', 
-      role: user.role
+      role: user.role,
+      is_verified: user.is_verified
     };
 
     res.json({ user: userDto, token });
@@ -113,24 +106,41 @@ export const login = async (req: Request, res: Response) => {
     }
 
     if (!user.is_verified) {
-      return res.status(403).json({ error: 'Please verify your email first', userId: user.id });
+      const otp = generateOtp();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  
+      await db.execute(`
+        INSERT INTO otps (user_id, code, type, expires_at)
+        VALUES ($1, $2, 'login', $3)
+      `, [user.id, otp, expiresAt]);
+  
+      try {
+        await sendOtpEmail(user.email, otp, 'login');
+      } catch (emailError) {
+        console.error('Failed to send email:', emailError);
+      }
+      
+      return res.json({ 
+        user: { is_verified: false }, 
+        userId: user.id, 
+        message: 'OTP sent to your email' 
+      });
     }
+    
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
-    const otp = generateOtp();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    res.cookie('token', token, { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000 
+    });
 
-    await db.execute(`
-      INSERT INTO otps (user_id, code, type, expires_at)
-      VALUES ($1, $2, 'login', $3)
-    `, [user.id, otp, expiresAt]);
+    return res.json({ 
+      user: { id: user.id, email: user.email, name: user.name, role: user.role, is_verified: user.is_verified },
+      token // Trả về token nếu frontend cần lưu thêm vào localStorage
+    });
 
-    try {
-      await sendOtpEmail(user.email, otp, 'login');
-    } catch (emailError) {
-      console.error('Failed to send email:', emailError);
-    }
-
-    res.json({ message: 'OTP sent to your email', userId: user.id });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -143,14 +153,15 @@ export const getMe = async (req: Request, res: Response) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
-    const user: User = await db.getOne('SELECT id, email, name, role FROM users WHERE id = $1', [decoded.id]);
+    const user: User = await db.getOne('SELECT id, email, name, role, is_verified FROM users WHERE id = $1', [decoded.id]);
     if (!user) return res.status(401).json({ error: 'User not found' });
     
     const userDto: UserDTO = {
       id: user.id,
       email: user.email,
       name: user.name || '',
-      role: user.role
+      role: user.role,
+      is_verified: user.is_verified
     };
 
     res.json({ user: userDto });
