@@ -8,6 +8,8 @@ import { initDb } from '../backend/db/init';
 import authRoutes from '../backend/routes/authRoutes';
 import designRoutes from '../backend/routes/designRoutes';
 import assetRoutes from '../backend/routes/assetRoutes';
+import paymentRoutes from './routes/paymentRoutes';
+import subscriptionRoute from './routes/subscriptionRoute';
 import cors from 'cors';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,8 +24,8 @@ async function startServer() {
   }));
 
   // GOM LẠI THÀNH 1 CHỖ VÀ ĐẶT Ở TRÊN CÙNG
-  app.use(express.json({ limit: '50mb' })); 
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  app.use(express.json({ limit: '500mb' })); 
+  app.use(express.urlencoded({ limit: '500mb', extended: true }));
   app.use(cookieParser());
 
   // Serve sticker assets from backend folder
@@ -37,7 +39,11 @@ async function startServer() {
   app.use('/api/designs', designRoutes);
   app.use('/api/assets', assetRoutes);
   app.use('/assets', express.static(path.join(__dirname, 'assets')));
-
+  app.use('/fonts', express.static(path.join(__dirname, 'public', 'fonts')));
+  // Serve background removed images
+  app.use('/bg-removed', express.static(path.join(__dirname, 'public', 'uploads', 'bg-removed')));
+  app.use('/api/payments', paymentRoutes);
+  app.use('/api/subscriptions', subscriptionRoute);
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

@@ -2,13 +2,21 @@ import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../config/db';
 import { Design } from '../models/Design';
-import { DesignType } from '../models/enums'; 
+import { DesignType } from '../models/enums';
 import { designService } from '../services/designService';
-import { assetService } from '../services/assetService'; 
+import { assetService } from '../services/assetService';
+import { designPageService } from '../services/designPageService';
+import { designVersionService } from '../services/designVersionService';
+
+import fs from 'fs-extra';
+import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
+import os from 'os';
 
 export const createDesign = async (req: Request, res: Response) => {
-    const { title, width, height, design_type } = req.body;
-    const userId = (req as any).user?.id; 
+    // Thêm page_type vào req.body
+    const { title, width, height, design_type, page_type } = req.body;
+    const userId = (req as any).user?.id;
 
     try {
         const id = uuidv4();
@@ -18,7 +26,8 @@ export const createDesign = async (req: Request, res: Response) => {
             title: title || 'Untitled Design',
             width: width || 1920,
             height: height || 1080,
-            design_type: design_type || 'presentation'
+            design_type: design_type || 'presentation',
+            page_type: page_type || 'canvas' // Mặc định là canvas kéo thả
         });
 
         res.status(201).json({ id, message: 'Design created successfully' });
@@ -46,28 +55,11 @@ export const getDesignById = async (req: Request, res: Response) => {
         const design = await designService.getDesignById(id);
         if (!design) return res.status(404).json({ error: 'Design not found' });
 
-        const design_pagesResult = await designService.getDesignPages(id);
-        const pages = await Promise.all(design_pagesResult.map(async (page: any) => {
-            const elementsResult = await db.query(
-                `SELECT * FROM design_elements WHERE page_id = $1 ORDER BY z_index ASC`, 
-                [page.id]
-            );
-
-            const formattedElements = elementsResult.rows.map((el: any) => {
-                // FIX JSON PARSE: Xử lý triệt để nếu DB trả về chuỗi thay vì object
-                const props = typeof el.properties === 'string' ? JSON.parse(el.properties) : el.properties;
-                return {
-                    id: el.id,
-                    type: el.element_type,
-                    ...props
-                };
-            });
-
-            return { ...page, elements: formattedElements };
-        }));
+        const pages = await designPageService.getPagesWithElementsByDesignId(id);
 
         res.json({ ...design, pages });
     } catch (error) {
+        console.error("Lỗi getDesignById:", error);
         res.status(500).json({ error: 'Internal server error' });
     }
 };
@@ -98,8 +90,8 @@ export const deleteDesign = async (req: Request, res: Response) => {
 };
 
 export const saveFullDesign = async (req: Request, res: Response) => {
-    const { id } = req.params; 
-    const { title, thumbnail_url, pages } = req.body; 
+    const { id } = req.params;
+    const { title, thumbnail_url, pages } = req.body;
     const userId = (req as any).user?.id;
 
     if (!userId) {
@@ -138,7 +130,7 @@ export const getRecentStickers = async (req: Request, res: Response) => {
             ORDER BY last_used DESC
             LIMIT $2 OFFSET $3
         `;
-        
+
         // Đếm tổng số lượng sticker để làm phân trang
         const countQuery = `
             SELECT COUNT(DISTINCT de.properties->>'src') as total
@@ -161,5 +153,180 @@ export const getRecentStickers = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Get Recent Stickers Error:", error);
         res.status(500).json({ error: "Failed to fetch recent stickers" });
+    }
+};
+// export const exportVideo = async (req: Request, res: Response) => {
+//     try {
+//         // frames: Mảng chứa các chuỗi base64 của từng khung hình
+//         const { frames, fps = 30 } = req.body;
+
+//         if (!frames || frames.length === 0) {
+//             return res.status(400).json({ error: "Không có khung hình nào được gửi lên!" });
+//         }
+
+//         const jobId = uuidv4();
+//         // Tạo thư mục tạm tên 'temp' nằm ở thư mục gốc của project backend
+//         const tempDir = path.join(process.cwd(), 'temp', jobId);
+//         await fs.ensureDir(tempDir);
+
+//         console.log(`[Video Export] Bắt đầu xử lý ${frames.length} frames...`);
+
+//         // 1. Lưu tất cả ảnh base64 thành file .png vật lý
+//         const writePromises = frames.map((base64Str: string, index: number) => {
+//             const base64Data = base64Str.replace(/^data:image\/png;base64,/, "");
+//             // Đặt tên theo số thứ tự (0001, 0002) để FFmpeg đọc đúng luồng
+//             const fileName = `frame-${String(index + 1).padStart(4, '0')}.png`; 
+//             return fs.writeFile(path.join(tempDir, fileName), base64Data, 'base64');
+//         });
+//         await Promise.all(writePromises);
+
+//         // 2. Gọi FFmpeg ráp ảnh thành video MP4
+//         const outputPath = path.join(process.cwd(), 'temp', `${jobId}_output.mp4`);
+//         console.log(`[Video Export] Đang dùng FFmpeg render Video...`);
+//         // SỬA LỖI 1: Đổi toàn bộ dấu gạch chéo ngược (Windows) thành gạch chéo tới (Linux/FFmpeg chuẩn)
+//         const inputPattern = path.join(tempDir, 'frame-%04d.png').replace(/\\/g, '/');
+
+//         ffmpeg()
+//             .input(inputPattern) // Dùng đường dẫn đã fix
+//             .inputFPS(fps)
+//             .videoCodec('libx264')
+//             .outputOptions([
+//                 // SỬA LỖI 2: Ép kích thước khung hình về số chẵn (Làm tròn xuống)
+//                 '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2', 
+//                 '-pix_fmt yuv420p', 
+//                 '-crf 25' 
+//             ])
+//             .save(outputPath)
+//             .on('end', async () => {
+//                 console.log(`[Video Export] Hoàn tất! Gửi file về Frontend...`);
+//                 res.download(outputPath, 'Canva_Pro_Video.mp4', async (err) => {
+//                     await fs.remove(tempDir);
+//                     await fs.remove(outputPath);
+//                 });
+//             })
+//             // SỬA LỖI 3: Bắt FFmpeg phải in ra lý do thực sự khiến nó sập (stderr)
+//             .on('error', async (err, stdout, stderr) => {
+//                 console.error(`[Video Export] Lỗi FFmpeg:`, err.message);
+//                 console.error(`[NGUYÊN NHÂN GỐC TỪ FFMPEG]:\n`, stderr); // ĐÂY LÀ CHÌA KHÓA!
+
+//                 await fs.remove(tempDir);
+//                 res.status(500).json({ error: "Lỗi trong quá trình render video" });
+//             });
+
+//     } catch (error) {
+//         console.error("Lỗi xuất video:", error);
+//         res.status(500).json({ error: "Lỗi Server" });
+//     }
+// };
+
+// ... (Giữ nguyên các hàm bên trên)
+export const exportVideo = async (req: Request, res: Response) => {
+    try {
+        const file = (req as any).file;
+        if (!file) return res.status(400).json({ error: "Không nhận được file video!" });
+
+        const jobId = uuidv4();
+        const tempDir = os.tmpdir();
+
+        const nativeInputPath = path.join(tempDir, `kanva_${jobId}_input.webm`);
+        const nativeOutputPath = path.join(tempDir, `kanva_${jobId}_output.mp4`);
+
+        const ffmpegInputPath = nativeInputPath.replace(/\\/g, '/');
+        const ffmpegOutputPath = nativeOutputPath.replace(/\\/g, '/');
+
+        await fs.writeFile(nativeInputPath, file.buffer);
+
+        console.log(`[Video Export] ⏳ Đang xử lý file WebM (${file.size} bytes)...`);
+
+        ffmpeg(ffmpegInputPath)
+            .addOption('-y')
+            .inputOptions(['-fflags', '+genpts'])
+            .outputOptions([
+                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-r', '60',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                '-an'
+            ])
+            .save(ffmpegOutputPath)
+            .on('end', async () => {
+                console.log(`[Video Export] ✅ Convert xong! Đang mã hóa thành chuỗi an toàn...`);
+
+                try {
+                    // Chờ Windows nhả khóa file
+                    await new Promise(resolve => setTimeout(resolve, 500));
+
+                    // ĐỌC VIDEO VÀO RAM VÀ MÃ HÓA THÀNH CHUỖI BASE64
+                    const videoBuffer = await fs.readFile(nativeOutputPath);
+                    const base64Video = videoBuffer.toString('base64');
+
+                    console.log(`[Video Export] 📦 Đã mã hóa xong. Bắt đầu gửi JSON qua mạng!`);
+
+                    // 🔥 GỬI BẰNG JSON ĐỂ VƯỢT MẶT LỖI ĐỨT STREAM CỦA TRÌNH DUYỆT
+                    res.status(200).json({
+                        success: true,
+                        data: base64Video
+                    });
+
+                    console.log(`[Video Export] 🏁 Đã gửi thành công nguyên khối JSON!`);
+
+                } catch (e) {
+                    console.error("Lỗi đọc file:", e);
+                    if (!res.headersSent) res.status(500).json({ error: "Lỗi hệ thống file" });
+                } finally {
+                    // Dọn rác
+                    await fs.remove(nativeInputPath).catch(() => { });
+                    await fs.remove(nativeOutputPath).catch(() => { });
+                }
+            })
+            .on('error', async (err) => {
+                console.error("❌ Lỗi FFmpeg:", err.message);
+                await fs.remove(nativeInputPath).catch(() => { });
+                if (!res.headersSent) res.status(500).json({ error: "Convert thất bại" });
+            });
+    } catch (error) {
+        console.error("Lỗi Server:", error);
+        res.status(500).json({ error: "Lỗi Server" });
+    }
+};
+
+export const saveDesignVersion = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const userId = (req as any).user?.id;
+
+        console.log(`[Version] Đang yêu cầu chụp Snapshot cho Design ID: ${id}`);
+
+        const versionNumber = await designVersionService.createVersionSnapshot(id, userId);
+
+        console.log(`[Version] ✅ Đã lưu thành công Version số ${versionNumber}`);
+        res.json({ message: "Lưu phiên bản thành công", versionNumber });
+    } catch (error) {
+        // NÂNG CẤP DÒNG NÀY ĐỂ BẮT LỖI CHI TIẾT
+        console.error("\n❌ [LỖI NGHIÊM TRỌNG KHI LƯU VERSION]:", error, "\n");
+        res.status(500).json({ error: "Lỗi lưu phiên bản" });
+    }
+};
+
+export const getDesignVersions = async (req: Request, res: Response) => {
+    try {
+        const versions = await designVersionService.getVersionHistory(req.params.id);
+        res.json({ versions });
+    } catch (error) {
+        res.status(500).json({ error: "Lỗi lấy lịch sử" });
+    }
+};
+
+export const restoreDesignVersion = async (req: Request, res: Response) => {
+    try {
+        const { id, versionId } = req.params;
+        const userId = (req as any).user?.id;
+        await designVersionService.restoreVersion(id, versionId, userId);
+        res.json({ message: "Khôi phục thành công" });
+    } catch (error) {
+        res.status(500).json({ error: "Lỗi khôi phục phiên bản" });
     }
 };

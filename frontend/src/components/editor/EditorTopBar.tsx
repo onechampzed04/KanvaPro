@@ -1,0 +1,187 @@
+// src/components/editor/EditorTopBar.tsx
+import { Link } from 'react-router-dom';
+import { ChevronLeft, Download, Save, History, PlusCircle } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+interface EditorTopBarProps {
+  design: any;
+  saveStatus: 'saved' | 'saving' | 'unsaved';
+  isSaving: boolean;
+  isEditingTitle: boolean;
+  tempTitle: string;
+  setTempTitle: (v: string) => void;
+  setIsEditingTitle: (v: boolean) => void;
+  setDesign: (v: any) => void;
+  showExportPopover: boolean;
+  setShowExportPopover: (v: boolean) => void;
+  exportConfig: { format: string };
+  setExportConfig: (v: any) => void;
+  exportScale: number;
+  setExportScale: (v: number) => void;
+  exportSelectedPages: string[];
+  setExportSelectedPages: (v: string[]) => void;
+  pages: any[];
+  stageWidth: number;
+  stageHeight: number;
+  executeExport: () => void;
+  handleSave: (silent?: boolean) => void;
+  handleSaveVersion: () => void;
+  handleOpenVersionHistory: () => void;
+}
+
+export default function EditorTopBar({
+  design, saveStatus, isSaving,
+  isEditingTitle, tempTitle, setTempTitle, setIsEditingTitle, setDesign,
+  showExportPopover, setShowExportPopover,
+  exportConfig, setExportConfig, exportScale, setExportScale,
+  exportSelectedPages, setExportSelectedPages,
+  pages, stageWidth, stageHeight,
+  executeExport, handleSave, handleSaveVersion, handleOpenVersionHistory,
+}: EditorTopBarProps) {
+  return (
+    <div className="h-14 bg-white/70 backdrop-blur-xl border-b border-white/60 flex items-center justify-between px-4 z-30 shadow-sm">
+      <div className="flex items-center gap-4">
+        <Link to="/" className="p-2 text-slate-500 hover:text-slate-800 hover:bg-white/50 rounded-full transition"><ChevronLeft size={20} /></Link>
+        <div className="flex flex-col">
+          {isEditingTitle ? (
+            <input
+              type="text" autoFocus value={tempTitle}
+              onChange={(e) => setTempTitle(e.target.value)}
+              onBlur={() => { setIsEditingTitle(false); setDesign({ ...design, title: tempTitle || 'Untitled Design' }); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { setIsEditingTitle(false); setDesign({ ...design, title: tempTitle || 'Untitled Design' }); } }}
+              className="font-bold text-sm tracking-tight text-slate-800 bg-white border border-indigo-300 rounded px-1 py-0 outline-none w-48 shadow-inner focus:ring-2 focus:ring-indigo-100"
+            />
+          ) : (
+            <span
+              onDoubleClick={() => setIsEditingTitle(true)}
+              className="font-bold text-sm tracking-tight text-slate-800 cursor-text hover:bg-white/50 rounded px-1 -ml-1 transition border border-transparent hover:border-slate-300"
+            >
+              {design?.title || 'Untitled Design'}
+            </span>
+          )}
+          <div className="flex items-center gap-1.5 px-1 -ml-1 mt-0.5">
+            <div className={`w-1.5 h-1.5 rounded-full ${saveStatus === 'saving' ? 'bg-amber-400 animate-pulse' : saveStatus === 'unsaved' ? 'bg-rose-400' : 'bg-emerald-400'}`} />
+            <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
+              {saveStatus === 'saving' ? 'Đang lưu...' : saveStatus === 'unsaved' ? 'Có thay đổi chưa lưu' : 'Đã lưu vào hệ thống'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 relative">
+        <button
+          onClick={handleSaveVersion}
+          className="px-3 py-1.5 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/50 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-indigo-200"
+          title="Chụp lại phiên bản hiện tại"
+        >
+          <PlusCircle size={14} /> Save Version
+        </button>
+
+        <button
+          onClick={handleOpenVersionHistory}
+          className="px-3 py-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100/50 rounded-lg text-sm font-bold transition flex items-center gap-1.5"
+        >
+          <History size={16} /> History
+        </button>
+
+        <button
+          onClick={() => handleSave(false)}
+          disabled={isSaving}
+          className="px-4 py-1.5 bg-gradient-to-r from-sky-400 to-pink-400 text-white hover:from-sky-500 hover:to-pink-500 rounded-lg text-sm font-bold flex items-center gap-2 transition shadow-sm disabled:opacity-50"
+        >
+          <Save size={16} /> Save
+        </button>
+
+        {/* EXPORT POPOVER */}
+        <div className="relative">
+          <button
+            onClick={() => setShowExportPopover(!showExportPopover)}
+            className={`px-4 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition shadow-sm ${showExportPopover ? 'bg-pink-100 text-pink-700' : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'}`}
+          >
+            <Download size={16} /> Export
+          </button>
+
+          <AnimatePresence>
+            {showExportPopover && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                className="absolute top-12 right-0 w-[320px] bg-white text-slate-900 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-slate-200 z-[100] p-5 flex flex-col gap-5"
+              >
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Download</h3>
+
+                {/* File type */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">File type</label>
+                  <select
+                    value={exportConfig.format}
+                    onChange={(e) => setExportConfig({ ...exportConfig, format: e.target.value })}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option className="text-slate-900 font-bold" value="png">PNG (High Quality Image)</option>
+                    <option className="text-slate-900 font-bold" value="jpeg">JPG (Small size)</option>
+                    <option className="text-slate-900 font-bold" value="mp4">MP4 (Video)</option>
+                    <option className="text-slate-900 font-bold" value="pptx">PPTX (PowerPoint)</option>
+                  </select>
+                </div>
+
+                {/* Scale */}
+                {(exportConfig.format === 'png' || exportConfig.format === 'jpeg') && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Size Scale ({exportScale}x)</label>
+                      <span className="text-[10px] font-bold text-indigo-600">{stageWidth * exportScale} x {stageHeight * exportScale} px</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="3" step="0.5" value={exportScale}
+                      onChange={e => setExportScale(Number(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                    />
+                  </div>
+                )}
+
+                {/* Select pages */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Select Pages</label>
+                  <div className="max-h-40 overflow-y-auto border border-slate-100 rounded-xl p-2 space-y-2 custom-scrollbar bg-slate-50/50">
+                    {pages.map((p, idx) => (
+                      <label key={p.id} className="flex items-center gap-3 p-1.5 hover:bg-slate-200/50 rounded-lg cursor-pointer transition">
+                        <input
+                          type="checkbox"
+                          checked={exportSelectedPages.includes(p.id)}
+                          onChange={e => {
+                            setExportSelectedPages(
+                              e.target.checked
+                                ? [...exportSelectedPages, p.id]
+                                : exportSelectedPages.filter(id => id !== p.id)
+                            );
+                          }}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <div className="w-10 h-7 rounded border border-slate-200 overflow-hidden bg-white shrink-0 shadow-sm">
+                          {p.thumbnail
+                            ? <img src={p.thumbnail} className="w-full h-full object-cover" />
+                            : <div className="w-full h-full flex items-center justify-center text-[8px] text-slate-300 font-bold italic">P.{idx + 1}</div>
+                          }
+                        </div>
+                        <span className="text-xs font-bold text-slate-900">Page {idx + 1}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={executeExport}
+                  className="w-full py-3 bg-gradient-to-r from-sky-400 to-pink-400 hover:from-sky-500 hover:to-pink-500 text-white rounded-xl text-sm font-black transition shadow-lg shadow-pink-200/50"
+                >
+                  Download
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  );
+}

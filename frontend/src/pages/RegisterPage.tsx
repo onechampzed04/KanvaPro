@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { motion } from 'framer-motion';
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
@@ -61,89 +62,102 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="bg-white p-8 rounded-xl shadow-md w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center">Create Account</h1>
-        {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>}
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sky-100 via-white to-pink-100 font-sans relative overflow-hidden">
+      
+      {/* Các khối màu mờ trang trí phía sau (Ambient Blobs) */}
+      <div className="absolute top-0 left-[-10%] w-[500px] h-[500px] bg-pink-300/30 rounded-full mix-blend-multiply blur-3xl opacity-70"></div>
+      <div className="absolute top-[-10%] right-[-5%] w-[400px] h-[400px] bg-sky-300/30 rounded-full mix-blend-multiply blur-3xl opacity-70"></div>
+      <div className="absolute bottom-[-10%] left-[20%] w-[600px] h-[600px] bg-purple-200/40 rounded-full mix-blend-multiply blur-3xl opacity-70"></div>
+
+      {/* Form đăng ký với hiệu ứng trượt lên nhẹ nhàng */}
+      <motion.div 
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.8, ease: "easeOut" }}
+        className="bg-white/70 backdrop-blur-2xl p-10 rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/60 w-full max-w-md relative z-10"
+      >
+        <h1 className="text-3xl font-extrabold mb-8 text-center bg-clip-text text-transparent bg-gradient-to-r from-sky-500 to-pink-500 tracking-tight">
+          Create Account
+        </h1>
+        {error && <div className="bg-red-50 text-red-500 p-4 rounded-2xl mb-6 text-sm font-medium text-center border border-red-100">{error}</div>}
         
         {!showOtp ? (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Name</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider ml-1 mb-2">Name</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
+                className="w-full rounded-2xl border border-slate-200 bg-white/50 px-4 py-3.5 focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all outline-none text-slate-700 font-medium"
                 required
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Email</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider ml-1 mb-2">Email</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
+                className="w-full rounded-2xl border border-slate-200 bg-white/50 px-4 py-3.5 focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all outline-none text-slate-700 font-medium"
                 required
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Password</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider ml-1 mb-2">Password</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
+                className="w-full rounded-2xl border border-slate-200 bg-white/50 px-4 py-3.5 focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all outline-none text-slate-700 font-medium"
                 required
               />
             </div>
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition disabled:opacity-50"
+              className="mt-4 w-full bg-gradient-to-r from-sky-400 to-pink-400 text-white py-3.5 px-4 rounded-2xl hover:from-sky-500 hover:to-pink-500 transition-all duration-300 shadow-md hover:shadow-xl transform hover:-translate-y-0.5 font-bold disabled:opacity-50"
             >
               {loading ? 'Creating Account...' : 'Sign Up'}
             </button>
           </form>
         ) : (
-          <form onSubmit={handleVerifyOtp} className="space-y-4">
-            <p className="text-sm text-gray-600 text-center mb-4">
-              We've sent a 6-digit verification code to <strong>{email}</strong>. Please enter it below to complete your registration.
+          <motion.form initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} onSubmit={handleVerifyOtp} className="space-y-6">
+            <p className="text-sm text-slate-500 text-center leading-relaxed">
+              We've sent a 6-digit code to <strong className="text-slate-700">{email}</strong>.<br/>Please enter it below to verify.
             </p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 text-center">Verification Code</label>
               <input
                 type="text"
                 maxLength={6}
                 value={otp}
                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
                 placeholder="123456"
-                className="mt-2 block w-full text-center text-2xl tracking-widest rounded-md border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500 font-mono"
+                className="w-full text-center text-3xl tracking-[0.5em] rounded-2xl border border-slate-200 bg-white/50 px-4 py-4 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 transition-all outline-none font-mono font-bold text-slate-700 shadow-inner"
                 required
               />
             </div>
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition disabled:opacity-50"
+              className="w-full bg-gradient-to-r from-sky-400 to-pink-400 text-white py-3.5 px-4 rounded-2xl hover:from-sky-500 hover:to-pink-500 transition-all duration-300 shadow-md hover:shadow-xl transform hover:-translate-y-0.5 font-bold disabled:opacity-50"
             >
               {loading ? 'Verifying...' : 'Verify & Complete'}
             </button>
             <button
               type="button"
               onClick={() => setShowOtp(false)}
-              className="w-full text-sm text-gray-500 hover:text-gray-700 transition"
+              className="w-full text-sm font-bold text-slate-400 hover:text-sky-500 transition-colors"
             >
               Back to Registration
             </button>
-          </form>
+          </motion.form>
         )}
 
-        <p className="mt-4 text-center text-sm text-gray-600">
-          Already have an account? <Link to="/login" className="text-indigo-600 hover:underline">Login</Link>
+        <p className="mt-8 text-center text-sm font-medium text-slate-500">
+          Already have an account? <Link to="/login" className="text-pink-500 hover:text-pink-600 transition-colors font-bold">Login</Link>
         </p>
-      </div>
+      </motion.div>
     </div>
   );
 }

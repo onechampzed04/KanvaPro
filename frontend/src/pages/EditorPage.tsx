@@ -1,244 +1,145 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { Stage, Layer, Rect, Circle, Text, Image as KonvaImage, Transformer } from 'react-konva';
-import useImage from 'use-image';
-import { 
-  ChevronLeft, Type, Image as ImageIcon, Square, Download, 
-  Settings, Save, Search, Upload, Trash2
-} from 'lucide-react';
-import { updateDesignFull } from '../api/api';
-import TextToolbar from '../components/TextToolbar';
-import { fetchDesigns, createDesign } from '../api/api';
+import { useParams } from 'react-router-dom';
 import Konva from 'konva';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
+import pptxgen from 'pptxgenjs';
+import { motion, AnimatePresence } from 'framer-motion';
+import { fetchDesignVersions, restoreDesignVersion, updateDesignFull, createDesignVersion, uploadVideoForExport } from '../api/api';
 
-const ElementRenderer = ({ el, isSelected, onSelect, onDblClick, onChange, isEditing }: any) => {
-  const shapeRef = useRef<any>(null);
-  const [img] = useImage(el.src || '');
+// Components Ã„â€˜ÃƒÂ£ tÃƒÂ¡ch sÃ¡ÂºÂµn
+import EditorSidebar from '../components/editor/EditorSidebar';
+import DocEditor from '../components/editor/DocEditor';
+import SheetEditor from '../components/editor/SheetEditor';
+import CanvasEditor from '../components/editor/CanvasEditor';
+import BottomTimeline from '../components/editor/BottomTimeline';
+import ElementToolbar from '../components/ElementToolbar';
 
-  const handleDragEnd = (e: any) => {
-    onChange({ ...el, x: e.target.x(), y: e.target.y() }, true);
-  };
+// Components mÃ¡Â»â€ºi tÃƒÂ¡ch
+import EditorTopBar from '../components/editor/EditorTopBar';
+import SidebarDrawer from '../components/editor/SidebarDrawer';
+import TransitionBox from '../components/editor/TransitionBox';
+import AnimateBox from '../components/editor/AnimateBox';
+import VersionHistoryModal from '../components/editor/VersionHistoryModal';
+import ExportProgressToast from '../components/editor/ExportProgressToast';
 
-  const commonProps = {
-    ref: shapeRef,
-    ...el,
-    draggable: !isEditing,
-    onClick: onSelect,
-    onTap: onSelect,
-    onDblClick: onDblClick,
-    onDragEnd: handleDragEnd,
-    name: 'selectable',
-    id: el.id
-  };
-
-  if (el.type === 'rect') return <Rect {...commonProps} />;
-  if (el.type === 'image') return <KonvaImage {...commonProps} image={img} />;
-  if (el.type === 'text') return (
-    <Text 
-      {...commonProps} 
-      visible={!isEditing} 
-      onTransformEnd={() => {
-        const node = shapeRef.current;
-        const scaleX = node.scaleX();
-        node.scaleX(1);
-        onChange({ ...el, x: node.x(), y: node.y(), fontSize: el.fontSize * scaleX, width: node.width() * scaleX });
-      }}
-    />
-  );
-  return null;
-};
-
-const URLImage = ({ image, isSelected, onSelect, onChange }: any) => {
-  const [img] = useImage(image.src, 'anonymous');
-  const shapeRef = useRef<any>(null);
-
-  return (
-    <>
-      <KonvaImage
-        onClick={onSelect}
-        onTap={onSelect}
-        ref={shapeRef}
-        id={image.id}
-        image={img}
-        {...image}
-        draggable
-        onDragEnd={(e) => onChange({ ...image, x: e.target.x(), y: e.target.y() })}
-        onTransformEnd={() => {
-          const node = shapeRef.current;
-          const scaleX = node.scaleX();
-          const scaleY = node.scaleY();
-          node.scaleX(1);
-          node.scaleY(1);
-          onChange({
-            ...image,
-            x: node.x(),
-            y: node.y(),
-            width: Math.max(5, node.width() * scaleX),
-            height: Math.max(5, node.height() * scaleY),
-          });
-        }}
-      />
-    </ >
-  );
-};
-const CircleShape = ({ shape, isSelected, onSelect, onChange }: any) => {
-  const shapeRef = useRef<any>(null);
-  return (
-    <>
-      <Circle
-        onClick={onSelect}
-        onTap={onSelect}
-        id={shape.id}
-        ref={shapeRef}
-        {...shape}
-        draggable
-        onDragEnd={(e) => onChange({ ...shape, x: e.target.x(), y: e.target.y() })}
-        onTransformEnd={() => {
-          const node = shapeRef.current;
-          const scaleX = node.scaleX();
-          const scaleY = node.scaleY();
-          node.scaleX(1);
-          node.scaleY(1);
-          onChange({
-            ...shape,
-            x: node.x(),
-            y: node.y(),
-
-            radius: Math.max(5, shape.radius * scaleX)
-          });
-        }}
-      />
-    </ >
-  );
-};
-
-const RectangleShape = ({ shape, isSelected, onSelect, onChange }: any) => {
-  const shapeRef = useRef<any>(null);
-
-  return (
-    <>
-      <Rect
-        onClick={onSelect}
-        onTap={onSelect}
-        id={shape.id}
-        ref={shapeRef}
-        {...shape}
-        draggable
-        onDragEnd={(e) => onChange({ ...shape, x: e.target.x(), y: e.target.y() })}
-        onTransformEnd={() => {
-          const node = shapeRef.current;
-          const scaleX = node.scaleX();
-          const scaleY = node.scaleY();
-          node.scaleX(1);
-          node.scaleY(1);
-          onChange({
-            ...shape,
-            x: node.x(),
-            y: node.y(),
-            width: Math.max(5, node.width() * scaleX),
-            height: Math.max(5, node.height() * scaleY),
-          });
-        }}
-      />
-    </ >
-  );
-};
-
-const EditableText = ({ text, isSelected, onSelect, onDblClick, onChange, isEditing }: any) => {
-  const shapeRef = useRef<any>(null);
-  return (
-    <>
-      <Text
-        ref={shapeRef}
-        {...text}
-        visible={!isEditing}
-        onClick={onSelect}
-        onTap={onSelect}
-        onDblClick={onDblClick}
-        draggable={!isEditing}
-        id={text.id}
-        onDragEnd={(e) => onChange({ ...text, x: e.target.x(), y: e.target.y() })}
-        onTransformEnd={() => {
-          const node = shapeRef.current;
-          const scaleX = node.scaleX();
-          node.scaleX(1);
-          node.scaleY(1);
-          onChange({
-            ...text,
-            x: node.x(),
-            y: node.y(),
-            fontSize: text.fontSize * scaleX,
-            width: node.width() * scaleX,
-          });
-        }}
-      />
-    </ >
-  );
-};
-
-const IndividualBorder = ({ nodeId }: { nodeId: string }) => {
-  const trRef = useRef<any>(null);
-
-  useEffect(() => {
-    const tr = trRef.current;
-    if (!tr) return;
-    const stage = tr.getStage();
-    const node = stage.findOne(`#${nodeId}`);
-    if (node) {
-      tr.nodes([node]);
-      tr.getLayer().batchDraw();
-    }
-  }, [nodeId]);
-
-  return (
-    <Transformer
-      ref={trRef}
-      resizeEnabled={false}
-      rotateEnabled={false}
-      borderStroke="#6366f1"
-      borderStrokeWidth={1.5}
-      borderDash={[4, 4]}
-      anchorSize={0}
-      listening={false}
-    />
-  );
-};
-
-// --- MAIN PAGE COMPONENT ---
 
 export default function EditorPage() {
-
   // --- 1. Component State & Refs ---
-  // Tất cả state, ref và hằng số của component được định nghĩa tại đây.
-  
   const { id } = useParams();
   const [design, setDesign] = useState<any>(null);
   const [elements, setElements] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [pages, setPages] = useState<any[]>([]); 
+  const [pages, setPages] = useState<any[]>([]);
   const [currentPageId, setCurrentPageId] = useState<string | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState('');
-
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
-  const isInitialMount = useRef(true); 
+  const isInitialMount = useRef(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  
-  // State cho UI
-  const [activeTab, setActiveTab] = useState('elements');
+
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportConfig, setExportConfig] = useState({ format: 'png' });
+  const [exportSelectedPages, setExportSelectedPages] = useState<string[]>([]);
+
+  const [showPositionBox, setShowPositionBox] = useState(false);
+  const [draggedLayerIdx, setDraggedLayerIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null); // ThÃƒÂªm dÃƒÂ²ng nÃƒÂ y Ã„â€˜Ã¡Â»Æ’ theo dÃƒÂµi vÃ¡Â»â€¹ trÃƒÂ­ thanh ngangconst [draggedLayerIdx, setDraggedLayerIdx] = useState<number | null>(null);
+  const [showAnimateBox, setShowAnimateBox] = useState(false);
+  const [animTab, setAnimTab] = useState<'in' | 'out'>('in');
+
+  const PPTX_ANIMATIONS = [
+    { id: 'none', label: 'None' },
+    { id: 'appear', label: 'Appear' },
+    { id: 'fade', label: 'Fade' },
+    { id: 'flyIn', label: 'Fly In' },
+    { id: 'floatIn', label: 'Float In' },
+    { id: 'split', label: 'Split' },
+    { id: 'wipe', label: 'Wipe' },
+    { id: 'shape', label: 'Shape' },
+    { id: 'wheel', label: 'Wheel' },
+    { id: 'randomBars', label: 'Random Bars' },
+    { id: 'growAndTurn', label: 'Grow & Turn' },
+    { id: 'zoom', label: 'Zoom' },
+    { id: 'swivel', label: 'Swivel' },
+    { id: 'bounce', label: 'Bounce' }
+  ];
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  // KHAI BÃƒÂO THÃƒÅ M 2 DÃƒâ€™NG NÃƒâ‚¬Y Ã„ÂÃ¡Â»â€š THEO DÃƒâ€¢I VIDEO
+  const currentTimeRef = useRef(0);
+  const isPlayingRef = useRef(false);
+  useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+
+  // --- NEW EXPORT STATES ---
+  const [showExportPopover, setShowExportPopover] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0); // 0 - 100
+  const [exportStatus, setExportStatus] = useState<'idle' | 'rendering' | 'uploading' | 'completed'>('idle');
+  const [exportScale, setExportScale] = useState(1); // Cho PNG/JPG
+
+  // --- LOGIC TÃƒÂNH TOÃƒÂN THÃ¡Â»Å“I GIAN TOÃƒâ‚¬N CÃ¡Â»Â¤C (GLOBAL TIMELINE) ---
+  const PAGE_DURATION = 5; // MÃ¡ÂºÂ·c Ã„â€˜Ã¡Â»â€¹nh mÃ¡Â»â€”i slide dÃƒÂ i 5s
+
+  // TÃƒÂ­nh mÃ¡Â»â€˜c bÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u vÃƒÂ  kÃ¡ÂºÂ¿t thÃƒÂºc cÃ¡Â»Â§a tÃ¡Â»Â«ng trang
+  const pageTimings = pages.reduce((acc, page, index) => {
+    const start = index === 0 ? 0 : acc[index - 1].end;
+    // Ãƒâ€°p kiÃ¡Â»Æ’u vÃ¡Â»Â number Ã„â€˜Ã¡Â»Æ’ trÃƒÂ¡nh string concatenation khi DB trÃ¡ÂºÂ£ vÃ¡Â»Â string
+    const duration = Number(page.duration) || PAGE_DURATION;
+    acc.push({ id: page.id, start, duration, end: start + duration });
+    return acc;
+  }, [] as any[]);
+
+  const totalDuration = pageTimings.length > 0 ? pageTimings[pageTimings.length - 1].end : PAGE_DURATION;
+
+  useEffect(() => {
+    if (pageTimings.length === 0) return;
+    const activeTiming = pageTimings.find((p: any) => currentTime >= p.start && currentTime < p.end) || pageTimings[pageTimings.length - 1];
+
+    if (activeTiming && activeTiming.id !== currentPageId) {
+      setCurrentPageId(activeTiming.id);
+      const targetPage = pages.find((p: any) => p.id === activeTiming.id);
+      setElements(targetPage?.elements || []);
+      setSelectedIds([]); // XÃƒÂ³a vÃƒÂ¹ng chÃ¡Â»Ân khi qua trang mÃ¡Â»â€ºi
+    }
+  }, [currentTime, pageTimings, currentPageId, pages]);
+
+  // Quy Ã„â€˜Ã¡Â»â€¢i thÃ¡Â»Âi gian toÃƒÂ n cÃ¡Â»Â¥c vÃ¡Â»Â thÃ¡Â»Âi gian cÃ¡Â»Â§a trang hiÃ¡Â»â€¡n tÃ¡ÂºÂ¡i (Ã„â€˜Ã¡Â»Æ’ Canvas chÃ¡ÂºÂ¡y Ã„â€˜ÃƒÂºng hiÃ¡Â»â€¡u Ã¡Â»Â©ng)
+  const currentTiming = pageTimings.find((p: any) => p.id === currentPageId);
+  const localTime = currentTiming ? Math.max(0, currentTime - currentTiming.start) : currentTime;
+
+  // State cho UI Sidebar
+  const [activeTab, setActiveTab] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [customFonts, setCustomFonts] = useState<string[]>(['Arial', 'Verdana', 'Roboto', 'Oswald', 'Inter']);
   const [recentStickers, setRecentStickers] = useState<any[]>([]);
   const [recentPage, setRecentPage] = useState(1);
   const [totalRecentPages, setTotalRecentPages] = useState(1);
-  
-  // State cho việc vẽ vùng chọn và kéo group
+
+
+  // State cho Canvas
   const [selectionRect, setSelectionRect] = useState({
     visible: false, x: 0, y: 0, width: 0, height: 0, startX: 0, startY: 0
   });
   const [groupDrag, setGroupDrag] = useState({ isDragging: false, startX: 0, startY: 0 });
+
+  // Ã°Å¸â€Â¥ STATE CHO TRANSITION PAGE
+  const [showTransitionBox, setShowTransitionBox] = useState(false);
+  const [transitionTargetId, setTransitionTargetId] = useState<string | null>(null);
+
+  const PAGE_TRANSITIONS = [
+    { id: 'none', label: 'None' },
+    { id: 'fade', label: 'Fade' },
+    { id: 'slideLeft', label: 'Slide Left' },
+    { id: 'slideRight', label: 'Slide Right' },
+    { id: 'slideUp', label: 'Slide Up' },
+    { id: 'slideDown', label: 'Slide Down' },
+    { id: 'dissolve', label: 'Dissolve' },
+    { id: 'zoom', label: 'Zoom' }
+  ];
 
   // Refs
   const stageRef = useRef<any>(null);
@@ -247,43 +148,98 @@ export default function EditorPage() {
   const selectionRectRef = useRef<any>(null);
 
   // Constants
-  const stageWidth = 800;
-  const stageHeight = 600;
+  const currentPage = pages.find(p => p.id === currentPageId);
+  const stageWidth = currentPage?.width || 1920;
+  const stageHeight = currentPage?.height || 1080;
+  const currentPageType = currentPage?.type || 'canvas';
+  const selectedElement = selectedIds.length === 1 ? elements.find(el => el.id === selectedIds[0]) : null;
 
-  // --- 2. Data Fetching & Initial Load ---
-  // Các hàm và effect dùng để tải dữ liệu ban đầu khi component được mount.
+  // Ã°Å¸â€Â¥ STATE CHO QUÃ¡ÂºÂ¢N LÃƒÂ UPLOAD VÃƒâ‚¬ TIÃ¡ÂºÂ¾N TRÃƒÅ’NH
+  const [uploadedImages, setUploadedImages] = useState<any[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ visible: boolean, percent: number }>({ visible: false, percent: 0 });
+  const [isProcessingBg, setIsProcessingBg] = useState(false);
+
+  // Ã°Å¸â€Â¥ HÃƒâ‚¬M THÃƒÅ M Ã¡ÂºÂ¢NH VÃƒâ‚¬O CANVAS (GIÃ¡Â»Â® CHUÃ¡ÂºÂ¨N KÃƒÂCH THÃ†Â¯Ã¡Â»Å¡C GÃ¡Â»ÂC)
+  const addImageOriginal = (src: string, originalWidth: number, originalHeight: number) => {
+    let finalW = originalWidth;
+    let finalH = originalHeight;
+
+    // An toÃƒÂ n UX: NÃ¡ÂºÂ¿u Ã¡ÂºÂ£nh to hÃ†Â¡n khung Stage thÃƒÂ¬ mÃ¡Â»â€ºi bÃƒÂ³p lÃ¡ÂºÂ¡i cho vÃ¡Â»Â«a, cÃƒÂ²n nhÃ¡Â»Â hÃ†Â¡n thÃƒÂ¬ giÃ¡Â»Â¯ nguyÃƒÂªn gÃ¡Â»â€˜c 100%
+    if (finalW > stageWidth) { const r = stageWidth / finalW; finalW = stageWidth; finalH *= r; }
+    if (finalH > stageHeight) { const r = stageHeight / finalH; finalH = stageHeight; finalW *= r; }
+
+    syncElements([...elements, {
+      id: crypto.randomUUID(), type: 'image',
+      x: stageWidth / 2 - finalW / 2, y: stageHeight / 2 - finalH / 2,
+      width: finalW, height: finalH, src,
+      timeline: { start: 0, duration: 5, lane: elements.length % 4 }, animation: { in: 'none' }
+    }]);
+  };
+
+  // Ã°Å¸â€Â¥ HÃƒâ‚¬M XÃ¡Â»Â¬ LÃƒÂ UPLOAD (CÃƒâ€œ HIÃ¡Â»â€ U Ã¡Â»Â¨NG LOADING MÃ†Â¯Ã¡Â»Â¢T MÃƒâ‚¬)
+  const handleImageUpload = (file: File) => {
+    if (!file.type.startsWith('image/')) return alert("Vui lÃƒÂ²ng chÃ¡Â»Ân file hÃƒÂ¬nh Ã¡ÂºÂ£nh!");
+
+    // BÃ¡ÂºÂ­t hiÃ¡Â»â€¡u Ã¡Â»Â©ng TiÃ¡ÂºÂ¿n trÃƒÂ¬nh
+    setUploadProgress({ visible: true, percent: 0 });
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.floor(Math.random() * 20) + 10;
+      if (progress >= 90) progress = 90; // GiÃ¡Â»Â¯ Ã¡Â»Å¸ 90% Ã„â€˜Ã¡Â»Â£i Ã„â€˜Ã¡Â»Âc file xong
+      setUploadProgress({ visible: true, percent: progress });
+    }, 150);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Url = event.target?.result as string;
+      const img = new window.Image();
+      img.src = base64Url;
+      img.onload = () => {
+        clearInterval(interval);
+        setUploadProgress({ visible: true, percent: 100 }); // CÃƒÂ¡n Ã„â€˜ÃƒÂ­ch 100%
+
+        // Ã„ÂÃ†Â°a vÃƒÂ o thÃ†Â° viÃ¡Â»â€¡n Uploads
+        setUploadedImages(prev => [{ id: crypto.randomUUID(), url: base64Url, width: img.width, height: img.height }, ...prev]);
+
+        // TrÃ¡Â»â€¦ 0.5s cho UI mÃ†Â°Ã¡Â»Â£t rÃ¡Â»â€œi Ã¡ÂºÂ©n thanh Loading
+        setTimeout(() => setUploadProgress({ visible: false, percent: 0 }), 500);
+      };
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // --- 2. Data Fetching ---
   useEffect(() => {
     if (design?.title) setTempTitle(design.title);
   }, [design?.title]);
 
   useEffect(() => {
     fetch(`/api/designs/${id}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
     })
-    .then(res => res.json())
-    .then(data => {
+      .then(res => res.json())
+      .then(data => {
         setDesign(data);
         if (data.pages && data.pages.length > 0) {
-            // SỬA ĐOẠN NÀY ĐỂ NHẬN THUMBNAIL TỪ DB:
-            const loadedPages = data.pages.map((p: any) => ({
-              ...p, 
-              elements: p.elements || [],
-              thumbnail: p.thumbnail || '' // <--- GÁN THUMBNAIL TỪ DB VÀO ĐÂY
-            }));
-            
-            loadedPages.sort((a: any, b: any) => a.page_order - b.page_order);
-
-            setPages(loadedPages);
-            setCurrentPageId(loadedPages[0].id);
-            setElements(loadedPages[0].elements);
+          const loadedPages = data.pages.map((p: any) => ({
+            ...p,
+            // Ãƒâ€°p kiÃ¡Â»Æ’u duration vÃ¡Â»Â number ngay khi load Ã„â€˜Ã¡Â»Æ’ trÃƒÂ¡nh string concatenation
+            duration: Number(p.duration) || 5,
+            elements: p.elements || [],
+            thumbnail: p.thumbnail || ''
+          }));
+          loadedPages.sort((a: any, b: any) => a.page_order - b.page_order);
+          setPages(loadedPages);
+          setCurrentPageId(loadedPages[0].id);
+          setElements(loadedPages[0].elements);
         } else {
-            const initPageId = crypto.randomUUID();
-            setPages([{ id: initPageId, page_order: 0, elements: [], thumbnail: '' }]);
-            setCurrentPageId(initPageId);
-            setElements([]);
+          const initPageId = crypto.randomUUID();
+          setPages([{ id: initPageId, page_order: 0, elements: [], thumbnail: '' }]);
+          setCurrentPageId(initPageId);
+          setElements([]);
         }
-    })
-    .catch(err => console.error(err));
+      })
+      .catch(err => console.error(err));
   }, [id]);
 
   const fetchRecentStickers = async (page = 1, limit = 10) => {
@@ -295,56 +251,68 @@ export default function EditorPage() {
       setRecentStickers(data.data || []);
       setTotalRecentPages(data.totalPages || 1);
       setRecentPage(page);
-    } catch (error) { 
-      console.error('Fetch recent stickers failed:', error); 
-    }
+    } catch (error) { console.error(error); }
   };
 
-  useEffect(() => {
-    // Load recent stickers on first mount
-    fetchRecentStickers(1, 10);
-  }, []);
+  useEffect(() => { fetchRecentStickers(1, 10); }, []);
 
-  // --- 3. Core Canvas Interaction: Selection & Dragging ---
-  // Các hàm xử lý sự kiện chuột trực tiếp trên Konva Stage để chọn, di chuyển, và thay đổi kích thước.
+  // --- Náº¡p láº¡i font Ä‘Ã£ upload tá»« DB khi má»Ÿ editor ---
+  const loadUserFonts = async () => {
+    try {
+      const res = await fetch('/api/assets/user-fonts', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const fontList: { name: string; url: string }[] = data.fonts || [];
+      for (const font of fontList) {
+        try {
+          const buffer = await (await fetch(font.url)).arrayBuffer();
+          const face = new FontFace(font.name, buffer);
+          const loaded = await face.load();
+          (document.fonts as any).add(loaded);
+          setCustomFonts(prev => prev.includes(font.name) ? prev : [...prev, font.name]);
+        } catch { /* Bá» qua font bá»‹ lá»—i */ }
+      }
+    } catch (error) { console.error('Load user fonts error:', error); }
+  };
 
+  useEffect(() => { loadUserFonts(); }, []);
+
+  // --- 3. Core Interaction ---
   const handleMouseDown = (e: any) => {
     const isTransformer = e.target.getParent()?.className === 'Transformer';
     if (isTransformer) return;
-
     const isBackground = e.target === e.target.getStage() || e.target.id() === 'bg';
 
-    if (isBackground) {
-      const pos = e.target.getStage().getPointerPosition();
+    const stage = e.target.getStage();
+    // CÃƒâ€NG THÃ¡Â»Â¨C CHUÃ¡ÂºÂ¨N: Quy Ã„â€˜Ã¡Â»â€¢i tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ mÃƒÂ n hÃƒÂ¬nh sang tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ bÃƒÂªn trong Canvas (Ã„â€˜ÃƒÂ£ tÃƒÂ­nh Zoom/Pan)
+    const pointerPosition = stage.getPointerPosition();
+    const pos = {
+      x: (pointerPosition.x - stage.x()) / stage.scaleX(),
+      y: (pointerPosition.y - stage.y()) / stage.scaleY()
+    };
 
+    if (isBackground) {
       if (selectedIds.length > 1 && trRef.current) {
+        // Khung bÃ¡Â»Âc cÃ¡Â»Â§a Transformer tÃƒÂ­nh bÃ¡ÂºÂ±ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tuyÃ¡Â»â€¡t Ã„â€˜Ã¡Â»â€˜i mÃƒÂ n hÃƒÂ¬nh
         const box = trRef.current.getClientRect();
-        if (
-          pos.x >= box.x && pos.x <= box.x + box.width &&
-          pos.y >= box.y && pos.y <= box.y + box.height
-        ) {
+        if (pointerPosition.x >= box.x && pointerPosition.x <= box.x + box.width && pointerPosition.y >= box.y && pointerPosition.y <= box.y + box.height) {
           const nodes = selectedIds.map(sid => layerRef.current.findOne(`#${sid}`)).filter(Boolean);
-          nodes.forEach(node => {
-            node.setAttr('dragStartX', node.x());
-            node.setAttr('dragStartY', node.y());
-          });
-          
-          setGroupDrag({ isDragging: true, startX: pos.x, startY: pos.y });
+          nodes.forEach(node => { node.setAttr('dragStartX', node.x()); node.setAttr('dragStartY', node.y()); });
+          setGroupDrag({ isDragging: true, startX: pos.x, startY: pos.y }); // DÃƒÂ¹ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tÃ†Â°Ã†Â¡ng Ã„â€˜Ã¡Â»â€˜i Ã„â€˜Ã¡Â»Æ’ kÃƒÂ©o
           return;
         }
       }
-
       e.evt.preventDefault();
-      setSelectionRect({
-        visible: true, startX: pos.x, startY: pos.y, x: pos.x, y: pos.y, width: 0, height: 0,
-      });
+      // BÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u vÃ¡ÂºÂ½ khung chÃ¡Â»Ân (bÃ¡ÂºÂ±ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tÃ†Â°Ã†Â¡ng Ã„â€˜Ã¡Â»â€˜i)
+      setSelectionRect({ visible: true, startX: pos.x, startY: pos.y, x: pos.x, y: pos.y, width: 0, height: 0 });
       setSelectedIds([]);
       return;
     }
 
     const clickedOnId = e.target.id();
     if (!clickedOnId) return;
-
     if (!e.evt.shiftKey) {
       if (!selectedIds.includes(clickedOnId)) setSelectedIds([clickedOnId]);
     } else {
@@ -354,19 +322,19 @@ export default function EditorPage() {
   };
 
   const handleMouseMove = (e: any) => {
-    const pos = e.target.getStage().getPointerPosition();
+    const stage = e.target.getStage();
+    const pointerPosition = stage.getPointerPosition();
+    const pos = {
+      x: (pointerPosition.x - stage.x()) / stage.scaleX(),
+      y: (pointerPosition.y - stage.y()) / stage.scaleY()
+    };
 
     if (groupDrag.isDragging) {
       e.evt.preventDefault();
       const dx = pos.x - groupDrag.startX;
       const dy = pos.y - groupDrag.startY;
-
       const nodes = selectedIds.map(sid => layerRef.current.findOne(`#${sid}`)).filter(Boolean);
-      nodes.forEach(node => {
-        node.x(node.getAttr('dragStartX') + dx);
-        node.y(node.getAttr('dragStartY') + dy);
-      });
-      
+      nodes.forEach(node => { node.x(node.getAttr('dragStartX') + dx); node.y(node.getAttr('dragStartY') + dy); });
       trRef.current?.getLayer().batchDraw();
       return;
     }
@@ -383,30 +351,34 @@ export default function EditorPage() {
   };
 
   const handleMouseUp = (e: any) => {
+    const stage = e.target.getStage();
+    const pointerPosition = stage.getPointerPosition();
+    const pos = {
+      x: (pointerPosition.x - stage.x()) / stage.scaleX(),
+      y: (pointerPosition.y - stage.y()) / stage.scaleY()
+    };
+
     if (groupDrag.isDragging) {
       e.evt.preventDefault();
-      const pos = e.target.getStage().getPointerPosition();
       const dx = pos.x - groupDrag.startX;
       const dy = pos.y - groupDrag.startY;
 
-      setElements(prevElements => prevElements.map(el => {
-        if (selectedIds.includes(el.id)) {
-          return { ...el, x: el.x + dx, y: el.y + dy };
-        }
+      // SÃ¡Â»Â¬ DÃ¡Â»Â¤NG SYNCELEMENTS Ã¡Â»Å¾ Ã„ÂÃƒâ€šY
+      const newElements = elements.map(el => {
+        if (selectedIds.includes(el.id)) return { ...el, x: el.x + dx, y: el.y + dy };
         return el;
-      }));
-      
+      });
+      syncElements(newElements);
+
       setGroupDrag({ isDragging: false, startX: 0, startY: 0 });
       return;
     }
 
     if (!selectionRect.visible) return;
     e.evt.preventDefault();
+    setTimeout(() => { setSelectionRect(prev => ({ ...prev, visible: false })); });
 
-    setTimeout(() => {
-      setSelectionRect(prev => ({ ...prev, visible: false }));
-    });
-
+    // TÃƒÂ­nh toÃƒÂ¡n va chÃ¡ÂºÂ¡m (DÃƒÂ¹ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tuyÃ¡Â»â€¡t Ã„â€˜Ã¡Â»â€˜i cÃ¡Â»Â§a mÃƒÂ n hÃƒÂ¬nh Ã„â€˜Ã¡Â»Æ’ so sÃƒÂ¡nh cho chuÃ¡ÂºÂ©n)
     const selBox = selectionRectRef.current.getClientRect();
     const newSelectedIds = elements.filter(el => {
       const node = layerRef.current.findOne(`#${el.id}`);
@@ -418,249 +390,505 @@ export default function EditorPage() {
     setSelectedIds(newSelectedIds);
   };
 
+  // --- 4. Page Management ---
   const handlePageChange = (newPageId: string) => {
     if (newPageId === currentPageId) return;
-
-    // 1. Chụp ảnh thumbnail trang hiện tại (chất lượng thấp để nhẹ máy)
     let thumb = '';
-    if (stageRef.current) {
-      // Ẩn khung chọn tím trước khi chụp
-      setSelectedIds([]); 
-      thumb = stageRef.current.toDataURL({ pixelRatio: 0.2 });
-    }
-
-    // 2. Lưu elements và thumbnail vào page cũ
-    const updatedPages = pages.map(p => 
-      p.id === currentPageId ? { ...p, elements: elements, thumbnail: thumb } : p
-    );
-    setPages(updatedPages);
-
-    // 3. Nạp elements của trang mới lên Canvas
-    const targetPage = updatedPages.find(p => p.id === newPageId);
-    setElements(targetPage?.elements || []);
-    setCurrentPageId(newPageId);
-  };
-
-  // Hàm 2: Thêm trang mới
-  const handleAddPage = () => {
-    // 1. Chụp và lưu trang hiện tại
-    let thumb = '';
-    if (stageRef.current) {
+    if (stageRef.current && currentPageType === 'canvas') {
       setSelectedIds([]);
       thumb = stageRef.current.toDataURL({ pixelRatio: 0.2 });
     }
-    const updatedPages = pages.map(p => 
+    const updatedPages = pages.map(p =>
       p.id === currentPageId ? { ...p, elements: elements, thumbnail: thumb } : p
     );
-
-    // 2. Tạo trang trống mới
-    const newPageId = crypto.randomUUID();
-    const newPage = { 
-      id: newPageId, 
-      page_order: updatedPages.length, 
-      elements: [], 
-      thumbnail: '' 
-    };
-
-    // 3. Cập nhật state
-    setPages([...updatedPages, newPage]);
-    setElements([]); // Xóa trắng Canvas
+    setPages(updatedPages);
+    const targetPage = updatedPages.find(p => p.id === newPageId);
+    setElements(targetPage?.elements || []);
     setCurrentPageId(newPageId);
+
+    // FIX: CÃ¡ÂºÂ­p nhÃ¡ÂºÂ­t kim thÃ¡Â»Âi gian (Scrubber) nhÃ¡ÂºÂ£y Ã„â€˜Ã¡ÂºÂ¿n Ã„â€˜Ã¡ÂºÂ§u cÃ¡Â»Â§a Trang vÃ¡Â»Â«a chÃ¡Â»Ân
+    const targetTiming = pageTimings.find((pt: any) => pt.id === newPageId);
+    if (targetTiming) {
+      setCurrentTime(targetTiming.start);
+    }
   };
 
-  // --- 4. Element Management (CRUD Operations) ---
-  // Các hàm thêm, cập nhật, xóa, và di chuyển các phần tử trong state `elements`.
+  const handleAddPage = () => {
+    let thumb = '';
+    if (stageRef.current && currentPageType === 'canvas') {
+      setSelectedIds([]);
+      thumb = stageRef.current.toDataURL({ pixelRatio: 0.2 });
+    }
+    const updatedPages = pages.map(p =>
+      p.id === currentPageId ? { ...p, elements: elements, thumbnail: thumb } : p
+    );
+    const newPageId = crypto.randomUUID();
+    const newPage = {
+      id: newPageId, page_order: updatedPages.length,
+      type: currentPageType, width: stageWidth, height: stageHeight, // KÃ¡ÂºÂ¿ thÃ¡Â»Â«a thuÃ¡Â»â„¢c tÃƒÂ­nh trang
+      elements: [], content: '', thumbnail: ''
+    };
+    setPages([...updatedPages, newPage]);
+    setElements([]);
+    setCurrentPageId(newPageId);
 
-  const addText = () => {
-    setElements([...elements, { 
-      id: crypto.randomUUID(), type: 'text', x: 150, y: 150, 
-      text: 'Double click to edit', fontSize: 32, fontFamily: 'Arial', 
-      fill: '#000000', width: 300, fontStyle: 'normal' 
-    }]);
+    // FIX: Khi thÃƒÂªm trang mÃ¡Â»â€ºi Ã¡Â»Å¸ cuÃ¡Â»â€˜i, Ã„â€˜Ã¡ÂºÂ©y kim thÃ¡Â»Âi gian chÃ¡ÂºÂ¡y kÃ¡Â»â€¹ch kim Ã„â€˜Ã¡ÂºÂ¿n cuÃ¡Â»â€˜i luÃƒÂ´n
+    setCurrentTime(totalDuration);
   };
 
-  const addRectangle = () => {
-    setElements([...elements, { id: crypto.randomUUID(), type: 'rect', x: 100, y: 100, width: 100, height: 100, fill: '#6366f1' }]);
+  const reorderPages = (dragIndex: number, dropIndex: number) => {
+    const newPages = [...pages];
+    const draggedItem = newPages.splice(dragIndex, 1)[0];
+    newPages.splice(dropIndex, 0, draggedItem);
+
+    // CÃ¡ÂºÂ­p nhÃ¡ÂºÂ­t lÃ¡ÂºÂ¡i page_order cho chuÃ¡ÂºÂ©n vÃ¡Â»â€ºi Database
+    const updatedOrderPages = newPages.map((p, idx) => ({ ...p, page_order: idx }));
+    setPages(updatedOrderPages);
   };
 
-  const addCircle = () => {
-    setElements([...elements, { id: crypto.randomUUID(), type: 'circle', x: 150, y: 150, radius: 50, fill: '#6366f1' }]);
+  // --- 5. Element CRUD & Ã„ÂÃ¡Â»â€™NG BÃ¡Â»Ëœ STATE (SYNC) ---
+
+  // HÃƒâ‚¬M QUAN TRÃ¡Â»Å’NG NHÃ¡ÂºÂ¤T: Ã„ÂÃ¡ÂºÂ£m bÃ¡ÂºÂ£o mÃ¡Â»Âi thay Ã„â€˜Ã¡Â»â€¢i trÃƒÂªn Canvas Ã„â€˜Ã¡Â»Âu Ã„â€˜Ã†Â°Ã¡Â»Â£c lÃ†Â°u ngay lÃ¡ÂºÂ­p tÃ¡Â»Â©c vÃƒÂ o `pages`
+  const syncElements = (newElements: any[]) => {
+    setElements(newElements);
+    setPages(prevPages => prevPages.map(p =>
+      p.id === currentPageId ? { ...p, elements: newElements } : p
+    ));
   };
 
-  const addImage = (src: string) => {
-    setElements([...elements, { id: crypto.randomUUID(), type: 'image', x: 200, y: 200, width: 200, height: 200, src }]);
-  };
+  const addText = () => syncElements([...elements, { id: crypto.randomUUID(), type: 'text', x: stageWidth / 2 - 150, y: stageHeight / 2 - 25, text: 'Double click to edit', fontSize: 32, fontFamily: 'Arial', fill: '#000000', width: 300, fontStyle: 'normal', timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'fadeIn' } }]);
+  const addRectangle = () => syncElements([...elements, { id: crypto.randomUUID(), type: 'rect', x: stageWidth / 2 - 100, y: stageHeight / 2 - 100, width: 200, height: 200, fill: '#6366f1', timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]);
+  const addImage = (src: string) => syncElements([...elements, { id: crypto.randomUUID(), type: 'image', x: stageWidth / 2 - 100, y: stageHeight / 2 - 100, width: 200, height: 200, src, timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]);
 
   const updateElement = (newAttrs: any) => {
-    setElements(elements.map(el => el.id === newAttrs.id ? newAttrs : el));
+    syncElements(elements.map(el => el.id === newAttrs.id ? newAttrs : el));
   };
 
   const deleteSelectedElement = () => {
     if (selectedIds.length === 0) return;
-    setElements(elements.filter(el => !selectedIds.includes(el.id)));
-    setSelectedIds([]); 
+    syncElements(elements.filter(el => !selectedIds.includes(el.id)));
+    setSelectedIds([]);
   };
-  
+
   const moveElement = (direction: 'up' | 'down') => {
     if (selectedIds.length !== 1) return;
-    const index = elements.findIndex(el => el.id === selectedIds[0] );
+    const index = elements.findIndex(el => el.id === selectedIds[0]);
     const newElements = [...elements];
-    if (direction === 'up' && index < elements.length - 1) {
-      [newElements[index], newElements[index + 1]] = [newElements[index + 1], newElements[index]];
-    } else if (direction === 'down' && index > 0) {
-      [newElements[index], newElements[index - 1]] = [newElements[index - 1], newElements[index]];
-    }
-    setElements(newElements);
+    if (direction === 'up' && index < elements.length - 1) [newElements[index], newElements[index + 1]] = [newElements[index + 1], newElements[index]];
+    else if (direction === 'down' && index > 0) [newElements[index], newElements[index - 1]] = [newElements[index - 1], newElements[index]];
+    syncElements(newElements);
   };
 
-  // --- 5. Side Panel & Asset Management ---
-  // Logic liên quan đến các tab ở thanh bên: tìm kiếm, tải lên, v.v.
+  // --- LOGIC KÃƒâ€°O THÃ¡ÂºÂ¢ Ã„ÂÃ¡Â»â€I VÃ¡Â»Å  TRÃƒÂ LAYER ---
+  const handleLayerDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedLayerIdx(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
 
+  const handleLayerDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverIdx !== index) setDragOverIdx(index); // HiÃ¡Â»â€¡n thanh ngang tÃ¡ÂºÂ¡i vÃ¡Â»â€¹ trÃƒÂ­ hover
+  };
+
+  const handleLayerDragLeave = (e: React.DragEvent, index: number) => {
+    if (dragOverIdx === index) setDragOverIdx(null); // TÃ¡ÂºÂ¯t thanh ngang khi chuÃ¡Â»â„¢t rÃ¡Â»Âi Ã„â€˜i
+  };
+
+  const handleLayerDragEnd = () => {
+    setDraggedLayerIdx(null);
+    setDragOverIdx(null); // TÃ¡ÂºÂ¯t mÃ¡Â»Âi trÃ¡ÂºÂ¡ng thÃƒÂ¡i khi thÃ¡ÂºÂ£ chuÃ¡Â»â„¢t
+  };
+
+  const handleLayerDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    setDragOverIdx(null); // TÃ¡ÂºÂ¯t thanh ngang ngay lÃ¡ÂºÂ­p tÃ¡Â»Â©c
+
+    if (draggedLayerIdx !== null && draggedLayerIdx !== dropIndex) {
+      const reversedElements = [...elements].reverse();
+      const [draggedItem] = reversedElements.splice(draggedLayerIdx, 1);
+      reversedElements.splice(dropIndex, 0, draggedItem);
+
+      const newElements = reversedElements.reverse().map((el, idx) => ({
+        ...el, z_index: idx
+      }));
+
+      setElements(newElements);
+      setPages(pages.map(p => p.id === currentPageId ? { ...p, elements: newElements } : p));
+    }
+    setDraggedLayerIdx(null);
+  };
+
+  // --- 6. Assets & Search ---
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
-    try { 
+    try {
       const res = await fetch(`/api/assets/search?q=${encodeURIComponent(searchQuery)}&type=sticker`);
       const data = await res.json();
       setSearchResults(data.assets || []);
       setActiveTab('search_results');
-    } catch (error) { console.error('Search failed:', error); }
+    } catch (error) { console.error(error); }
   };
 
-  const fetchAssets = async (type: string) => {
-    try {
-      const res = await fetch(`/api/assets/search?type=${type}`);
-      const data = await res.json();
-      setSearchResults(data.assets || []);
-      setActiveTab('search_results');
-    } catch (error) { console.error('Search failed:', error); }
-  };
-  
   const handleFontUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const fontName = file.name.split('.')[0];
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const fontData = event.target?.result as ArrayBuffer;
-      const fontFace = new FontFace(fontName, fontData);
-      try {
-        const loadedFace = await fontFace.load();
-        (document.fonts as any).add(loadedFace);
-        setCustomFonts(prev => [...prev, fontName]);
-        alert(`Font ${fontName} đã được nạp!`);
-      } catch (err) { alert("Lỗi font!"); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-  
-  // --- 6. Save & Export ---
-  // Các hàm xử lý việc lưu trữ dữ liệu thiết kế lên server và xuất file ảnh.
+    e.target.value = ''; // Reset Ä‘á»ƒ upload láº¡i cÃ¹ng file
 
+    const fontName = file.name.split('.')[0];
+    try {
+      // BÆ°á»›c 1: Upload lÃªn server
+      const formData = new FormData();
+      formData.append('font', file);
+      const res = await fetch('/api/assets/upload-font', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(`Lá»—i upload font: ${err.error || 'Unknown error'}`);
+        return;
+      }
+      const data = await res.json();
+      const fontUrl: string = data.url;
+      const savedName: string = data.name || fontName;
+
+      // BÆ°á»›c 2: Náº¡p font vÃ o trÃ¬nh duyá»‡t ngay láº­p tá»©c
+      const buffer = await (await fetch(fontUrl)).arrayBuffer();
+      const fontFace = new FontFace(savedName, buffer);
+      const loadedFace = await fontFace.load();
+      (document.fonts as any).add(loadedFace);
+
+      // BÆ°á»›c 3: ThÃªm vÃ o danh sÃ¡ch font dropdown
+      setCustomFonts(prev => prev.includes(savedName) ? prev : [...prev, savedName]);
+      alert(`Font "${savedName}" Ä‘Ã£ Ä‘Æ°á»£c náº¡p vÃ  lÆ°u thÃ nh cÃ´ng!`);
+    } catch (err) {
+      console.error('Font upload error:', err);
+      alert('Lá»—i khi upload font!');
+    }
+  };
+  // --- TÁCH NỀN BẰNG AI ---
+  const handleRemoveBackground = async (element: any) => {
+    if (!element || !element.src) return;
+
+    setIsProcessingBg(true);
+    try {
+      const res = await fetch(element.src);
+      const blob = await res.blob();
+
+      const formData = new FormData();
+      formData.append('image', blob, 'image.png');
+
+      const uploadRes = await fetch('http://localhost:3000/api/assets/remove-bg', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error('Lỗi từ server tách nền');
+      }
+
+      const data = await uploadRes.json();
+
+      const backendUrl = `http://localhost:3000${data.url}`;
+      updateElement({ ...element, src: backendUrl });
+
+    } catch (err) {
+      console.error('Lỗi khi xóa nền:', err);
+      alert('Đã xảy ra lỗi khi xóa nền. Vui lòng kiểm tra lại AI service.');
+    } finally {
+      setIsProcessingBg(false);
+    }
+  };
+
+  // Trong file EditorPage.tsx -> hÃƒÂ m handleSave
   const handleSave = async (isSilent = false) => {
     setSaveStatus('saving');
     setIsSaving(true);
     try {
       let currentThumb = '';
-      if (stageRef.current) {
-         currentThumb = stageRef.current.toDataURL({ pixelRatio: 0.2 });
+      if (stageRef.current && currentPageType === 'canvas') {
+        currentThumb = stageRef.current.toDataURL({ pixelRatio: 0.2 });
       }
 
-      const finalPages = pages.map(p => 
+      const finalPages = pages.map(p =>
         p.id === currentPageId ? { ...p, elements: elements, thumbnail: currentThumb } : p
       );
 
-      // 👇 LẤY THUMBNAIL CỦA PAGE ĐẦU TIÊN
       const projectThumbnail = finalPages.length > 0 ? finalPages[0].thumbnail : '';
 
       const payload = {
         title: design?.title || 'Untitled Design',
-        thumbnail_url: projectThumbnail, // 👇 THÊM DÒNG NÀY ĐỂ GỬI ẢNH BÌA XUỐNG DB
+        thumbnail_url: projectThumbnail,
         pages: finalPages.map((page, index) => ({
           id: page.id,
           page_order: index,
-          thumbnail: page.thumbnail, 
-          elements: page.elements.map((el: any, idx: number) => {
+          thumbnail: page.thumbnail,
+          // BÃ¡Â»â€ SUNG CÃƒÂC TRÃ†Â¯Ã¡Â»Å“NG DÃ†Â¯Ã¡Â»Å¡I Ã„ÂÃƒâ€šY:
+          type: page.type || 'canvas',
+          width: page.width || 1920,
+          height: page.height || 1080,
+          content: page.content || '', // NÃ¡Â»â„¢i dung text cho Doc
+          transition: page.transition || null,
+          duration: page.duration || 5,
+          elements: (page.type === 'canvas') ? page.elements.map((el: any, idx: number) => {
             let dbType = el.type || el.element_type || 'text';
-            if (dbType === 'rect') dbType = 'shape'; 
-
+            if (dbType === 'rect') dbType = 'shape';
             return {
               id: el.id,
               element_type: dbType,
               z_index: idx,
-              properties: el, 
+              properties: el,
               visible: true,
               locked: false
             };
-          })
+          }) : [] // NÃ¡ÂºÂ¿u khÃƒÂ´ng phÃ¡ÂºÂ£i canvas thÃƒÂ¬ gÃ¡Â»Â­i mÃ¡ÂºÂ£ng rÃ¡Â»â€”ng
         }))
       };
 
       await updateDesignFull(id!, payload);
       setSaveStatus('saved');
-      if (!isSilent) alert("Thiết kế đã được lưu thành công!");
+      if (!isSilent) alert("Ã„ÂÃƒÂ£ lÃ†Â°u thÃƒÂ nh cÃƒÂ´ng!");
     } catch (error) {
       setSaveStatus('unsaved');
-      console.error("Save error:", error);
+      console.error("LÃ¡Â»â€”i khi lÃ†Â°u:", error);
     } finally {
       setIsSaving(false);
     }
   };
 
+  // KÃƒÂ­ch hoÃ¡ÂºÂ¡t Modal xuÃ¡ÂºÂ¥t file
   const handleExport = () => {
-    setSelectedIds([]);
-    setSelectionRect(prev => ({ ...prev, visible: false }));
-
-    setTimeout(() => {
-      if (!stageRef.current) return;
-
-      const dataURL = stageRef.current.toDataURL({
-        pixelRatio: 2,
-        mimeType: 'image/png',
-      });
-
-      const link = document.createElement('a');
-      link.download = `${design?.title || 'Untitled-Design'}.png`;
-      link.href = dataURL;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }, 100); 
+    setExportSelectedPages(pages.map(p => p.id)); // MÃ¡ÂºÂ·c Ã„â€˜Ã¡Â»â€¹nh chÃ¡Â»Ân tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ cÃƒÂ¡c trang
+    setShowExportModal(true);
   };
-  
-  // --- 7. Side Effects (useEffect Hooks) & Event Listeners ---
-  // Các hook `useEffect` để xử lý các tác vụ phụ thuộc vào sự thay đổi của state hoặc lắng nghe sự kiện toàn cục.
 
+  // Logic xuÃ¡ÂºÂ¥t file thÃ¡Â»Â±c tÃ¡ÂºÂ¿ (Ã„ÂÃƒÆ’ TÃƒÂCH HÃ¡Â»Â¢P ZIP & PPTX VÃƒâ‚¬ SÃ¡Â»Â¬A LÃ¡Â»â€“I CHÃ¡Â»Å’N PAGE MP4)
+  // Logic xuÃ¡ÂºÂ¥t file thÃ¡Â»Â±c tÃ¡ÂºÂ¿ (BÃ¡ÂºÂ¢N FINAL - Ãƒâ€°P XUNG FPS Ã„ÂÃ¡Â»â€š ANIMATION SIÃƒÅ U MÃ†Â¯Ã¡Â»Â¢T)
+  const executeExport = async () => {
+    if (exportStatus !== 'idle') return;
+
+    if (exportSelectedPages.length === 0) return alert("Vui lÃƒÂ²ng chÃ¡Â»Ân ÃƒÂ­t nhÃ¡ÂºÂ¥t 1 trang!");
+
+    setExportStatus('rendering');
+    setExportProgress(5);
+    setShowExportPopover(false);
+
+    try {
+      if (exportConfig.format === 'mp4') {
+        const stage = stageRef.current;
+        const canvas = stage.container().querySelector('canvas');
+        if (!canvas) throw new Error("Canvas not found");
+
+        const selectedTimings = pageTimings.filter((pt: any) => exportSelectedPages.includes(pt.id));
+        if (selectedTimings.length === 0) return;
+
+        const startExportTime = selectedTimings[0].start;
+        const endExportTime = selectedTimings[selectedTimings.length - 1].end;
+        const exportDuration = endExportTime - startExportTime;
+
+        // 1. TUA VÃ¡Â»â‚¬ Ã„ÂÃ¡ÂºÂ¦U VÃƒâ‚¬ DÃ¡Â»Å’N DÃ¡ÂºÂ¸P
+        setIsPlaying(false);
+        setCurrentTime(startExportTime);
+        setSelectedIds([]);
+
+        // 2. CHÃ¡Â»Å“ 300ms Ã„ÂÃ¡Â»â€š RENDER XONG TRÃ¡ÂºÂ NG THÃƒÂI 0s
+        setTimeout(() => {
+          // Ã°Å¸â€Â¥ NÃƒâ€šNG FPS LÃƒÅ N 60 Ã„ÂÃ¡Â»â€š BÃ¡ÂºÂ®T CHUYÃ¡Â»â€šN Ã„ÂÃ¡Â»ËœNG MÃ†Â¯Ã¡Â»Â¢T NHÃ¡ÂºÂ¤T
+          const stream = canvas.captureStream(60);
+          const mimeType = MediaRecorder.isTypeSupported('video/webm; codecs=vp9') ? 'video/webm; codecs=vp9' : 'video/webm';
+
+          // Ãƒâ€°p chÃ¡ÂºÂ¥t lÃ†Â°Ã¡Â»Â£ng bitrate lÃƒÂªn 5Mbps cho video nÃƒÂ©t cÃ„Æ’ng
+          const recorder = new MediaRecorder(stream, {
+            mimeType,
+            videoBitsPerSecond: 5000000
+          });
+
+          const chunks: Blob[] = [];
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) chunks.push(e.data);
+          };
+
+          // Ã°Å¸â€Â¥ BÃ¡ÂºÂ¬T MÃƒÂY BÃ†Â M FPS: Ãƒâ€°p Konva phÃ¡ÂºÂ£i vÃ¡ÂºÂ½ lÃ¡ÂºÂ¡i Ã„â€˜Ã¡Â»â€œ hÃ¡Â»Âa liÃƒÂªn tÃ¡Â»Â¥c Ã„â€˜Ã¡Â»Æ’ feed cho Camera
+          const forceRedrawAnim = new Konva.Animation(() => {
+            if (layerRef.current) layerRef.current.draw();
+          });
+
+          recorder.onstop = async () => {
+            forceRedrawAnim.stop(); // Quay xong thÃƒÂ¬ tÃ¡ÂºÂ¯t ÃƒÂ©p xung ngay lÃ¡ÂºÂ­p tÃ¡Â»Â©c
+
+            setExportStatus('uploading');
+            setExportProgress(90);
+
+            const videoBlob = new Blob(chunks, { type: 'video/webm' });
+
+            try {
+              const mp4Blob = await uploadVideoForExport(videoBlob);
+              saveAs(mp4Blob, `${design?.title || 'Video'}.mp4`);
+              setExportProgress(100);
+              setExportStatus('completed');
+              setTimeout(() => setExportStatus('idle'), 3000);
+            } catch (err) {
+              alert("LÃ¡Â»â€”i tÃ¡ÂºÂ£i video tÃ¡Â»Â« Server!");
+              setExportStatus('idle');
+            }
+          };
+
+          // 3. ACTION! BÃ¡ÂºÂ¬T MÃƒÂY QUAY VÃƒâ‚¬ CHÃ¡ÂºÂ Y HIÃ¡Â»â€ U Ã¡Â»Â¨NG
+          forceRedrawAnim.start(); // KÃƒÂ­ch hoÃ¡ÂºÂ¡t mÃƒÂ¡y bÃ†Â¡m FPS trÃ†Â°Ã¡Â»â€ºc
+          recorder.start();
+          setIsPlaying(true);
+
+          // TiÃ¡ÂºÂ¿n trÃƒÂ¬nh %
+          const progressInterval = setInterval(() => {
+            const currentT = currentTimeRef.current;
+            const p = Math.min(85, ((currentT - startExportTime) / exportDuration) * 90);
+            setExportProgress(Math.max(0, Math.floor(p)));
+
+            if (currentT >= endExportTime || !isPlayingRef.current) {
+              clearInterval(progressInterval);
+              setIsPlaying(false);
+              if (recorder.state === 'recording') recorder.stop();
+            }
+          }, 100);
+
+        }, 300); // TrÃ¡Â»â€¦ 300ms
+
+      } else {
+        // ... (PhÃ¡ÂºÂ§n xuÃ¡ÂºÂ¥t Ã¡ÂºÂ£nh PNG/JPG giÃ¡Â»Â¯ nguyÃƒÂªn) {
+        // XÃ¡Â»Â­ lÃƒÂ½ Ã¡ÂºÂ£nh PNG/JPG/PPTX
+        setExportProgress(30);
+        const pagesToExport = pages.filter(p => exportSelectedPages.includes(p.id));
+
+        if (exportConfig.format === 'pptx') {
+          const pptx = new pptxgen();
+          // Set layout chuÃ¡ÂºÂ©n 16:9 (tÃ†Â°Ã†Â¡ng Ã„â€˜Ã†Â°Ã†Â¡ng 10 x 5.625 inches)
+          pptx.layout = 'LAYOUT_16x9';
+
+          pagesToExport.forEach(p => {
+            const slide = pptx.addSlide();
+
+            // 1. Ã„ÂÃ¡Â»â€¢ mÃƒÂ u nÃ¡Â»Ân nÃ¡ÂºÂ¿u cÃƒÂ³
+            if (p.background_color) {
+              slide.background = { color: p.background_color.replace('#', '') };
+            }
+
+            // 2. LÃ¡ÂºÂ¥y dÃ¡Â»Â¯ liÃ¡Â»â€¡u mÃ¡ÂºÂ£ng elements chuÃ¡ÂºÂ©n 
+            const pageElements = p.id === currentPageId ? elements : (p.elements || []);
+
+            // 3. DuyÃ¡Â»â€¡t qua tÃ¡Â»Â«ng layer vÃƒÂ  "vÃ¡ÂºÂ½" lÃ¡ÂºÂ¡i chÃƒÂºng
+            // Ã°Å¸â€Â¥ FIX 1: Khai bÃƒÂ¡o rÃƒÂµ (el: any) Ã„â€˜Ã¡Â»Æ’ hÃ¡ÂºÂ¿t bÃƒÂ¡o Ã„â€˜Ã¡Â»Â
+            pageElements.forEach((el: any) => {
+
+              // Ã°Å¸â€Â¥ FIX 2: DÃƒÂ¹ng sÃ¡Â»â€˜ Inch thay vÃƒÂ¬ % Ã„â€˜Ã¡Â»Æ’ TypeScript vÃƒÂ  PPTX cÃƒÂ¹ng vui vÃ¡ÂºÂ»
+              const pptxWidth = 10; // KÃƒÂ­ch thÃ†Â°Ã¡Â»â€ºc chuÃ¡ÂºÂ©n 10 inches
+              const pptxHeight = 5.625; // KÃƒÂ­ch thÃ†Â°Ã¡Â»â€ºc chuÃ¡ÂºÂ©n 5.625 inches
+
+              const x = (el.x / stageWidth) * pptxWidth;
+              const y = (el.y / stageHeight) * pptxHeight;
+              const w = (el.width / stageWidth) * pptxWidth;
+              const h = (el.height / stageHeight) * pptxHeight;
+
+              const colorHex = el.fill ? el.fill.replace('#', '') : '000000';
+
+              // Quy Ã„â€˜Ã¡Â»â€¢i Ã„â€˜Ã¡Â»â„¢ mÃ¡Â»Â opacity sang transparency cÃ¡Â»Â§a PowerPoint (0 - 100%)
+              const transparency = el.opacity !== undefined ? (1 - el.opacity) * 100 : 0;
+              const rotate = el.rotation || 0;
+
+              if (el.type === 'text') {
+                // ChuyÃ¡Â»Æ’n Ã„â€˜Ã¡Â»â€¢i px sang Point cÃ¡Â»Â§a PPTX (Slide 16:9 dÃƒÂ i 10 inch, 1 inch = 72 point => mÃƒÂ n hÃƒÂ¬nh dÃƒÂ i 720 point)
+                const ptSize = (el.fontSize / stageWidth) * 720;
+
+                slide.addText(el.text || el.content || ' ', {
+                  x, y, w, h,
+                  fontSize: ptSize,
+                  color: colorHex,
+                  fontFace: el.fontFamily || 'Arial',
+                  align: el.align || 'center',
+                  valign: 'middle',
+                  bold: el.fontStyle?.includes('bold'),
+                  italic: el.fontStyle?.includes('italic'),
+                  transparency,
+                  rotate
+                });
+              } else if (el.type === 'rect' || el.type === 'shape') {
+                slide.addShape(pptx.ShapeType.rect, {
+                  x, y, w, h,
+                  fill: { color: colorHex, transparency },
+                  rotate
+                });
+              } else if (el.type === 'circle') {
+                slide.addShape(pptx.ShapeType.ellipse, {
+                  x, y, w, h,
+                  fill: { color: colorHex, transparency },
+                  rotate
+                });
+              } else if (el.type === 'image' || el.type === 'sticker') {
+                if (!el.src) return;
+                const isBase64 = el.src.startsWith('data:image');
+                try {
+                  slide.addImage({
+                    x, y, w, h,
+                    [isBase64 ? 'data' : 'path']: el.src,
+                    sizing: { type: 'contain', w, h },
+                    transparency,
+                    rotate
+                  });
+                } catch (e) {
+                  console.error("LÃ¡Â»â€”i khi thÃƒÂªm Ã¡ÂºÂ£nh vÃƒÂ o PPTX:", e);
+                }
+              }
+            });
+          });
+
+          await pptx.writeFile({ fileName: `${design?.title || 'Kanva_Export'}.pptx` });
+        } else {
+          // PNG/JPG vÃ¡Â»â€ºi Scaling
+          if (pagesToExport.length === 1) {
+            const dataURL = stageRef.current.toDataURL({ pixelRatio: exportScale });
+            saveAs(dataURL, `${design?.title}.${exportConfig.format}`);
+          } else {
+            const zip = new JSZip();
+            pagesToExport.forEach((p, i) => {
+              const dataURL = p.id === currentPageId ? stageRef.current.toDataURL({ pixelRatio: exportScale }) : p.thumbnail;
+              if (dataURL) zip.file(`Page_${i + 1}.${exportConfig.format}`, dataURL.split(',')[1], { base64: true });
+            });
+            const content = await zip.generateAsync({ type: "blob" });
+            saveAs(content, "export.zip");
+          }
+        }
+        setExportProgress(100);
+        setExportStatus('completed');
+        setTimeout(() => setExportStatus('idle'), 3000);
+      }
+    } catch (error) {
+      setExportStatus('idle');
+      alert("LÃ¡Â»â€”i xuÃ¡ÂºÂ¥t file!");
+    }
+  };
+
+  // --- 8. Side Effects ---
   useEffect(() => {
     if (isInitialMount.current) {
-      if (elements.length > 0 || pages.length > 0) {
-          isInitialMount.current = false;
-      }
+      if (elements.length > 0 || pages.length > 0) isInitialMount.current = false;
       return;
     }
-
     setSaveStatus('unsaved');
-
-    const timer = setTimeout(() => {
-      handleSave(true); 
-    }, 3000);
-
+    const timer = setTimeout(() => { handleSave(true); }, 3000);
     return () => clearTimeout(timer);
   }, [elements, pages, design?.title]);
 
-  // Effect để gắn các nodes đã chọn vào Transformer
   useEffect(() => {
     if (trRef.current && layerRef.current) {
-      const nodes = selectedIds
-        .map(id => layerRef.current.findOne(`#${id}`))
-        .filter(Boolean);
-      
+      const nodes = selectedIds.map(id => layerRef.current.findOne(`#${id}`)).filter(Boolean);
       trRef.current.nodes(nodes);
       trRef.current.getLayer().batchDraw();
     }
   }, [selectedIds, elements]);
 
-  // Effect cho phím tắt Xóa (Delete/Backspace)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && !editingId && selectedIds.length > 0) {
@@ -673,463 +901,310 @@ export default function EditorPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedIds, elements, editingId]);
 
-  // Effect cho chức năng Dán (Paste) ảnh từ clipboard
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
       const items = e.clipboardData?.items;
       if (!items) return;
-
       for (let i = 0; i < items.length; i++) {
         if (items[i].type.indexOf('image') !== -1) {
           const file = items[i].getAsFile();
           if (!file) continue;
-
           const reader = new FileReader();
           reader.onload = (event) => {
             const base64Url = event.target?.result as string;
             const img = new window.Image();
             img.src = base64Url;
             img.onload = () => {
-              const maxWidth = 400;
-              const ratio = img.width > maxWidth ? maxWidth / img.width : 1;
-              const finalWidth = img.width * ratio;
-              const finalHeight = img.height * ratio;
+              // 1. ThÃƒÂªm vÃƒÂ o Canvas vÃ¡Â»â€ºi kÃƒÂ­ch thÃ†Â°Ã¡Â»â€ºc chuÃ¡ÂºÂ©n gÃ¡Â»â€˜c
+              addImageOriginal(base64Url, img.width, img.height);
 
-              setElements(prev => [...prev, { 
-                id: crypto.randomUUID(), type: 'image', 
-                x: stageWidth / 2 - finalWidth / 2, y: stageHeight / 2 - finalHeight / 2, 
-                width: finalWidth, height: finalHeight, src: base64Url 
-              }]);
-              setActiveTab('elements'); 
+              // 2. GÃ¡Â»Â­i bÃ¡ÂºÂ£n sao cÃ¡Â»Â§a Ã¡ÂºÂ£nh vÃƒÂ o Tab Uploads Ã„â€˜Ã¡Â»Æ’ quÃ¡ÂºÂ£n lÃƒÂ½ tÃ¡ÂºÂ­p trung
+              setUploadedImages(prev => [{ id: crypto.randomUUID(), url: base64Url, width: img.width, height: img.height }, ...prev]);
+
+              // 3. TÃ¡Â»Â± Ã„â€˜Ã¡Â»â„¢ng bÃ¡ÂºÂ­t Tab Uploads ra cho ngÃ†Â°Ã¡Â»Âi dÃƒÂ¹ng dÃ¡Â»â€¦ nhÃƒÂ¬n thÃ¡ÂºÂ¥y
+              setActiveTab('uploads');
             };
           };
           reader.readAsDataURL(file);
-          e.preventDefault(); 
+          e.preventDefault();
           break;
         }
       }
     };
-
     window.addEventListener('paste', handlePaste as any);
     return () => window.removeEventListener('paste', handlePaste as any);
   }, [stageWidth, stageHeight]);
 
-  // --- 8. Derived State & Render Helpers ---
-  // Các biến được tính toán từ state, dùng để đơn giản hóa logic trong JSX.
-  
-  const selectedElement = selectedIds.length === 1 
-    ? elements.find(el => el.id === selectedIds[0]) 
-    : null;
-  const editingElement = elements.find(el => el.id === editingId);
+  // States cho Version History
+  const [showVersionModal, setShowVersionModal] = useState(false);
+  const [versions, setVersions] = useState<any[]>([]);
+  const [isRestoring, setIsRestoring] = useState(false);
 
-  // --- 9. JSX Rendering ---
-  // Cấu trúc giao diện người dùng của component.
+  // GÃ¡Â»Âi khi bÃ¡ÂºÂ¥m nÃƒÂºt "Version History"
+  const handleOpenVersionHistory = async () => {
+    setShowVersionModal(true);
+    try {
+      const data = await fetchDesignVersions(id!);
+      setVersions(data.versions || []);
+    } catch (error) { console.error(error); }
+  };
 
+  // KhÃƒÂ´i phÃ¡Â»Â¥c bÃ¡ÂºÂ£n cÃ…Â©
+  const handleRestore = async (versionId: string) => {
+    if (!window.confirm("BÃ¡ÂºÂ£n thiÃ¡ÂºÂ¿t kÃ¡ÂºÂ¿ hiÃ¡Â»â€¡n tÃ¡ÂºÂ¡i sÃ¡ÂºÂ½ bÃ¡Â»â€¹ ghi Ã„â€˜ÃƒÂ¨. BÃ¡ÂºÂ¡n cÃƒÂ³ chÃ¡ÂºÂ¯c chÃ¡ÂºÂ¯n muÃ¡Â»â€˜n khÃƒÂ´i phÃ¡Â»Â¥c?")) return;
+    setIsRestoring(true);
+    try {
+      await restoreDesignVersion(id!, versionId);
+      alert("Ã„ÂÃƒÂ£ khÃƒÂ´i phÃ¡Â»Â¥c thÃƒÂ nh cÃƒÂ´ng!");
+      window.location.reload(); // CÃƒÂ¡ch sÃ¡ÂºÂ¡ch nhÃ¡ÂºÂ¥t lÃƒÂ  F5 lÃ¡ÂºÂ¡i trang Ã„â€˜Ã¡Â»Æ’ nÃ¡ÂºÂ¡p lÃ¡ÂºÂ¡i dÃ¡Â»Â¯ liÃ¡Â»â€¡u mÃ¡Â»â€ºi tÃ¡Â»Â« DB
+    } catch (error) {
+      alert("LÃ¡Â»â€”i khi khÃƒÂ´i phÃ¡Â»Â¥c");
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  // ChÃ¡Â»Â¥p mÃ¡Â»â„¢t phiÃƒÂªn bÃ¡ÂºÂ£n thÃ¡Â»Â§ cÃƒÂ´ng
+  const handleSaveVersion = async () => {
+    await handleSave(true); // NhÃ¡Â»â€º lÃ†Â°u DB hiÃ¡Â»â€¡n tÃ¡ÂºÂ¡i trÃ†Â°Ã¡Â»â€ºc
+    try {
+      await createDesignVersion(id!);
+      alert("Ã„ÂÃƒÂ£ chÃ¡Â»Â¥p vÃƒÂ  lÃ†Â°u thÃƒÂ nh 1 phiÃƒÂªn bÃ¡ÂºÂ£n lÃ¡Â»â€¹ch sÃ¡Â»Â­!");
+    } catch (error) {
+      alert("LÃ¡Â»â€”i khi lÃ†Â°u phiÃƒÂªn bÃ¡ÂºÂ£n");
+    }
+  };
+
+  // --- 9. Render Giao DiÃ¡Â»â€¡n ---
   return (
-    <div className="h-screen flex flex-col bg-gray-100 overflow-hidden font-sans">
-      {/* Top Bar */}
-      <div className="h-14 bg-slate-900 text-white flex items-center justify-between px-4 z-30 shadow-md">
-        <div className="flex items-center gap-4">
-          <Link to="/" className="p-2 hover:bg-white/10 rounded-full transition"><ChevronLeft size={20} /></Link>
-          <div className="flex flex-col">
-            {/* LOGIC ĐỔI TÊN PROJECT */}
-            {isEditingTitle ? (
-              <input
-                type="text"
-                autoFocus
-                value={tempTitle}
-                onChange={(e) => setTempTitle(e.target.value)}
-                onBlur={() => {
-                  setIsEditingTitle(false);
-                  setDesign({ ...design, title: tempTitle || 'Untitled Design' });
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    setIsEditingTitle(false);
-                    setDesign({ ...design, title: tempTitle || 'Untitled Design' });
-                  }
-                }}
-                className="font-bold text-sm tracking-tight bg-slate-800 text-white border border-indigo-500 rounded px-1 py-0 outline-none w-48"
-              />
-            ) : (
-              <span 
-                onDoubleClick={() => setIsEditingTitle(true)}
-                className="font-bold text-sm tracking-tight cursor-text hover:bg-slate-800 rounded px-1 -ml-1 transition border border-transparent hover:border-slate-600"
-                title="Double click to rename"
-              >
-                {design?.title || 'Untitled Design'}
-              </span>
-            )}
-            
-            {/* Đèn trạng thái Auto-save giữ nguyên ở dưới */}
-            <div className="flex items-center gap-1.5 px-1 -ml-1 mt-0.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${
-                saveStatus === 'saving' ? 'bg-amber-400 animate-pulse' : 
-                saveStatus === 'unsaved' ? 'bg-rose-400' : 'bg-emerald-400'
-              }`} />
-              <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-                {saveStatus === 'saving' ? 'Đang lưu...' : 
-                saveStatus === 'unsaved' ? 'Có thay đổi chưa lưu' : 'Đã lưu vào hệ thống'}
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => handleSave(false)} disabled={isSaving} className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-bold flex items-center gap-2 transition">
-            <Save size={16} /> {isSaving ? 'Saving...' : 'Save'}
-          </button>
-          <button 
-            onClick={handleExport} 
-            className="px-4 py-1.5 bg-white text-slate-900 hover:bg-slate-50 rounded text-sm font-bold flex items-center gap-2 transition shadow-sm"
-          >
-            <Download size={16} /> Export
-          </button>
-        </div>
-      </div>
+    <div className="h-screen flex flex-col bg-gradient-to-br from-sky-50 via-white to-pink-50 overflow-hidden font-sans">
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar Left */}
-        <div className="w-20 bg-slate-800 text-slate-400 flex flex-col items-center py-6 gap-8 z-20 shrink-0 border-r border-slate-700">
-          <button onClick={() => setActiveTab('elements')} className={`flex flex-col items-center gap-1 ${activeTab === 'elements' || activeTab === 'search_results' ? 'text-white' : 'hover:text-slate-200'}`}>
-            <Square size={24} /><span className="text-[10px] font-bold uppercase tracking-tighter">Elements</span>
-          </button>
-          <button onClick={() => setActiveTab('uploads')} className={`flex flex-col items-center gap-1 ${activeTab === 'uploads' ? 'text-white' : 'hover:text-slate-200'}`}>
-            <ImageIcon size={24} /><span className="text-[10px] font-bold uppercase tracking-tighter">Uploads</span>
-          </button>
-          <button onClick={() => setActiveTab('text')} className={`flex flex-col items-center gap-1 ${activeTab === 'text' ? 'text-white' : 'hover:text-slate-200'}`}>
-            <Type size={24} /><span className="text-[10px] font-bold uppercase tracking-tighter">Text</span>
-          </button>
-          <label className="flex flex-col items-center gap-1 cursor-pointer hover:text-white mt-auto mb-4">
-            <Upload size={22} />
-            <span className="text-[10px] font-bold text-center">Import<br/>Font</span>
-            <input type="file" accept=".ttf,.otf" onChange={handleFontUpload} className="hidden" />
-          </label>
-        </div>
+      {/* 1. TOP BAR */}
+      <EditorTopBar
+        design={design}
+        saveStatus={saveStatus}
+        isSaving={isSaving}
+        isEditingTitle={isEditingTitle}
+        tempTitle={tempTitle}
+        setTempTitle={setTempTitle}
+        setIsEditingTitle={setIsEditingTitle}
+        setDesign={setDesign}
+        showExportPopover={showExportPopover}
+        setShowExportPopover={setShowExportPopover}
+        exportConfig={exportConfig}
+        setExportConfig={setExportConfig}
+        exportScale={exportScale}
+        setExportScale={setExportScale}
+        exportSelectedPages={exportSelectedPages}
+        setExportSelectedPages={setExportSelectedPages}
+        pages={pages}
+        stageWidth={stageWidth}
+        stageHeight={stageHeight}
+        executeExport={executeExport}
+        handleSave={handleSave}
+        handleSaveVersion={handleSaveVersion}
+        handleOpenVersionHistory={handleOpenVersionHistory}
+      />
 
-        {/* Object Panel (Drawer) */}
-        <div className="w-80 bg-white border-r border-slate-200 flex flex-col shadow-xl z-10 overflow-hidden">
-          <div className="p-4 border-b border-slate-100 font-bold text-slate-700 uppercase text-[11px] tracking-widest flex justify-between items-center">
-             <span>{activeTab.replace('_', ' ')}</span>
-             {activeTab === 'search_results' && <button onClick={() => setActiveTab('elements')} className="text-indigo-600 text-[10px]">Back</button>}
-          </div>
+      {/* 2. MAIN AREA */}
+      <div className="flex-1 flex overflow-hidden relative">
 
-          <div className="flex-1 overflow-y-auto p-4">
-            {/* Elements & Search */}
-            {(activeTab === 'elements' || activeTab === 'search_results') && (
-              <div className="space-y-6">
-                <form onSubmit={handleSearch} className="relative">
-                    <input 
-                        type="text" placeholder="Search icons, stickers..." value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2.5 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <Search className="absolute left-3 top-3 text-slate-400" size={16} />
-                </form>
+        {/* Icon Rail */}
+        <EditorSidebar
+          activeTab={activeTab}
+          setActiveTab={(tab: any) => {
+            setActiveTab(tab);
+            if (tab) { setShowPositionBox(false); setShowAnimateBox(false); }
+          }}
+          currentPageType={currentPageType}
+          handleFontUpload={handleFontUpload}
+        />
 
-                {activeTab === 'search_results' ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    {searchResults.map((asset: any) => (
-                      <button key={asset.id} onClick={() => addImage(asset.url)} className="aspect-square bg-slate-50 rounded border hover:border-indigo-500 transition overflow-hidden">
-                        <img src={asset.thumbnail_url || asset.url} className="w-full h-full object-contain" />
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {recentStickers.length > 0 && (
-                      <div className="mb-4">
-                        <div className="flex justify-between items-center mb-3">
-                          <h4 className="text-[10px] font-bold text-slate-400 uppercase">Recently Used</h4>
-                          {recentStickers.length >= 1 && (
-                            <button 
-                              onClick={() => { setActiveTab('recent_all'); fetchRecentStickers(1, 20); }} 
-                              className="text-[10px] text-indigo-600 font-bold hover:underline"
-                            >
-                              See all
-                            </button>
-                          )}
-                        </div>
-                        <div className="flex overflow-x-auto gap-2 pb-2 snap-x smooth-scroll" style={{ scrollbarWidth: 'none' }}>
-                          {recentStickers.slice(0, 10).map((sticker, idx) => (
-                            <button 
-                              key={idx} 
-                              onClick={() => addImage(sticker.url)} 
-                              className="shrink-0 w-16 h-16 bg-slate-50 rounded border border-slate-200 hover:border-indigo-500 overflow-hidden transition snap-center flex items-center justify-center"
-                            >
-                              <img src={sticker.url} className="w-12 h-12 object-contain" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+        {/* Sidebar Drawer (panel trÆ°á»£t tá»« trÃ¡i) */}
+        <SidebarDrawer
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          showPositionBox={showPositionBox}
+          setShowPositionBox={setShowPositionBox}
+          showAnimateBox={showAnimateBox}
+          setShowAnimateBox={setShowAnimateBox}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          handleSearch={handleSearch}
+          searchResults={searchResults}
+          addRectangle={addRectangle}
+          addImage={addImage}
+          recentStickers={recentStickers}
+          uploadedImages={uploadedImages}
+          uploadProgress={uploadProgress}
+          handleImageUpload={handleImageUpload}
+          addImageOriginal={addImageOriginal}
+          addText={addText}
+          customFonts={customFonts}
+          handleFontUpload={handleFontUpload}
+          elements={elements}
+          selectedIds={selectedIds}
+          setSelectedIds={setSelectedIds}
+          draggedLayerIdx={draggedLayerIdx}
+          dragOverIdx={dragOverIdx}
+          handleLayerDragStart={handleLayerDragStart}
+          handleLayerDragOver={handleLayerDragOver}
+          handleLayerDragLeave={handleLayerDragLeave}
+          handleLayerDrop={handleLayerDrop}
+          handleLayerDragEnd={handleLayerDragEnd}
+          selectedElement={selectedElement}
+          updateElement={updateElement}
+        />
 
-                    <button onClick={addRectangle} className="w-full py-3 bg-indigo-50 text-indigo-700 rounded-lg font-bold text-xs border border-indigo-100 hover:bg-indigo-100">Add Rectangle</button>
-                    {/* <button onClick={addCircle} className="w-full py-3 bg-indigo-50 text-indigo-700 rounded-lg font-bold text-xs border border-indigo-100 hover:bg-indigo-100">Add Circle</button> */}
-                    <h4 className="text-[10px] font-bold text-slate-400 uppercase">Featured Graphics</h4>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[1, 2, 3, 4, 5, 6].map(i => (
-                        <button key={i} onClick={() => addImage(`https://picsum.photos/seed/${i+100}/200`)} className="aspect-square bg-slate-50 rounded hover:ring-2 ring-indigo-500 overflow-hidden transition">
-                          <img src={`https://picsum.photos/seed/${i+100}/200`} className="w-full h-full object-cover" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {activeTab === 'recent_all' && (
-              <div className="space-y-4 flex flex-col h-full">
-                <div className="grid grid-cols-2 gap-2 overflow-y-auto flex-1 content-start">
-                  {recentStickers.map((sticker, idx) => (
-                    <button 
-                      key={idx} 
-                      onClick={() => addImage(sticker.url)} 
-                      className="aspect-square bg-slate-50 rounded border hover:border-indigo-500 transition overflow-hidden p-2 flex items-center justify-center"
-                    >
-                      <img src={sticker.url} className="w-full h-full object-contain" />
-                    </button>
-                  ))}
-                </div>
+        {/* 3. KHU VÃ¡Â»Â°C LÃƒâ‚¬M VIÃ¡Â»â€ C CHÃƒ NH */}
+        <div className="flex-1 bg-white/40 flex flex-col relative overflow-hidden">
 
-                {totalRecentPages > 1 && (
-                  <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-auto">
-                    <button 
-                      disabled={recentPage === 1}
-                      onClick={() => fetchRecentStickers(recentPage - 1, 20)}
-                      className="px-3 py-1.5 bg-slate-100 text-xs font-bold rounded text-slate-600 disabled:opacity-40 hover:bg-slate-200 transition"
-                    >
-                      Prev
-                    </button>
-                    <span className="text-[11px] font-bold text-slate-400">
-                      Page {recentPage} of {totalRecentPages}
-                    </span>
-                    <button 
-                      disabled={recentPage === totalRecentPages}
-                      onClick={() => fetchRecentStickers(recentPage + 1, 20)}
-                      className="px-3 py-1.5 bg-slate-100 text-xs font-bold rounded text-slate-600 disabled:opacity-40 hover:bg-slate-200 transition"
-                    >
-                      Next
-                    </button>
-                  </div>
-                )}
+          <div className={`flex-1 flex relative ${currentPageType === 'canvas' ? 'overflow-hidden' : 'overflow-auto items-center justify-center p-8'}`}>
+
+            {/* Floating element toolbar */}
+            {isProcessingBg && (
+              <div className="absolute inset-0 bg-white/50 backdrop-blur-sm z-[70] flex flex-col items-center justify-center">
+                <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+                <p className="mt-4 text-indigo-800 font-bold text-sm bg-white/80 px-4 py-2 rounded-full shadow-sm">AI is removing background...</p>
               </div>
             )}
 
-            {activeTab === 'text' && (
-              <div className="space-y-4">
-                <button onClick={addText} className="w-full py-4 bg-slate-50 border-2 border-dashed border-slate-200 rounded-lg font-bold text-lg hover:bg-slate-100 transition">Add a heading</button>
-                <button onClick={addText} className="w-full py-3 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-md hover:bg-slate-100 transition text-left px-4">Add a subheading</button>
-                <div className="pt-4">
-                   <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3">Custom Fonts</h4>
-                   <div className="flex flex-wrap gap-2">
-                      {customFonts.map(f => <span key={f} className="px-2 py-1 bg-slate-100 rounded text-[10px] border shadow-sm cursor-default" style={{fontFamily: f}}>{f}</span>)}
-                   </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'uploads' && (
-              <div className="space-y-4 text-center">
-                 <button className="w-full py-3 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 transition">Upload Files</button>
-                 <p className="text-[10px] text-slate-400 italic">Support PNG, JPG, SVG up to 10MB</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Work Area */}
-        <div className="flex-1 bg-slate-200 flex flex-col relative overflow-hidden">
-          {/* Top Toolbar */}
-          <div className="h-12 bg-white border-b border-slate-300 flex items-center px-4 shadow-sm z-20">
-            {selectedElement?.type === 'text' && (
-              <TextToolbar 
-                element={selectedElement} 
-                onUpdate={updateElement} 
-                onDelete={deleteSelectedElement} 
-                onMove={moveElement}
-                fontList={customFonts}
-              />
-            )}
-            {!selectedElement && <span className="text-[11px] text-slate-400 font-medium">Select an element to start editing</span>}
-          </div>
-
-          {/* Canvas Wrapper */}
-          <div className="flex-1 overflow-auto flex items-center justify-center p-12">
-            <div className="relative shadow-2xl bg-white" style={{ width: stageWidth, height: stageHeight }}>
-              <Stage
-                ref={stageRef}
-                width={stageWidth}
-                height={stageHeight}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-              >
-                <Layer ref={layerRef}>
-                  <Rect id="bg" width={stageWidth} height={stageHeight} fill="#ffffff" />
-                  
-                  {elements.map((el) => {
-                    // if (el.type === 'line') return <Line key={el.id} line={el} onChange={updateElement} />;
-                    // if (el.type === 'ellipse') return <EllipseShape key={el.id} shape={el} onChange={updateElement} />;
-                    if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} />;
-                    if (el.type === 'rect') return <RectangleShape key={el.id} shape={el} onChange={updateElement} />;
-                    if (el.type === 'text') return (
-                      <EditableText 
-                        key={el.id} text={el} 
-                        onDblClick={() => setEditingId(el.id)}
-                        onChange={updateElement}
-                        isEditing={editingId === el.id}
-                      />
-                    );
-                    if (el.type === 'image') return <URLImage key={el.id} image={el} onChange={updateElement} />;
-                    return null;
-                  })}
-
-                  {selectionRect.visible && (
-                    <Rect
-                      ref={selectionRectRef}
-                      x={selectionRect.x}
-                      y={selectionRect.y}
-                      width={selectionRect.width}
-                      height={selectionRect.height}
-                      fill="rgba(99, 102, 241, 0.2)"
-                      stroke="#6366f1"
-                      strokeWidth={1}
-                      listening={false}
-                    />
-                  )}
-
-                  <Transformer 
-                    ref={trRef} 
-                    borderStroke="#6366f1"
-                    anchorStroke="#6366f1"
-                    anchorFill="#ffffff"
-                    anchorSize={8}
-                    boundBoxFunc={(oldBox, newBox) => {
-                      if (newBox.width < 5 || newBox.height < 5) return oldBox;
-                      return newBox;
-                    }}
-                  />
-
-                  {selectedIds.length > 1 && selectedIds.map(id => (
-                    <IndividualBorder key={`border-${id}`} nodeId={id} />
-                  ))}
-                  
-                </Layer>
-              </Stage>
-
-              {editingElement && (
-                <textarea
-                  autoFocus
-                  value={editingElement.text}
-                  onChange={(e) => updateElement({ ...editingElement, text: e.target.value })}
-                  onBlur={() => setEditingId(null)}
-                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && setEditingId(null)}
-                  style={{
-                    position: 'absolute',
-                    top: editingElement.y, left: editingElement.x,
-                    width: editingElement.width || 200, fontSize: editingElement.fontSize,
-                    fontFamily: editingElement.fontFamily, color: editingElement.fill,
-                    fontWeight: editingElement.fontStyle?.includes('bold') ? 'bold' : 'normal',
-                    fontStyle: editingElement.fontStyle?.includes('italic') ? 'italic' : 'normal',
-                    textDecoration: editingElement.textDecoration,
-                    border: '1px solid #6366f1', background: 'white',
-                    outline: 'none', resize: 'none', lineHeight: 1.2,
-                    zIndex: 1000, padding: 0, margin: 0, overflow: 'hidden'
-                  }}
-                />
-              )}
-            </div>
-          </div>
-          
-          <div className="h-32 bg-slate-100 border-t border-slate-300 flex items-center px-4 overflow-x-auto gap-4 shadow-inner" style={{ scrollbarWidth: 'thin' }}>
-            
-            {/* Render danh sách các trang */}
-            {pages.map((page, index) => (
-              <div key={page.id} className="flex flex-col items-center gap-2 shrink-0">
-                <button 
-                  onClick={() => handlePageChange(page.id)}
-                  className={`relative w-28 h-20 bg-white shadow-sm border-2 transition overflow-hidden ${
-                    currentPageId === page.id ? 'border-indigo-600 ring-2 ring-indigo-200' : 'border-transparent hover:border-slate-300'
-                  }`}
+            <AnimatePresence>
+              {selectedElement && currentPageType === 'canvas' && (
+                <motion.div
+                  initial={{ opacity: 0, y: 15, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                  transition={{ duration: 0.25, ease: 'easeOut' }}
+                  className="absolute top-6 left-1/2 -translate-x-1/2 z-[60]"
                 >
-                  {/* Số thứ tự trang */}
-                  <span className="absolute top-1 left-1 bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded opacity-70 z-10">
-                    {index + 1}
-                  </span>
-                  
-                  {/* Hiển thị Thumbnail */}
-                  {(page.id === currentPageId) ? (
-                    <div className="w-full h-full flex items-center justify-center text-[10px] text-indigo-500 font-bold bg-indigo-50">
-                      Đang chỉnh sửa
-                    </div>
-                  ) : page.thumbnail ? (
-                    <img src={page.thumbnail} alt={`Page ${index + 1}`} className="w-full h-full object-contain" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400 bg-white">
-                      Trống
-                    </div>
-                  )}
-                </button>
-                
-                {/* Nút xóa trang (Tùy chọn, chỉ hiện khi có > 1 trang) */}
-                {pages.length > 1 && (
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if(window.confirm('Xóa trang này?')) {
-                        const newPages = pages.filter(p => p.id !== page.id);
-                        setPages(newPages);
-                        if (currentPageId === page.id) {
-                           setCurrentPageId(newPages[0].id);
-                           setElements(newPages[0].elements);
-                        }
-                      }
-                    }}
-                    className="text-[10px] text-red-400 hover:text-red-600 font-bold"
-                  >
-                    Xóa
-                  </button>
-                )}
-              </div>
-            ))}
+                  <ElementToolbar
+                    element={selectedElement}
+                    onUpdate={updateElement}
+                    onDelete={deleteSelectedElement}
+                    onMove={moveElement}
+                    fontList={customFonts}
+                    onTogglePosition={() => { setShowPositionBox(!showPositionBox); setShowAnimateBox(false); }}
+                    onToggleAnimate={() => { setShowAnimateBox(!showAnimateBox); setShowPositionBox(false); }}
+                    onRemoveBackground={handleRemoveBackground}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-            {/* Nút Thêm Trang (Nằm cuối cùng) */}
-            <button 
-              onClick={handleAddPage}
-              className="shrink-0 w-12 h-20 bg-white border-2 border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50 rounded flex items-center justify-center text-slate-400 hover:text-indigo-600 transition"
-              title="Add new page"
-            >
-              <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            </button>
-            
+            {/* Transition Box */}
+            {showTransitionBox && transitionTargetId && (
+              <TransitionBox
+                pages={pages}
+                transitionTargetId={transitionTargetId}
+                setPages={setPages}
+                onClose={() => setShowTransitionBox(false)}
+              />
+            )}
+
+            {/* Animate Box Ä‘Ã£ Ä‘Æ°á»£c Ä‘Æ°a vÃ o SidebarDrawer */}
+
+            {/* Core editors */}
+            {currentPageType === 'canvas' && (
+              <CanvasEditor
+                stageRef={stageRef} layerRef={layerRef} trRef={trRef} selectionRectRef={selectionRectRef}
+                stageWidth={stageWidth} stageHeight={stageHeight} currentPage={currentPage}
+                elements={elements} selectedIds={selectedIds} editingId={editingId} setEditingId={setEditingId}
+                updateElement={updateElement} selectionRect={selectionRect}
+                handleMouseDown={handleMouseDown} handleMouseMove={handleMouseMove} handleMouseUp={handleMouseUp}
+                isPlaying={isPlaying}
+                currentTime={localTime}
+              />
+            )}
+            {currentPageType === 'doc' && (
+              <DocEditor page={currentPage} onChange={(id: string, data: any) => setPages(pages.map(p => p.id === id ? { ...p, ...data } : p))} />
+            )}
+            {currentPageType === 'sheet' && (
+              <SheetEditor page={currentPage} />
+            )}
           </div>
-          {/* END MULTI-PAGE BOTTOM BAR */}
 
-
-          {/* Zoom & Canvas Info */}
-          <div className="h-8 bg-white border-t border-slate-300 flex items-center justify-between px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-            <div>Stage: {stageWidth}x{stageHeight}</div>
-            <div className="flex gap-4">
-                <span>
-                  Selected: {
-                    selectedIds.length === 0 ? 'None' : 
-                    selectedIds.length === 1 ? selectedIds[0].slice(0, 8) : 
-                    `${selectedIds.length} items`
-                  }
+          {/* 4. TIMELINE / PAGE SELECTOR */}
+          <div className="relative">
+            {exportStatus === 'rendering' && exportConfig.format === 'mp4' && (
+              <div className="absolute inset-0 bg-slate-900/90 z-[100] flex items-center justify-center pointer-events-none">
+                <span className="text-white text-xs font-bold uppercase tracking-widest animate-pulse flex items-center gap-2">
+                  <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> Exporting Video...
                 </span>
-                <span>Elements: {elements.length}</span>
-            </div>
+              </div>
+            )}
+
+            <BottomTimeline
+              currentPageId={currentPageId}
+              elements={elements}
+              handlePageChange={handlePageChange}
+              handleAddPage={handleAddPage}
+              deletePage={(id: string) => {
+                if (window.confirm('XÃƒÂ³a trang nÃƒÂ y?')) {
+                  const newPages = pages.filter((p: any) => p.id !== id);
+                  setPages(newPages);
+                  if (currentPageId === id) {
+                    setCurrentPageId(newPages[0].id);
+                    setElements(newPages[0].elements || []);
+                  }
+                }
+              }}
+              reorderPages={reorderPages}
+              updateElement={updateElement}
+              designType={design?.design_type || 'presentation'}
+              selectedIds={selectedIds}
+              setSelectedIds={setSelectedIds}
+              isPlaying={isPlaying}
+              setIsPlaying={setIsPlaying}
+              currentTime={currentTime}
+              setCurrentTime={setCurrentTime}
+              pages={pages}
+              pageTimings={pageTimings}
+              totalDuration={totalDuration}
+              onOpenTransition={(targetPageId: string) => {
+                setTransitionTargetId(targetPageId);
+                setShowTransitionBox(true);
+                setShowAnimateBox(false);
+                setShowPositionBox(false);
+                setActiveTab(null);
+              }}
+            />
           </div>
 
-
+          {/* 5. INFO BAR */}
+          <div className="h-8 bg-white/60 backdrop-blur-md border-t border-white flex items-center justify-between px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest shrink-0">
+            <div className="flex gap-4">
+              <span>Type: <strong className="text-indigo-600">{currentPageType}</strong></span>
+              {currentPageType === 'canvas' && <span>Stage: {stageWidth}x{stageHeight}</span>}
+            </div>
+            {currentPageType === 'canvas' && (
+              <div className="flex gap-4">
+                <span>Selected: {selectedIds.length === 0 ? 'None' : selectedIds.length === 1 ? selectedIds[0].slice(0, 8) : `${selectedIds.length} items`}</span>
+                <span>Elements: {elements.length}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* VERSION HISTORY MODAL */}
+      {showVersionModal && (
+        <VersionHistoryModal
+          versions={versions}
+          isRestoring={isRestoring}
+          onClose={() => setShowVersionModal(false)}
+          onRestore={handleRestore}
+        />
+      )}
+
+      {/* EXPORT PROGRESS TOAST */}
+      <ExportProgressToast
+        exportStatus={exportStatus}
+        exportProgress={exportProgress}
+        exportFormat={exportConfig.format}
+      />
     </div>
   );
 }

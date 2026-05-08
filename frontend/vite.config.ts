@@ -27,6 +27,10 @@ export default defineConfig(({ mode }) => {
           target: 'http://localhost:3000',
           changeOrigin: true,
         },
+        '/fonts': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
       },
       hmr: process.env.DISABLE_HMR !== 'true',
     },

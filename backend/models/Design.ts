@@ -1,4 +1,4 @@
-import { DesignType, ElementType } from './enums';
+import { DesignType, ElementType, PageType } from './enums';
 
 export interface Design {
     id: string;
@@ -8,8 +8,8 @@ export interface Design {
     title: string;
     description?: string;
     design_type: DesignType;
-    width: number;
-    height: number;
+    width?: number; // k can cai nay nua 
+    height?: number; // k can cai nay nua 
     thumbnail_url?: string;
     is_public: boolean;
     is_template: boolean;
@@ -29,6 +29,9 @@ export interface DesignPage {
     transition?: Record<string, any>; // JSONB {type: "fade", duration: 0.5}
     thumbnail?: string;
     created_at: Date;
+    width: number;
+    height: number;
+    page_type: PageType;
 }
 
 // Đây là định nghĩa cho thuộc tính properties cực kỳ linh hoạt của bạn
@@ -39,20 +42,23 @@ export interface ElementProperties {
     height: number;
     rotation?: number;
     opacity?: number;
-    content?: string; // Cho text
+    content?: string; 
     fontSize?: number;
-    asset_id?: string; // Cho image/sticker
+    asset_id?: string; 
+    // 🔥 NÂNG CẤP CẤU TRÚC ANIMATION TẠI ĐÂY
     animation?: {
-        type: string;
-        duration: number;
-        delay: number;
+        in?: string;
+        out?: string;
+        sync?: boolean; // Lưu trạng thái Đồng bộ
+        duration?: number;
+        delay?: number;
     };
     timeline?: {
         start_time: number;
         end_time: number;
         track: number;
     };
-    [key: string]: any; // Cho phép thêm các thuộc tính khác
+    [key: string]: any; 
 }
 
 export interface DesignElement {

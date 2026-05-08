@@ -153,15 +153,42 @@ export const getMe = async (req: Request, res: Response) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
-    const user: User = await db.getOne('SELECT id, email, name, role, is_verified FROM users WHERE id = $1', [decoded.id]);
-    if (!user) return res.status(401).json({ error: 'User not found' });
     
-    const userDto: UserDTO = {
-      id: user.id,
-      email: user.email,
-      name: user.name || '',
-      role: user.role,
-      is_verified: user.is_verified
+    // JOIN thêm bảng user_subscriptions để lấy thông tin gói VIP ngay 1 lần query
+    const row = await db.getOne(
+      `SELECT 
+         u.id, u.email, u.name, u.role, u.is_verified,
+         us.id AS sub_id,
+         us.plan_id,
+         us.status AS sub_status,
+         us.current_period_end,
+         sp.name AS plan_name,
+         sp.slug AS plan_slug
+       FROM users u
+       LEFT JOIN user_subscriptions us ON us.user_id = u.id
+       LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+       WHERE u.id = $1
+       ORDER BY us.current_period_end DESC NULLS LAST
+       LIMIT 1`,
+      [decoded.id]
+    );
+
+    if (!row) return res.status(401).json({ error: 'User not found' });
+    
+    const userDto = {
+      id: row.id,
+      email: row.email,
+      name: row.name || '',
+      role: row.role,
+      is_verified: row.is_verified,
+      subscription: row.sub_id ? {
+        id: row.sub_id,
+        plan_id: row.plan_id,
+        status: row.sub_status,
+        current_period_end: row.current_period_end,
+        plan_name: row.plan_name,
+        plan_slug: row.plan_slug,
+      } : null
     };
 
     res.json({ user: userDto });

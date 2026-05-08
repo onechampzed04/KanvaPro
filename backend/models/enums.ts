@@ -31,7 +31,10 @@ export enum DesignType {
     VIDEO = 'video',
     INFOGRAPHIC = 'infographic',
     DOCUMENT = 'document',
-    WEBSITE = 'website'
+    WEBSITE = 'website',
+    PRINT = 'print',
+    WHITEBOARD = 'whiteboard',
+    OTHER = 'other'
 }
 
 export enum ElementType {
@@ -66,4 +69,10 @@ export enum PaymentStatus {
     COMPLETED = 'completed',
     FAILED = 'failed',
     REFUNDED = 'refunded'
+}
+
+export enum PageType {
+    CANVAS = 'canvas',
+    DOC = 'doc',
+    SHEET = 'sheet',
 }
