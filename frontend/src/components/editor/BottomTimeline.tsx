@@ -3,10 +3,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Maximize2, Minimize2, Music, ZoomIn, Plus, Type, Image as ImageIcon, Zap } from 'lucide-react';
 
 export default function BottomTimeline(props: any) {
-  const { pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime } = props;
+  const { pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, updatePage, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime } = props;
 
   const [viewMode, setViewMode] = useState<'thumbnail' | 'timeline'>('thumbnail');
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [timelineHeight, setTimelineHeight] = useState(288); // 72 * 4 = 288px default cho h-72
   const containerRef = useRef<HTMLDivElement>(null);
 
   const PIXELS_PER_SECOND = 40 * zoomLevel;
@@ -111,8 +112,8 @@ export default function BottomTimeline(props: any) {
 
     if (dragInfo.type === 'move') {
       const deltaY = e.clientY - dragInfo.startY;
-      const liveElements = elements;
-      newLane = Math.max(0, Math.min(liveElements.length - 1, dragInfo.initLane + Math.round(deltaY / LANE_HEIGHT)));
+      // Since lanes are stacked from bottom to top, dragging UP (negative deltaY) means INCREASING lane index.
+      newLane = Math.max(0, dragInfo.initLane - Math.round(deltaY / LANE_HEIGHT));
     }
 
     const maxLocalDuration = dragInfo.pageEnd - dragInfo.pageStart;
@@ -133,8 +134,61 @@ export default function BottomTimeline(props: any) {
 
   const handleElementPointerUp = () => { if (dragInfo) { setDragInfo(null); setTooltip({ visible: false, x: 0, y: 0, text: '' }); } };
 
+  // --- 3.5. KÉO THAY ĐỔI DURATION CỦA PAGE ---
+  const [pageDragInfo, setPageDragInfo] = useState<any>(null);
+
+  const handlePagePointerDown = (e: React.PointerEvent, pageId: string, initDuration: number) => {
+    e.stopPropagation();
+    setPageDragInfo({ id: pageId, startX: e.clientX, initDuration });
+  };
+
+  const handlePagePointerMove = (e: React.PointerEvent) => {
+    if (!pageDragInfo) return;
+    const deltaSeconds = (e.clientX - pageDragInfo.startX) / PIXELS_PER_SECOND;
+    const newDuration = Math.max(0.5, pageDragInfo.initDuration + deltaSeconds);
+    if (updatePage) {
+       updatePage(pageDragInfo.id, { duration: newDuration });
+    }
+  };
+
+  const handlePagePointerUp = () => { if (pageDragInfo) setPageDragInfo(null); };
+
+  // --- 4. KÉO THAY ĐỔI CHIỀU CAO TIMELINE ---
+  const handleTimelineResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = timelineHeight;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      // Kéo lên trên -> deltaY âm -> chiều cao tăng lên
+      const newHeight = Math.max(150, Math.min(800, startHeight - deltaY));
+      setTimelineHeight(newHeight);
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
+
   return (
-    <div className={`border-t flex flex-col shadow-sm transition-all duration-300 backdrop-blur-xl ${viewMode === 'timeline' ? 'h-72 bg-white/90 border-white/60' : 'h-36 bg-white/70 border-white/60'}`}>
+    <div
+      className={`border-t flex flex-col shadow-sm backdrop-blur-xl relative ${viewMode === 'timeline' ? 'bg-white/90 border-white/60' : 'h-36 bg-white/70 border-white/60 transition-all duration-300'}`}
+      style={viewMode === 'timeline' ? { height: `${timelineHeight}px` } : {}}
+    >
+      {viewMode === 'timeline' && (
+        <div
+          className="absolute -top-1.5 left-0 right-0 h-3 cursor-ns-resize hover:bg-indigo-500/20 active:bg-indigo-500/40 transition-colors z-[100] flex justify-center items-center group"
+          onPointerDown={handleTimelineResize}
+        >
+          <div className="w-16 h-1 rounded-full bg-slate-300 group-hover:bg-indigo-500 transition-colors" />
+        </div>
+      )}
+
       {tooltip.visible && <div style={{ left: tooltip.x, top: tooltip.y }} className="fixed z-50 bg-black text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg pointer-events-none">{tooltip.text}</div>}
 
       {/* TOP CONTROLS (Thanh menu đổi màu theo Mode) */}
@@ -238,7 +292,7 @@ export default function BottomTimeline(props: any) {
 
       {/* CHẾ ĐỘ 2: TIMELINE MODE (Edit Video chuyên nghiệp) */}
       {viewMode === 'timeline' && (
-        <div ref={containerRef} className="flex-1 overflow-auto bg-slate-50 relative select-none" onPointerMove={handleElementPointerMove} onPointerUp={handleElementPointerUp} onPointerLeave={handleElementPointerUp}>
+        <div ref={containerRef} className="flex-1 overflow-auto bg-slate-50 relative select-none" onPointerMove={(e) => { handleElementPointerMove(e); handlePagePointerMove(e); }} onPointerUp={() => { handleElementPointerUp(); handlePagePointerUp(); }} onPointerLeave={() => { handleElementPointerUp(); handlePagePointerUp(); }}>
 
           <div style={{ width: `${totalDuration * PIXELS_PER_SECOND}px`, minWidth: '100%' }} className="relative h-full">
 
@@ -256,10 +310,22 @@ export default function BottomTimeline(props: any) {
 
             {/* HÀNG 1: ELEMENTS CỦA TOÀN BỘ CÁC TRANG */}
             <div className="relative overflow-y-auto max-h-64 custom-scrollbar border-b border-slate-800">
-              <div
-                className="relative bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGVjdCB3aWR0aD0iNDAiIGhlaWdodD0iMjQiIGZpbGw9Im5vbmUiLz48cGF0aCBkPSJNMCAyNEwwIDB6IiBzdHJva2U9IiMzMzQxNTUiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==')]"
-                style={{ height: `${Math.max(96, elements.length * LANE_HEIGHT + 8)}px` }}
-              >
+              {(() => {
+                let maxLane = 0;
+                pages.forEach((p: any) => {
+                  const pEls = p.id === currentPageId ? elements : (p.elements || []);
+                  pEls.forEach((el: any, idx: number) => {
+                    const l = el.timeline?.lane !== undefined ? el.timeline.lane : idx;
+                    if (l > maxLane) maxLane = l;
+                  });
+                });
+                const containerHeight = Math.max(96, (maxLane + 1) * LANE_HEIGHT + 8);
+
+                return (
+                  <div
+                    className="relative"
+                    style={{ height: `${containerHeight}px` }}
+                  >
                 {pages.map((page: any) => {
                   const pTiming = pageTimings.find((pt: any) => pt.id === page.id);
                   if (!pTiming) return null;
@@ -282,7 +348,7 @@ export default function BottomTimeline(props: any) {
                         style={{
                           left: `${startOffset * PIXELS_PER_SECOND}px`,
                           width: `${duration * PIXELS_PER_SECOND}px`,
-                          top: `${4 + (laneIndex * LANE_HEIGHT)}px`
+                          bottom: `${4 + (laneIndex * LANE_HEIGHT)}px`
                         }}
                         onPointerDown={(e) => {
                           if (page.id !== currentPageId) { handlePageChange(page.id); return; }
@@ -314,6 +380,8 @@ export default function BottomTimeline(props: any) {
                   });
                 })}
               </div>
+              );
+              })()}
             </div>
 
             {/* HÀNG 2: THUMBNAIL (SLIDES) */}
@@ -329,11 +397,20 @@ export default function BottomTimeline(props: any) {
                     style={{ left: `${pTiming.start * PIXELS_PER_SECOND}px`, width: `${pTiming.duration * PIXELS_PER_SECOND}px` }}
                     onClick={() => handlePageChange(page.id)}>
                     {page.thumbnail ? (
-                      <img src={page.thumbnail} className="w-full h-full object-cover" />
+                      <img src={page.thumbnail} className="w-full h-full object-cover pointer-events-none" />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400 font-bold bg-white">Page {idx + 1}</div>
+                      <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400 font-bold bg-white pointer-events-none">Page {idx + 1}</div>
                     )}
-                    <span className="absolute bottom-0 left-1 text-[8px] font-bold text-white bg-black/50 px-1">{idx + 1}</span>
+                    <span className="absolute bottom-0 left-1 text-[8px] font-bold text-white bg-black/50 px-1 pointer-events-none">{idx + 1}</span>
+                    <span className="absolute top-1 left-1 text-[8px] font-bold text-white bg-black/50 px-1 pointer-events-none">{Number(page.duration || 5).toFixed(1)}s</span>
+                    
+                    {/* Resize Right Handle */}
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize bg-white/10 hover:bg-white/40 flex items-center justify-center"
+                      onPointerDown={(e) => handlePagePointerDown(e, page.id, Number(page.duration || 5))}
+                    >
+                      <div className="w-0.5 h-4 bg-white/80 rounded-full pointer-events-none"></div>
+                    </div>
                   </div>
                 );
               })}

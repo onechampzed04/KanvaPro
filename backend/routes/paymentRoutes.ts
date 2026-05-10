@@ -15,4 +15,7 @@ router.get('/verify', authenticate, paymentController.verifyPayment);
 // 3. Webhook từ PayOS (không gắn auth - PayOS gọi từ bên ngoài)
 router.post('/webhook', paymentController.payosWebhook);
 
+// 4. Lịch sử thanh toán
+router.get('/history', authenticate, paymentController.getBillingHistory);
+
 export default router;

@@ -25,10 +25,10 @@ interface CanvasEditorProps {
 }
 
 export default function CanvasEditor(props: CanvasEditorProps) {
-  const { 
-    stageRef, layerRef, trRef, selectionRectRef, stageWidth, stageHeight, 
-    currentPage, elements, selectedIds, editingId, setEditingId, 
-    updateElement, selectionRect, handleMouseDown, handleMouseMove, handleMouseUp 
+  const {
+    stageRef, layerRef, trRef, selectionRectRef, stageWidth, stageHeight,
+    currentPage, elements, selectedIds, editingId, setEditingId,
+    updateElement, selectionRect, handleMouseDown, handleMouseMove, handleMouseUp
   } = props;
 
   const editingElement = elements.find(el => el.id === editingId);
@@ -40,16 +40,16 @@ export default function CanvasEditor(props: CanvasEditorProps) {
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
-  // 1. Logic tự động Fit To Screen
+  // logic tự động Fit To Screen
   const fitToScreen = useCallback(() => {
     if (!containerRef.current) return;
     const { clientWidth, clientHeight } = containerRef.current;
     setContainerSize({ width: clientWidth, height: clientHeight });
 
-    const padding = 80; // Khoảng cách viền an toàn
+    const padding = 80;
     const scaleX = (clientWidth - padding) / stageWidth;
     const scaleY = (clientHeight - padding) / stageHeight;
-    const newScale = Math.min(scaleX, scaleY, 2); // Khống chế scale tối đa = 2 để k bị vỡ hạt
+    const newScale = Math.min(scaleX, scaleY, 2);
 
     setScale(newScale);
     setPosition({
@@ -58,14 +58,14 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     });
   }, [stageWidth, stageHeight]);
 
-  // Cập nhật khi Resize trình duyệt hoặc đổi Project mới
+  // cập nhật khi Resize trình duyệt hoặc đổi Project mới
   useEffect(() => {
     fitToScreen();
     window.addEventListener('resize', fitToScreen);
     return () => window.removeEventListener('resize', fitToScreen);
   }, [fitToScreen]);
 
-  // 2. Chặn mặc định Zoom của Chrome (Bắt buộc dùng Native Event)
+  // Chặn mặc định Zoom của Chrome
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -82,8 +82,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
   useEffect(() => {
     if (textareaRef.current && editingElement) {
-      // Ép chiều cao về 0 trước để trình duyệt tính toán lại scrollHeight chuẩn xác
-      textareaRef.current.style.height = '0px'; 
+      textareaRef.current.style.height = '0px';
       textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
     }
   }, [editingElement?.text, scale]);
@@ -95,7 +94,6 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     if (!stage) return;
 
     if (e.evt.ctrlKey) {
-      // --- ZOOM Ở VỊ TRÍ CHUỘT ---
       const scaleBy = 1.1;
       const oldScale = stage.scaleX();
       const pointer = stage.getPointerPosition();
@@ -122,41 +120,35 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       }));
     }
   };
-  // Xóa logic Image loading vì có thể gây lỗi trên một số trình duyệt. Sẽ dùng Path2D.
 
   useEffect(() => {
     if (trRef.current && layerRef.current) {
       // Tìm các vật thể dựa theo ID người dùng đang chọn
       const nodes = selectedIds.map(id => layerRef.current.findOne(`#${id}`)).filter(Boolean);
-      
-      // Gắn khung viền vào các vật thể đó
-      trRef.current.nodes(nodes);
-      
-      // Custom lại cái núm xoay (Rotater) bằng Vector chuẩn
-      const rotater = trRef.current.findOne('.rotater');
+
+      trRef.current.nodes(nodes); // gắn khung viền vào các vật thể
+
+      const rotater = trRef.current.findOne('.rotater'); // núm xoay
       if (rotater) {
         rotater.sceneFunc((ctx: any, shape: any) => {
-          // Nền hình tròn trắng viền tím
+
           ctx.beginPath();
           ctx.arc(0, 0, 10, 0, Math.PI * 2);
-          
-          // Phải gọi fillStrokeShape NGAY LẬP TỨC để vẽ cái nền trắng.
-          // Lần trước để ở cuối hàm nên nó đã tô đè màu trắng lên toàn bộ icon của mình!
+
           ctx.fillStrokeShape(shape);
 
-          // Dùng Native Canvas API (Path2D) để vẽ vector mũi tên xoay tròn (Sync) trên nền trắng
+          // vẽ icon xoay tròn
           const nativeCtx = ctx._context || ctx;
           nativeCtx.save();
-          // Căn giữa icon (kích thước gốc 24x24) -> thu nhỏ còn 14x14
           nativeCtx.translate(-7, -7);
           nativeCtx.scale(14 / 24, 14 / 24);
-          
+
           const path = new Path2D('M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M16 21h5v-5');
           nativeCtx.strokeStyle = '#6366f1';
           nativeCtx.lineWidth = 3;
           nativeCtx.lineCap = 'round';
           nativeCtx.lineJoin = 'round';
-          
+
           // Đảm bảo không bị đè path
           nativeCtx.beginPath();
           nativeCtx.stroke(path);
@@ -176,7 +168,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     }
   }, [selectedIds, elements]);
 
-  // --- LOGIC KÉO THẢ TỰ ĐỘNG HÍT NAM CHÂM (SNAPPING GIỐNG CANVA) ---
+  // LOGIC KÉO THẢ TỰ ĐỘNG HÍT NAM CHÂM 
   const [guidelines, setGuidelines] = useState<any[]>([]);
   const GUIDELINE_OFFSET = 5;
 
@@ -195,7 +187,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     parent.children.forEach((child: any) => {
       // Bỏ qua chính nó, các đường kẻ, lưới, background
       if (child === node || child.getClassName() === 'Transformer' || child.getClassName() === 'Line' || child.name() === 'guideline' || child.id() === 'bg') return;
-      
+
       const box = child.getClientRect({ relativeTo: parent });
       if (!box || box.width === 0) return;
       vertical.push(box.x, box.x + box.width / 2, box.x + box.width);
@@ -220,7 +212,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
         const diff = Math.abs(v - ov);
         if (diff < offset && diff < minV) {
           minV = diff;
-          snapV = v - (ov - node.x()); // node.x() đang là tọa độ local, tương thích hoàn hảo
+          snapV = v - (ov - node.x()); // node.x() đang là tọa độ local
           lineV = v;
         }
       });
@@ -270,23 +262,22 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     const start = el.timeline?.start || 0;
     const duration = el.timeline?.duration || 5;
     const end = start + duration;
-    
+
     // Lấy tên hiệu ứng (Nếu không có thì mặc định là 'none')
     const animIn = el.animation?.in || 'none';
     const animOut = el.animation?.out || 'none';
 
     let newEl = { ...el };
 
-    // 1. TÀNG HÌNH: Nếu thời gian hiện tại nằm ngoài ranh giới Timeline
     if (props.currentTime < start || props.currentTime > end) {
       newEl.opacity = 0;
       newEl.listening = false; // Chặn click khi đang tàng hình
       return newEl;
     }
 
-    const animDuration = 0.5; // Độ dài hiệu ứng cố định 0.5s cho mượt
+    const animDuration = 0.5;
 
-    // 2. TÍNH TOÁN TIẾN ĐỘ VÀO (IN) VÀ RA (OUT) TỪ 0 ĐẾN 1
+    //  TÍNH TOÁN TIẾN ĐỘ VÀO (IN) VÀ RA (OUT) TỪ 0 ĐẾN 1
     let progressIn = 1;
     let progressOut = 1;
 
@@ -300,38 +291,38 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     if (progressIn < 1 && animIn !== 'none') {
       const ease = 1 - Math.pow(1 - progressIn, 3); // Cubic Ease Out (Nhanh lúc đầu, mượt về cuối)
       const baseOpacity = el.opacity ?? 1;
-      
-      switch(animIn) {
+
+      switch (animIn) {
         case 'appear': newEl.opacity = progressIn > 0 ? baseOpacity : 0; break;
         case 'fade': newEl.opacity = baseOpacity * ease; break;
         case 'flyIn': newEl.y = el.y + (1 - ease) * 200; newEl.opacity = baseOpacity * ease; break;
         case 'floatIn': newEl.y = el.y + (1 - ease) * 50; newEl.opacity = baseOpacity * ease; break;
-        case 'zoom': 
-          newEl.scaleX = (el.scaleX || 1) * ease; 
-          newEl.scaleY = (el.scaleY || 1) * ease; 
-          newEl.opacity = baseOpacity * ease; 
+        case 'zoom':
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.opacity = baseOpacity * ease;
           break;
-        case 'growAndTurn': 
-          newEl.scaleX = (el.scaleX || 1) * ease; 
-          newEl.scaleY = (el.scaleY || 1) * ease; 
-          newEl.rotation = (el.rotation || 0) - 90 * (1 - ease); 
-          newEl.opacity = baseOpacity * ease; 
+        case 'growAndTurn':
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.rotation = (el.rotation || 0) - 90 * (1 - ease);
+          newEl.opacity = baseOpacity * ease;
           break;
-        case 'swivel': 
-          newEl.scaleX = (el.scaleX || 1) * Math.cos((1-ease) * Math.PI / 2); 
+        case 'swivel':
+          newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2);
           break;
         case 'bounce':
           // Mô phỏng lực đàn hồi (Spring Physics) cực kỳ tự nhiên
           const spring = 1 - Math.cos(progressIn * Math.PI * 3) * Math.exp(-progressIn * 5);
-          newEl.scaleX = (el.scaleX || 1) * spring; 
+          newEl.scaleX = (el.scaleX || 1) * spring;
           newEl.scaleY = (el.scaleY || 1) * spring;
           break;
         // Các hiệu ứng cực khó vẽ bằng Canvas (như Split, Wipe) sẽ được Fallback về Fade+Zoom
-        default: 
-          newEl.scaleX = (el.scaleX || 1) * ease; 
-          newEl.scaleY = (el.scaleY || 1) * ease; 
-          newEl.opacity = baseOpacity * ease; 
-          break; 
+        default:
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.opacity = baseOpacity * ease;
+          break;
       }
     }
 
@@ -340,35 +331,35 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       const ease = 1 - Math.pow(1 - progressOut, 3); // Mượt dần khi biến mất
       const baseOpacity = el.opacity ?? 1;
 
-      switch(animOut) {
+      switch (animOut) {
         case 'appear': newEl.opacity = progressOut > 0 ? baseOpacity : 0; break;
         case 'fade': newEl.opacity = baseOpacity * ease; break;
         case 'flyIn': newEl.y = el.y + (1 - ease) * 200; newEl.opacity = baseOpacity * ease; break; // Rớt thẳng xuống
         case 'floatIn': newEl.y = el.y + (1 - ease) * 50; newEl.opacity = baseOpacity * ease; break;
-        case 'zoom': 
-          newEl.scaleX = (el.scaleX || 1) * ease; 
-          newEl.scaleY = (el.scaleY || 1) * ease; 
-          newEl.opacity = baseOpacity * ease; 
-          break;
-        case 'growAndTurn': 
-          newEl.scaleX = (el.scaleX || 1) * ease; 
-          newEl.scaleY = (el.scaleY || 1) * ease; 
-          newEl.rotation = (el.rotation || 0) + 90 * (1 - ease); 
-          newEl.opacity = baseOpacity * ease; 
-          break;
-        case 'swivel': 
-          newEl.scaleX = (el.scaleX || 1) * Math.cos((1-ease) * Math.PI / 2); 
-          break;
-        case 'bounce':
-          newEl.scaleX = (el.scaleX || 1) * ease; 
+        case 'zoom':
+          newEl.scaleX = (el.scaleX || 1) * ease;
           newEl.scaleY = (el.scaleY || 1) * ease;
           newEl.opacity = baseOpacity * ease;
           break;
-        default: 
-          newEl.scaleX = (el.scaleX || 1) * ease; 
-          newEl.scaleY = (el.scaleY || 1) * ease; 
-          newEl.opacity = baseOpacity * ease; 
-          break; 
+        case 'growAndTurn':
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.rotation = (el.rotation || 0) + 90 * (1 - ease);
+          newEl.opacity = baseOpacity * ease;
+          break;
+        case 'swivel':
+          newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2);
+          break;
+        case 'bounce':
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.opacity = baseOpacity * ease;
+          break;
+        default:
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.opacity = baseOpacity * ease;
+          break;
       }
     }
 
@@ -376,7 +367,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
   });
   // --- LOGIC HIỆU ỨNG CHUYỂN CẢNH (PAGE TRANSITION) ---
   let pageAnim = { x: 0, y: 0, opacity: 1, scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0 };
-  
+
   // Chỉ chạy hiệu ứng chuyển cảnh khi đang Play và trang hiện tại có cài Transition
   if (props.isPlaying && currentPage?.transition && currentPage.transition.type !== 'none') {
     const tType = currentPage.transition.type;
@@ -419,9 +410,9 @@ export default function CanvasEditor(props: CanvasEditorProps) {
   }
 
   return (
-    <div 
-      ref={containerRef} 
-      className="absolute inset-0 bg-slate-200 overflow-hidden outline-none" 
+    <div
+      ref={containerRef}
+      className="absolute inset-0 bg-slate-200 overflow-hidden outline-none"
       tabIndex={0}
     >
       <Stage
@@ -438,40 +429,38 @@ export default function CanvasEditor(props: CanvasEditorProps) {
         onMouseUp={handleMouseUp}
       >
         <Layer ref={layerRef} onDragEnd={handleDragEnd}>
-          {/* 1. NỀN VÀ BÓNG ĐỔ (Áp dụng hiệu ứng Page Transition) */}
-          <Rect 
-            id="bg" 
-            width={stageWidth} 
-            height={stageHeight} 
-            fill={currentPage?.background_color || "#ffffff"} 
-            shadowBlur={15} 
-            shadowColor="rgba(0,0,0,0.1)" 
+          <Rect
+            id="bg"
+            width={stageWidth}
+            height={stageHeight}
+            fill={currentPage?.background_color || "#ffffff"}
+            shadowBlur={15}
+            shadowColor="rgba(0,0,0,0.1)"
             x={pageAnim.x} y={pageAnim.y} opacity={pageAnim.opacity}
             scaleX={pageAnim.scaleX} scaleY={pageAnim.scaleY}
             offsetX={pageAnim.offsetX} offsetY={pageAnim.offsetY}
           />
-          
-          {/* 2. GÓI TẤT CẢ VẬT THỂ VÀO GROUP (Áp dụng hiệu ứng Page Transition) */}
-          <Group 
+
+          <Group
             clipX={0} clipY={0} clipWidth={stageWidth} clipHeight={stageHeight}
             x={pageAnim.x} y={pageAnim.y} opacity={pageAnim.opacity}
             scaleX={pageAnim.scaleX} scaleY={pageAnim.scaleY}
             offsetX={pageAnim.offsetX} offsetY={pageAnim.offsetY}
           >
             {animatedElements.map((el) => {
-              if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} onSelect={() => {}} onDragMove={handleDragMove} />;
-              if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={el} onChange={updateElement} onSelect={() => {}} onDragMove={handleDragMove} />;
+              if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} onSelect={() => { }} onDragMove={handleDragMove} />;
+              if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={el} onChange={updateElement} onSelect={() => { }} onDragMove={handleDragMove} />;
               if (el.type === 'text') return (
-                <EditableText 
-                  key={el.id} text={el} 
+                <EditableText
+                  key={el.id} text={el}
                   onDblClick={() => setEditingId(el.id)}
                   onChange={updateElement}
                   isEditing={editingId === el.id}
-                  onSelect={() => {}}
+                  onSelect={() => { }}
                   onDragMove={handleDragMove}
                 />
               );
-              if (el.type === 'image') return <URLImage key={el.id} image={el} onChange={updateElement} onSelect={() => {}} onDragMove={handleDragMove} />;
+              if (el.type === 'image') return <URLImage key={el.id} image={el} onChange={updateElement} onSelect={() => { }} onDragMove={handleDragMove} />;
               return null;
             })}
             {guidelines.map((guide, i) => (
@@ -479,7 +468,6 @@ export default function CanvasEditor(props: CanvasEditorProps) {
             ))}
           </Group>
 
-          {/* 3. VÙNG CHỌN XANH LƯỚT CHUỘT (Không bị cắt xén) */}
           {selectionRect.visible && (
             <Rect
               ref={selectionRectRef}
@@ -494,14 +482,11 @@ export default function CanvasEditor(props: CanvasEditorProps) {
             />
           )}
 
-          {/* 4. KHUNG MÀU TÍM TRANSFORMER (Không bị cắt xén)
-              (Để khi bạn kéo hình ra mép, cái cục neo hình vuông kéo thả vẫn hiện ra ngoài) */}
           <Transformer ref={trRef} borderStroke="#6366f1" anchorStroke="#6366f1" anchorFill="#ffffff" anchorSize={8} boundBoxFunc={(oldBox, newBox) => newBox.width < 5 || newBox.height < 5 ? oldBox : newBox} />
           {selectedIds.length > 1 && selectedIds.map(id => <IndividualBorder key={`border-${id}`} nodeId={id} />)}
         </Layer>
       </Stage>
 
-      {/* TEXTAREA ẢO PHẢI CẬP NHẬT TỌA ĐỘ THEO SCALE MỚI */}
       {editingElement && (
         <textarea
           ref={textareaRef}
@@ -509,32 +494,32 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           value={editingElement.text}
           onChange={(e) => updateElement({ ...editingElement, text: e.target.value })}
           onBlur={() => setEditingId(null)}
-          
+
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               setEditingId(null);
             }
           }}
-          
+
           style={{
-            position: 'absolute', 
+            position: 'absolute',
             top: position.y + (editingElement.y * scale),
             left: position.x + (editingElement.x * scale),
             width: (editingElement.width || 200) * scale,
             fontSize: editingElement.fontSize * scale,
-            fontFamily: editingElement.fontFamily, 
-            color: editingElement.fill, 
-            fontWeight: editingElement.fontStyle?.includes('bold') ? 'bold' : 'normal', 
-            fontStyle: editingElement.fontStyle?.includes('italic') ? 'italic' : 'normal', 
-            textDecoration: editingElement.textDecoration, 
-            border: '1px solid #6366f1', 
-            background: 'white', 
-            outline: 'none', 
-            resize: 'none', 
-            lineHeight: 1.2, 
-            zIndex: 1000, 
-            padding: 0, 
-            margin: 0, 
+            fontFamily: editingElement.fontFamily,
+            color: editingElement.fill,
+            fontWeight: editingElement.fontStyle?.includes('bold') ? 'bold' : 'normal',
+            fontStyle: editingElement.fontStyle?.includes('italic') ? 'italic' : 'normal',
+            textDecoration: editingElement.textDecoration,
+            border: '1px solid #6366f1',
+            background: 'white',
+            outline: 'none',
+            resize: 'none',
+            lineHeight: 1.2,
+            zIndex: 1000,
+            padding: 0,
+            margin: 0,
             overflow: 'hidden',
             whiteSpace: 'pre-wrap',   // Bắt buộc: Đảm bảo xuống dòng chuẩn xác
             wordWrap: 'break-word'    // Bắt buộc: Cắt chữ khi đụng lề phải

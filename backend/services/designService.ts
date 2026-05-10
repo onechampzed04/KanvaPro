@@ -89,12 +89,12 @@ export const designService = {
         try {
             await client.query('BEGIN'); 
 
-            // 1. Cập nhật lớp vỏ Design
+            // 1. Cập nhật lớp vỏ Design (không cần check user_id vì middleware đã kiểm tra)
             await client.query(`
                 UPDATE designs 
                 SET title = $1, thumbnail_url = $2, last_edited_at = NOW(), updated_at = NOW() 
-                WHERE id = $3 AND user_id = $4
-            `, [designData.title, designData.thumbnail_url || null, designId, userId]);
+                WHERE id = $3
+            `, [designData.title, designData.thumbnail_url || null, designId]);
 
             // 2. Gọi Nhạc trưởng PageService vào làm việc
             await designPageService.syncPagesForDesign(client, designId, pages);
@@ -113,6 +113,17 @@ export const designService = {
             SELECT * FROM designs 
             WHERE user_id = $1 AND is_deleted = false
             ORDER BY updated_at DESC
+        `, [userId]);
+        return result.rows;
+    },
+
+    getSharedDesigns: async (userId: string): Promise<any[]> => {
+        const result = await db.query(`
+            SELECT d.*, ds.role as my_permission 
+            FROM designs d 
+            JOIN design_shares ds ON d.id = ds.design_id 
+            WHERE ds.user_id = $1 AND d.user_id != $1 AND d.is_deleted = false 
+            ORDER BY ds.created_at DESC
         `, [userId]);
         return result.rows;
     },

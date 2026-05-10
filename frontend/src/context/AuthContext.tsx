@@ -1,11 +1,10 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
-// Kiểu dữ liệu cho gói subscription của user
 export interface UserSubscription {
   id: string;
   plan_id: string;
   status: 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired';
-  current_period_end: string; // ISO date string
+  current_period_end: string;
   plan_name: string;
   plan_slug: string;
 }
@@ -22,18 +21,17 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (user: User) => void;
+  login: (user: User) => Promise<void>;
   logout: () => void;
-  refreshUser: () => Promise<void>; // Hàm refresh để cập nhật subscription sau thanh toán
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Hàm tiện ích kiểm tra user có đang VIP active không
 export const isSubscriptionActive = (user: User | null): boolean => {
   if (!user?.subscription) return false;
   if (user.subscription.status !== 'active') return false;
-  // Kiểm tra chưa hết hạn
+
   return new Date(user.subscription.current_period_end) > new Date();
 };
 
@@ -41,7 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Hàm fetch thông tin user + subscription từ server
+  // gọi api lấy ttin user hiện tại -> app.tsx
   const fetchCurrentUser = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me', {
@@ -61,11 +59,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Khởi tạo: kiểm tra phiên đăng nhập hiện tại
     fetchCurrentUser().finally(() => setLoading(false));
   }, [fetchCurrentUser]);
 
-  const login = (userData: User) => setUser(userData);
+  const login = async (userData: User) => {
+    setUser(userData);
+    await fetchCurrentUser();
+  };
 
   const logout = () => {
     fetch('/api/auth/logout', { method: 'POST' }).then(() => {
@@ -74,8 +74,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  // refreshUser: gọi lại API /me để cập nhật subscription mới nhất
-  // Trang PaymentSuccess sẽ gọi hàm này sau khi PayOS redirect về
   const refreshUser = useCallback(async () => {
     await fetchCurrentUser();
   }, [fetchCurrentUser]);

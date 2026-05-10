@@ -58,6 +58,7 @@ interface SidebarDrawerProps {
   handleLayerDragEnd: () => void;
   selectedElement?: any;
   updateElement?: (el: any) => void;
+  updateElements?: (els: any[]) => void;
 }
 
 export default function SidebarDrawer({
@@ -69,7 +70,7 @@ export default function SidebarDrawer({
   elements, selectedIds, setSelectedIds,
   draggedLayerIdx, dragOverIdx,
   handleLayerDragStart, handleLayerDragOver, handleLayerDragLeave, handleLayerDrop, handleLayerDragEnd,
-  selectedElement, updateElement
+  selectedElement, updateElement, updateElements
 }: SidebarDrawerProps) {
   const isOpen = !!(activeTab || showPositionBox || showAnimateBox);
   const [animTab, setAnimTab] = useState<'in' | 'out'>('in');
@@ -103,6 +104,9 @@ export default function SidebarDrawer({
       setIsGeneratingAi(false);
     }
   };
+
+  const selectedElements = elements.filter((el: any) => selectedIds.includes(el.id));
+  const activeElement = selectedElements[0] || {};
 
   return (
     <AnimatePresence>
@@ -395,7 +399,7 @@ export default function SidebarDrawer({
             )}
 
             {/* ANIMATIONS BOX */}
-            {showAnimateBox && selectedElement && updateElement && (
+            {showAnimateBox && selectedElements.length > 0 && updateElement && (
               <div className="flex flex-col h-full space-y-4">
                 <div className="flex gap-2 shrink-0">
                   <button
@@ -417,18 +421,32 @@ export default function SidebarDrawer({
                     <input
                       type="checkbox"
                       className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                      checked={selectedElement.animation?.sync !== false}
+                      checked={activeElement.animation?.sync !== false}
                       onChange={(e) => {
                         const isSync = e.target.checked;
-                        const currentIn = selectedElement.animation?.in || 'none';
-                        updateElement({
-                          ...selectedElement,
-                          animation: {
-                            ...selectedElement.animation,
-                            sync: isSync,
-                            out: isSync ? currentIn : (selectedElement.animation?.out || 'none'),
-                          },
-                        });
+                        const currentIn = activeElement.animation?.in || 'none';
+                        if (updateElements) {
+                          const newEls = selectedElements.map(el => ({
+                            ...el,
+                            animation: {
+                              ...el.animation,
+                              sync: isSync,
+                              out: isSync ? currentIn : (el.animation?.out || 'none'),
+                            },
+                          }));
+                          updateElements(newEls);
+                        } else if (updateElement) {
+                          selectedElements.forEach(el => {
+                            updateElement({
+                              ...el,
+                              animation: {
+                                ...el.animation,
+                                sync: isSync,
+                                out: isSync ? currentIn : (el.animation?.out || 'none'),
+                              },
+                            });
+                          });
+                        }
                       }}
                     />
                     Đồng bộ hiệu ứng Hiện & Ẩn
@@ -439,23 +457,40 @@ export default function SidebarDrawer({
                   <div className="grid grid-cols-2 gap-2 pb-10">
                     {PPTX_ANIMATIONS.map(anim => {
                       const currentAnim = animTab === 'in'
-                        ? (selectedElement.animation?.in || 'none')
-                        : (selectedElement.animation?.out || 'none');
+                        ? (activeElement.animation?.in || 'none')
+                        : (activeElement.animation?.out || 'none');
                       const isActive = currentAnim === anim.id;
 
                       return (
                         <button
                           key={anim.id}
                           onClick={() => {
-                            const newAnimation = { ...(selectedElement.animation || { in: 'none', out: 'none', sync: true }) };
-                            if (animTab === 'in') {
-                              newAnimation.in = anim.id;
-                              if (newAnimation.sync !== false) newAnimation.out = anim.id;
-                            } else {
-                              newAnimation.out = anim.id;
-                              newAnimation.sync = false;
+                            if (updateElements) {
+                              const newEls = selectedElements.map(el => {
+                                const newAnimation = { ...(el.animation || { in: 'none', out: 'none', sync: true }) };
+                                if (animTab === 'in') {
+                                  newAnimation.in = anim.id;
+                                  if (newAnimation.sync !== false) newAnimation.out = anim.id;
+                                } else {
+                                  newAnimation.out = anim.id;
+                                  newAnimation.sync = false;
+                                }
+                                return { ...el, animation: newAnimation };
+                              });
+                              updateElements(newEls);
+                            } else if (updateElement) {
+                              selectedElements.forEach(el => {
+                                const newAnimation = { ...(el.animation || { in: 'none', out: 'none', sync: true }) };
+                                if (animTab === 'in') {
+                                  newAnimation.in = anim.id;
+                                  if (newAnimation.sync !== false) newAnimation.out = anim.id;
+                                } else {
+                                  newAnimation.out = anim.id;
+                                  newAnimation.sync = false;
+                                }
+                                updateElement({ ...el, animation: newAnimation });
+                              });
                             }
-                            updateElement({ ...selectedElement, animation: newAnimation });
                           }}
                           className={`py-3 px-2 text-xs font-bold rounded-xl border transition-all ${
                             isActive

@@ -1,13 +1,17 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import { Zap } from 'lucide-react';
+import ShareModal from '../components/editor/ShareModal';
 import Konva from 'konva';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import pptxgen from 'pptxgenjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchDesignVersions, restoreDesignVersion, updateDesignFull, createDesignVersion, uploadVideoForExport } from '../api/api';
+import { useAuth } from '../context/AuthContext';
+import { useCollaboration } from '../hooks/useCollaboration';
 
-// Components Ã„â€˜ÃƒÂ£ tÃƒÂ¡ch sÃ¡ÂºÂµn
+// Components đã tách sẵn
 import EditorSidebar from '../components/editor/EditorSidebar';
 import DocEditor from '../components/editor/DocEditor';
 import SheetEditor from '../components/editor/SheetEditor';
@@ -15,7 +19,7 @@ import CanvasEditor from '../components/editor/CanvasEditor';
 import BottomTimeline from '../components/editor/BottomTimeline';
 import ElementToolbar from '../components/ElementToolbar';
 
-// Components mÃ¡Â»â€ºi tÃƒÂ¡ch
+// Components mới tách
 import EditorTopBar from '../components/editor/EditorTopBar';
 import SidebarDrawer from '../components/editor/SidebarDrawer';
 import TransitionBox from '../components/editor/TransitionBox';
@@ -27,6 +31,7 @@ import ExportProgressToast from '../components/editor/ExportProgressToast';
 export default function EditorPage() {
   // --- 1. Component State & Refs ---
   const { id } = useParams();
+  const { user } = useAuth(); // Lấy current user để truyền cho collaboration
   const [design, setDesign] = useState<any>(null);
   const [elements, setElements] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -38,6 +43,10 @@ export default function EditorPage() {
   const isInitialMount = useRef(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  // RBAC States
+  const [currentRole, setCurrentRole] = useState<'owner' | 'editor' | 'commenter' | 'viewer'>('viewer');
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportConfig, setExportConfig] = useState({ format: 'png' });
@@ -68,7 +77,6 @@ export default function EditorPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
 
-  // KHAI BÃƒÂO THÃƒÅ M 2 DÃƒâ€™NG NÃƒâ‚¬Y Ã„ÂÃ¡Â»â€š THEO DÃƒâ€¢I VIDEO
   const currentTimeRef = useRef(0);
   const isPlayingRef = useRef(false);
   useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
@@ -76,17 +84,14 @@ export default function EditorPage() {
 
   // --- NEW EXPORT STATES ---
   const [showExportPopover, setShowExportPopover] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0); // 0 - 100
+  const [exportProgress, setExportProgress] = useState(0);
   const [exportStatus, setExportStatus] = useState<'idle' | 'rendering' | 'uploading' | 'completed'>('idle');
-  const [exportScale, setExportScale] = useState(1); // Cho PNG/JPG
+  const [exportScale, setExportScale] = useState(1);
 
-  // --- LOGIC TÃƒÂNH TOÃƒÂN THÃ¡Â»Å“I GIAN TOÃƒâ‚¬N CÃ¡Â»Â¤C (GLOBAL TIMELINE) ---
-  const PAGE_DURATION = 5; // MÃ¡ÂºÂ·c Ã„â€˜Ã¡Â»â€¹nh mÃ¡Â»â€”i slide dÃƒÂ i 5s
+  const PAGE_DURATION = 5;
 
-  // TÃƒÂ­nh mÃ¡Â»â€˜c bÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u vÃƒÂ  kÃ¡ÂºÂ¿t thÃƒÂºc cÃ¡Â»Â§a tÃ¡Â»Â«ng trang
   const pageTimings = pages.reduce((acc, page, index) => {
     const start = index === 0 ? 0 : acc[index - 1].end;
-    // Ãƒâ€°p kiÃ¡Â»Æ’u vÃ¡Â»Â number Ã„â€˜Ã¡Â»Æ’ trÃƒÂ¡nh string concatenation khi DB trÃ¡ÂºÂ£ vÃ¡Â»Â string
     const duration = Number(page.duration) || PAGE_DURATION;
     acc.push({ id: page.id, start, duration, end: start + duration });
     return acc;
@@ -102,11 +107,10 @@ export default function EditorPage() {
       setCurrentPageId(activeTiming.id);
       const targetPage = pages.find((p: any) => p.id === activeTiming.id);
       setElements(targetPage?.elements || []);
-      setSelectedIds([]); // XÃƒÂ³a vÃƒÂ¹ng chÃ¡Â»Ân khi qua trang mÃ¡Â»â€ºi
+      setSelectedIds([]);
     }
   }, [currentTime, pageTimings, currentPageId, pages]);
 
-  // Quy Ã„â€˜Ã¡Â»â€¢i thÃ¡Â»Âi gian toÃƒÂ n cÃ¡Â»Â¥c vÃ¡Â»Â thÃ¡Â»Âi gian cÃ¡Â»Â§a trang hiÃ¡Â»â€¡n tÃ¡ÂºÂ¡i (Ã„â€˜Ã¡Â»Æ’ Canvas chÃ¡ÂºÂ¡y Ã„â€˜ÃƒÂºng hiÃ¡Â»â€¡u Ã¡Â»Â©ng)
   const currentTiming = pageTimings.find((p: any) => p.id === currentPageId);
   const localTime = currentTiming ? Math.max(0, currentTime - currentTiming.start) : currentTime;
 
@@ -126,7 +130,7 @@ export default function EditorPage() {
   });
   const [groupDrag, setGroupDrag] = useState({ isDragging: false, startX: 0, startY: 0 });
 
-  // Ã°Å¸â€Â¥ STATE CHO TRANSITION PAGE
+  // STATE CHO TRANSITION PAGE
   const [showTransitionBox, setShowTransitionBox] = useState(false);
   const [transitionTargetId, setTransitionTargetId] = useState<string | null>(null);
 
@@ -154,17 +158,32 @@ export default function EditorPage() {
   const currentPageType = currentPage?.type || 'canvas';
   const selectedElement = selectedIds.length === 1 ? elements.find(el => el.id === selectedIds[0]) : null;
 
-  // Ã°Å¸â€Â¥ STATE CHO QUÃ¡ÂºÂ¢N LÃƒÂ UPLOAD VÃƒâ‚¬ TIÃ¡ÂºÂ¾N TRÃƒÅ’NH
   const [uploadedImages, setUploadedImages] = useState<any[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ visible: boolean, percent: number }>({ visible: false, percent: 0 });
   const [isProcessingBg, setIsProcessingBg] = useState(false);
 
-  // Ã°Å¸â€Â¥ HÃƒâ‚¬M THÃƒÅ M Ã¡ÂºÂ¢NH VÃƒâ‚¬O CANVAS (GIÃ¡Â»Â® CHUÃ¡ÂºÂ¨N KÃƒÂCH THÃ†Â¯Ã¡Â»Å¡C GÃ¡Â»ÂC)
+  // ─── REAL-TIME COLLABORATION ────────────────────────────────────────────────
+  const handleRemoteElementsUpdate = useCallback((pageId: string, remoteElements: any[]) => {
+    setPages(prev => prev.map(p =>
+      p.id === pageId ? { ...p, elements: remoteElements } : p
+    ));
+    setCurrentPageId(prev => {
+      if (prev === pageId) {
+        setElements(remoteElements);
+      }
+      return prev;
+    });
+  }, []);
+
+  const { activeUsers, isConnected, emitElementsUpdate, emitPageChanged } = useCollaboration({
+    designId: id,
+    onRemoteUpdate: handleRemoteElementsUpdate,
+  });
+
   const addImageOriginal = (src: string, originalWidth: number, originalHeight: number) => {
     let finalW = originalWidth;
     let finalH = originalHeight;
 
-    // An toÃƒÂ n UX: NÃ¡ÂºÂ¿u Ã¡ÂºÂ£nh to hÃ†Â¡n khung Stage thÃƒÂ¬ mÃ¡Â»â€ºi bÃƒÂ³p lÃ¡ÂºÂ¡i cho vÃ¡Â»Â«a, cÃƒÂ²n nhÃ¡Â»Â hÃ†Â¡n thÃƒÂ¬ giÃ¡Â»Â¯ nguyÃƒÂªn gÃ¡Â»â€˜c 100%
     if (finalW > stageWidth) { const r = stageWidth / finalW; finalW = stageWidth; finalH *= r; }
     if (finalH > stageHeight) { const r = stageHeight / finalH; finalH = stageHeight; finalW *= r; }
 
@@ -176,16 +195,14 @@ export default function EditorPage() {
     }]);
   };
 
-  // Ã°Å¸â€Â¥ HÃƒâ‚¬M XÃ¡Â»Â¬ LÃƒÂ UPLOAD (CÃƒâ€œ HIÃ¡Â»â€ U Ã¡Â»Â¨NG LOADING MÃ†Â¯Ã¡Â»Â¢T MÃƒâ‚¬)
   const handleImageUpload = (file: File) => {
-    if (!file.type.startsWith('image/')) return alert("Vui lÃƒÂ²ng chÃ¡Â»Ân file hÃƒÂ¬nh Ã¡ÂºÂ£nh!");
+    if (!file.type.startsWith('image/')) return alert("Vui lòng chọn file hình ảnh!");
 
-    // BÃ¡ÂºÂ­t hiÃ¡Â»â€¡u Ã¡Â»Â©ng TiÃ¡ÂºÂ¿n trÃƒÂ¬nh
     setUploadProgress({ visible: true, percent: 0 });
     let progress = 0;
     const interval = setInterval(() => {
       progress += Math.floor(Math.random() * 20) + 10;
-      if (progress >= 90) progress = 90; // GiÃ¡Â»Â¯ Ã¡Â»Å¸ 90% Ã„â€˜Ã¡Â»Â£i Ã„â€˜Ã¡Â»Âc file xong
+      if (progress >= 90) progress = 90;
       setUploadProgress({ visible: true, percent: progress });
     }, 150);
 
@@ -196,12 +213,10 @@ export default function EditorPage() {
       img.src = base64Url;
       img.onload = () => {
         clearInterval(interval);
-        setUploadProgress({ visible: true, percent: 100 }); // CÃƒÂ¡n Ã„â€˜ÃƒÂ­ch 100%
+        setUploadProgress({ visible: true, percent: 100 });
 
-        // Ã„ÂÃ†Â°a vÃƒÂ o thÃ†Â° viÃ¡Â»â€¡n Uploads
         setUploadedImages(prev => [{ id: crypto.randomUUID(), url: base64Url, width: img.width, height: img.height }, ...prev]);
 
-        // TrÃ¡Â»â€¦ 0.5s cho UI mÃ†Â°Ã¡Â»Â£t rÃ¡Â»â€œi Ã¡ÂºÂ©n thanh Loading
         setTimeout(() => setUploadProgress({ visible: false, percent: 0 }), 500);
       };
     };
@@ -217,13 +232,24 @@ export default function EditorPage() {
     fetch(`/api/designs/${id}`, {
       headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
     })
-      .then(res => res.json())
+      .then(res => {
+        if (res.status === 403) {
+          // Không có quyền truy cập
+          alert('Bạn không có quyền truy cập bản vẽ này.');
+          window.location.href = '/';
+          throw new Error('403 Forbidden');
+        }
+        return res.json();
+      })
       .then(data => {
         setDesign(data);
+        // Lấy role từ response (được gắn bởi checkDesignAccess middleware)
+        if (data.current_user_role) {
+          setCurrentRole(data.current_user_role);
+        }
         if (data.pages && data.pages.length > 0) {
           const loadedPages = data.pages.map((p: any) => ({
             ...p,
-            // Ãƒâ€°p kiÃ¡Â»Æ’u duration vÃ¡Â»Â number ngay khi load Ã„â€˜Ã¡Â»Æ’ trÃƒÂ¡nh string concatenation
             duration: Number(p.duration) || 5,
             elements: p.elements || [],
             thumbnail: p.thumbnail || ''
@@ -242,6 +268,34 @@ export default function EditorPage() {
       .catch(err => console.error(err));
   }, [id]);
 
+  useEffect(() => {
+    if (id && stageWidth > 0 && stageHeight > 0) {
+      const pendingImg = sessionStorage.getItem(`pending_import_image_${id}`);
+      if (pendingImg) {
+        sessionStorage.removeItem(`pending_import_image_${id}`);
+        const img = new window.Image();
+        img.src = pendingImg;
+        img.onload = () => {
+          let finalW = img.width;
+          let finalH = img.height;
+          const ratio = Math.min(stageWidth / finalW, stageHeight / finalH) * 0.8;
+          if (ratio < 1) {
+            finalW *= ratio;
+            finalH *= ratio;
+          }
+          const newEl = {
+            id: crypto.randomUUID(), type: 'image',
+            x: stageWidth / 2 - finalW / 2, y: stageHeight / 2 - finalH / 2,
+            width: finalW, height: finalH, src: pendingImg,
+            timeline: { start: 0, duration: 5, lane: elements.length % 4 }, animation: { in: 'none' }
+          };
+          setElements(prev => [...prev, newEl as any]);
+          setUploadedImages(prev => [{ id: crypto.randomUUID(), url: pendingImg, width: img.width, height: img.height }, ...prev]);
+        };
+      }
+    }
+  }, [id, stageWidth, stageHeight]);
+
   const fetchRecentStickers = async (page = 1, limit = 10) => {
     try {
       const res = await fetch(`/api/designs/recent-stickers?page=${page}&limit=${limit}`, {
@@ -256,7 +310,6 @@ export default function EditorPage() {
 
   useEffect(() => { fetchRecentStickers(1, 10); }, []);
 
-  // --- Náº¡p láº¡i font Ä‘Ã£ upload tá»« DB khi má»Ÿ editor ---
   const loadUserFonts = async () => {
     try {
       const res = await fetch('/api/assets/user-fonts', {
@@ -272,21 +325,20 @@ export default function EditorPage() {
           const loaded = await face.load();
           (document.fonts as any).add(loaded);
           setCustomFonts(prev => prev.includes(font.name) ? prev : [...prev, font.name]);
-        } catch { /* Bá» qua font bá»‹ lá»—i */ }
+        } catch { }
       }
     } catch (error) { console.error('Load user fonts error:', error); }
   };
 
   useEffect(() => { loadUserFonts(); }, []);
 
-  // --- 3. Core Interaction ---
   const handleMouseDown = (e: any) => {
     const isTransformer = e.target.getParent()?.className === 'Transformer';
     if (isTransformer) return;
     const isBackground = e.target === e.target.getStage() || e.target.id() === 'bg';
 
     const stage = e.target.getStage();
-    // CÃƒâ€NG THÃ¡Â»Â¨C CHUÃ¡ÂºÂ¨N: Quy Ã„â€˜Ã¡Â»â€¢i tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ mÃƒÂ n hÃƒÂ¬nh sang tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ bÃƒÂªn trong Canvas (Ã„â€˜ÃƒÂ£ tÃƒÂ­nh Zoom/Pan)
+
     const pointerPosition = stage.getPointerPosition();
     const pos = {
       x: (pointerPosition.x - stage.x()) / stage.scaleX(),
@@ -295,17 +347,15 @@ export default function EditorPage() {
 
     if (isBackground) {
       if (selectedIds.length > 1 && trRef.current) {
-        // Khung bÃ¡Â»Âc cÃ¡Â»Â§a Transformer tÃƒÂ­nh bÃ¡ÂºÂ±ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tuyÃ¡Â»â€¡t Ã„â€˜Ã¡Â»â€˜i mÃƒÂ n hÃƒÂ¬nh
         const box = trRef.current.getClientRect();
         if (pointerPosition.x >= box.x && pointerPosition.x <= box.x + box.width && pointerPosition.y >= box.y && pointerPosition.y <= box.y + box.height) {
           const nodes = selectedIds.map(sid => layerRef.current.findOne(`#${sid}`)).filter(Boolean);
           nodes.forEach(node => { node.setAttr('dragStartX', node.x()); node.setAttr('dragStartY', node.y()); });
-          setGroupDrag({ isDragging: true, startX: pos.x, startY: pos.y }); // DÃƒÂ¹ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tÃ†Â°Ã†Â¡ng Ã„â€˜Ã¡Â»â€˜i Ã„â€˜Ã¡Â»Æ’ kÃƒÂ©o
+          setGroupDrag({ isDragging: true, startX: pos.x, startY: pos.y });
           return;
         }
       }
       e.evt.preventDefault();
-      // BÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u vÃ¡ÂºÂ½ khung chÃ¡Â»Ân (bÃ¡ÂºÂ±ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tÃ†Â°Ã†Â¡ng Ã„â€˜Ã¡Â»â€˜i)
       setSelectionRect({ visible: true, startX: pos.x, startY: pos.y, x: pos.x, y: pos.y, width: 0, height: 0 });
       setSelectedIds([]);
       return;
@@ -363,7 +413,6 @@ export default function EditorPage() {
       const dx = pos.x - groupDrag.startX;
       const dy = pos.y - groupDrag.startY;
 
-      // SÃ¡Â»Â¬ DÃ¡Â»Â¤NG SYNCELEMENTS Ã¡Â»Å¾ Ã„ÂÃƒâ€šY
       const newElements = elements.map(el => {
         if (selectedIds.includes(el.id)) return { ...el, x: el.x + dx, y: el.y + dy };
         return el;
@@ -378,7 +427,6 @@ export default function EditorPage() {
     e.evt.preventDefault();
     setTimeout(() => { setSelectionRect(prev => ({ ...prev, visible: false })); });
 
-    // TÃƒÂ­nh toÃƒÂ¡n va chÃ¡ÂºÂ¡m (DÃƒÂ¹ng tÃ¡Â»Âa Ã„â€˜Ã¡Â»â„¢ tuyÃ¡Â»â€¡t Ã„â€˜Ã¡Â»â€˜i cÃ¡Â»Â§a mÃƒÂ n hÃƒÂ¬nh Ã„â€˜Ã¡Â»Æ’ so sÃƒÂ¡nh cho chuÃ¡ÂºÂ©n)
     const selBox = selectionRectRef.current.getClientRect();
     const newSelectedIds = elements.filter(el => {
       const node = layerRef.current.findOne(`#${el.id}`);
@@ -406,7 +454,6 @@ export default function EditorPage() {
     setElements(targetPage?.elements || []);
     setCurrentPageId(newPageId);
 
-    // FIX: CÃ¡ÂºÂ­p nhÃ¡ÂºÂ­t kim thÃ¡Â»Âi gian (Scrubber) nhÃ¡ÂºÂ£y Ã„â€˜Ã¡ÂºÂ¿n Ã„â€˜Ã¡ÂºÂ§u cÃ¡Â»Â§a Trang vÃ¡Â»Â«a chÃ¡Â»Ân
     const targetTiming = pageTimings.find((pt: any) => pt.id === newPageId);
     if (targetTiming) {
       setCurrentTime(targetTiming.start);
@@ -425,14 +472,13 @@ export default function EditorPage() {
     const newPageId = crypto.randomUUID();
     const newPage = {
       id: newPageId, page_order: updatedPages.length,
-      type: currentPageType, width: stageWidth, height: stageHeight, // KÃ¡ÂºÂ¿ thÃ¡Â»Â«a thuÃ¡Â»â„¢c tÃƒÂ­nh trang
+      type: currentPageType, width: stageWidth, height: stageHeight,
       elements: [], content: '', thumbnail: ''
     };
     setPages([...updatedPages, newPage]);
     setElements([]);
     setCurrentPageId(newPageId);
 
-    // FIX: Khi thÃƒÂªm trang mÃ¡Â»â€ºi Ã¡Â»Å¸ cuÃ¡Â»â€˜i, Ã„â€˜Ã¡ÂºÂ©y kim thÃ¡Â»Âi gian chÃ¡ÂºÂ¡y kÃ¡Â»â€¹ch kim Ã„â€˜Ã¡ÂºÂ¿n cuÃ¡Â»â€˜i luÃƒÂ´n
     setCurrentTime(totalDuration);
   };
 
@@ -441,27 +487,41 @@ export default function EditorPage() {
     const draggedItem = newPages.splice(dragIndex, 1)[0];
     newPages.splice(dropIndex, 0, draggedItem);
 
-    // CÃ¡ÂºÂ­p nhÃ¡ÂºÂ­t lÃ¡ÂºÂ¡i page_order cho chuÃ¡ÂºÂ©n vÃ¡Â»â€ºi Database
     const updatedOrderPages = newPages.map((p, idx) => ({ ...p, page_order: idx }));
     setPages(updatedOrderPages);
   };
 
-  // --- 5. Element CRUD & Ã„ÂÃ¡Â»â€™NG BÃ¡Â»Ëœ STATE (SYNC) ---
+  // --- 5. Element CRUD ---
 
-  // HÃƒâ‚¬M QUAN TRÃ¡Â»Å’NG NHÃ¡ÂºÂ¤T: Ã„ÂÃ¡ÂºÂ£m bÃ¡ÂºÂ£o mÃ¡Â»Âi thay Ã„â€˜Ã¡Â»â€¢i trÃƒÂªn Canvas Ã„â€˜Ã¡Â»Âu Ã„â€˜Ã†Â°Ã¡Â»Â£c lÃ†Â°u ngay lÃ¡ÂºÂ­p tÃ¡Â»Â©c vÃƒÂ o `pages`
-  const syncElements = (newElements: any[]) => {
+  const syncElements = useCallback((newElements: any[], _skipEmit = false) => {
     setElements(newElements);
     setPages(prevPages => prevPages.map(p =>
       p.id === currentPageId ? { ...p, elements: newElements } : p
     ));
-  };
+
+    if (!_skipEmit && currentPageId) {
+      emitElementsUpdate(currentPageId, newElements);
+    }
+  }, [currentPageId, emitElementsUpdate]);
 
   const addText = () => syncElements([...elements, { id: crypto.randomUUID(), type: 'text', x: stageWidth / 2 - 150, y: stageHeight / 2 - 25, text: 'Double click to edit', fontSize: 32, fontFamily: 'Arial', fill: '#000000', width: 300, fontStyle: 'normal', timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'fadeIn' } }]);
   const addRectangle = () => syncElements([...elements, { id: crypto.randomUUID(), type: 'rect', x: stageWidth / 2 - 100, y: stageHeight / 2 - 100, width: 200, height: 200, fill: '#6366f1', timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]);
-  const addImage = (src: string) => syncElements([...elements, { id: crypto.randomUUID(), type: 'image', x: stageWidth / 2 - 100, y: stageHeight / 2 - 100, width: 200, height: 200, src, timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]);
+  const addImage = (src: string) => {
+    syncElements([...elements, { id: crypto.randomUUID(), type: 'image', x: stageWidth / 2 - 100, y: stageHeight / 2 - 100, width: 200, height: 200, src, timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]);
+    setRecentStickers(prev => {
+      if (prev.some(s => s.url === src)) return prev;
+      return [{ url: src, last_used: new Date().toISOString() }, ...prev].slice(0, 10);
+    });
+  };
 
   const updateElement = (newAttrs: any) => {
     syncElements(elements.map(el => el.id === newAttrs.id ? newAttrs : el));
+  };
+
+  const updateElements = (updatedElements: any[]) => {
+    const updatedIds = updatedElements.map(el => el.id);
+    const updatedMap = new Map(updatedElements.map(el => [el.id, el]));
+    syncElements(elements.map(el => updatedMap.has(el.id) ? updatedMap.get(el.id) : el));
   };
 
   const deleteSelectedElement = () => {
@@ -479,7 +539,6 @@ export default function EditorPage() {
     syncElements(newElements);
   };
 
-  // --- LOGIC KÃƒâ€°O THÃ¡ÂºÂ¢ Ã„ÂÃ¡Â»â€I VÃ¡Â»Å  TRÃƒÂ LAYER ---
   const handleLayerDragStart = (e: React.DragEvent, index: number) => {
     setDraggedLayerIdx(index);
     e.dataTransfer.effectAllowed = 'move';
@@ -488,21 +547,21 @@ export default function EditorPage() {
   const handleLayerDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    if (dragOverIdx !== index) setDragOverIdx(index); // HiÃ¡Â»â€¡n thanh ngang tÃ¡ÂºÂ¡i vÃ¡Â»â€¹ trÃƒÂ­ hover
+    if (dragOverIdx !== index) setDragOverIdx(index);
   };
 
   const handleLayerDragLeave = (e: React.DragEvent, index: number) => {
-    if (dragOverIdx === index) setDragOverIdx(null); // TÃ¡ÂºÂ¯t thanh ngang khi chuÃ¡Â»â„¢t rÃ¡Â»Âi Ã„â€˜i
+    if (dragOverIdx === index) setDragOverIdx(null);
   };
 
   const handleLayerDragEnd = () => {
     setDraggedLayerIdx(null);
-    setDragOverIdx(null); // TÃ¡ÂºÂ¯t mÃ¡Â»Âi trÃ¡ÂºÂ¡ng thÃƒÂ¡i khi thÃ¡ÂºÂ£ chuÃ¡Â»â„¢t
+    setDragOverIdx(null);
   };
 
   const handleLayerDrop = (e: React.DragEvent, dropIndex: number) => {
     e.preventDefault();
-    setDragOverIdx(null); // TÃ¡ÂºÂ¯t thanh ngang ngay lÃ¡ÂºÂ­p tÃ¡Â»Â©c
+    setDragOverIdx(null);
 
     if (draggedLayerIdx !== null && draggedLayerIdx !== dropIndex) {
       const reversedElements = [...elements].reverse();
@@ -534,11 +593,10 @@ export default function EditorPage() {
   const handleFontUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    e.target.value = ''; // Reset Ä‘á»ƒ upload láº¡i cÃ¹ng file
+    e.target.value = '';
 
     const fontName = file.name.split('.')[0];
     try {
-      // BÆ°á»›c 1: Upload lÃªn server
       const formData = new FormData();
       formData.append('font', file);
       const res = await fetch('/api/assets/upload-font', {
@@ -548,28 +606,26 @@ export default function EditorPage() {
       });
       if (!res.ok) {
         const err = await res.json();
-        alert(`Lá»—i upload font: ${err.error || 'Unknown error'}`);
+        alert(`Lỗi upload font: ${err.error || 'Unknown error'}`);
         return;
       }
       const data = await res.json();
       const fontUrl: string = data.url;
       const savedName: string = data.name || fontName;
 
-      // BÆ°á»›c 2: Náº¡p font vÃ o trÃ¬nh duyá»‡t ngay láº­p tá»©c
       const buffer = await (await fetch(fontUrl)).arrayBuffer();
       const fontFace = new FontFace(savedName, buffer);
       const loadedFace = await fontFace.load();
       (document.fonts as any).add(loadedFace);
 
-      // BÆ°á»›c 3: ThÃªm vÃ o danh sÃ¡ch font dropdown
       setCustomFonts(prev => prev.includes(savedName) ? prev : [...prev, savedName]);
-      alert(`Font "${savedName}" Ä‘Ã£ Ä‘Æ°á»£c náº¡p vÃ  lÆ°u thÃ nh cÃ´ng!`);
+      alert(`Font "${savedName}" đã được nạp và lưu thành công!`);
     } catch (err) {
       console.error('Font upload error:', err);
-      alert('Lá»—i khi upload font!');
+      alert('Lỗi khi upload font!');
     }
   };
-  // --- TÁCH NỀN BẰNG AI ---
+
   const handleRemoveBackground = async (element: any) => {
     if (!element || !element.src) return;
 
@@ -604,8 +660,30 @@ export default function EditorPage() {
     }
   };
 
-  // Trong file EditorPage.tsx -> hÃƒÂ m handleSave
+  const isReadOnly = currentRole === 'viewer' || currentRole === 'commenter';
+  const canEdit = currentRole === 'owner' || currentRole === 'editor';
+
+  // Khóa phím tắt cho viewer/commenter
+  useEffect(() => {
+    if (!isReadOnly) return;
+    const blockShortcuts = (e: KeyboardEvent) => {
+      const blocked = [
+        e.key === 'Delete', e.key === 'Backspace',
+        e.ctrlKey && ['z', 'y', 'c', 'v', 'a'].includes(e.key.toLowerCase())
+      ];
+      if (blocked.some(Boolean)) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', blockShortcuts, true);
+    return () => window.removeEventListener('keydown', blockShortcuts, true);
+  }, [isReadOnly]);
+
+  // Trong file EditorPage.tsx -> hàm handleSave
   const handleSave = async (isSilent = false) => {
+    // Guard: viewer và commenter không được lưu
+    if (isReadOnly) return;
     setSaveStatus('saving');
     setIsSaving(true);
     try {
@@ -627,11 +705,10 @@ export default function EditorPage() {
           id: page.id,
           page_order: index,
           thumbnail: page.thumbnail,
-          // BÃ¡Â»â€ SUNG CÃƒÂC TRÃ†Â¯Ã¡Â»Å“NG DÃ†Â¯Ã¡Â»Å¡I Ã„ÂÃƒâ€šY:
           type: page.type || 'canvas',
           width: page.width || 1920,
           height: page.height || 1080,
-          content: page.content || '', // NÃ¡Â»â„¢i dung text cho Doc
+          content: page.content || '',
           transition: page.transition || null,
           duration: page.duration || 5,
           elements: (page.type === 'canvas') ? page.elements.map((el: any, idx: number) => {
@@ -645,33 +722,30 @@ export default function EditorPage() {
               visible: true,
               locked: false
             };
-          }) : [] // NÃ¡ÂºÂ¿u khÃƒÂ´ng phÃ¡ÂºÂ£i canvas thÃƒÂ¬ gÃ¡Â»Â­i mÃ¡ÂºÂ£ng rÃ¡Â»â€”ng
+          }) : []
         }))
       };
 
       await updateDesignFull(id!, payload);
       setSaveStatus('saved');
-      if (!isSilent) alert("Ã„ÂÃƒÂ£ lÃ†Â°u thÃƒÂ nh cÃƒÂ´ng!");
+      if (!isSilent) alert("Đã lưu thành công! ");
     } catch (error) {
       setSaveStatus('unsaved');
-      console.error("LÃ¡Â»â€”i khi lÃ†Â°u:", error);
+      console.error("Lỗi khi lưu:", error);
     } finally {
       setIsSaving(false);
     }
   };
 
-  // KÃƒÂ­ch hoÃ¡ÂºÂ¡t Modal xuÃ¡ÂºÂ¥t file
   const handleExport = () => {
-    setExportSelectedPages(pages.map(p => p.id)); // MÃ¡ÂºÂ·c Ã„â€˜Ã¡Â»â€¹nh chÃ¡Â»Ân tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ cÃƒÂ¡c trang
+    setExportSelectedPages(pages.map(p => p.id));
     setShowExportModal(true);
   };
 
-  // Logic xuÃ¡ÂºÂ¥t file thÃ¡Â»Â±c tÃ¡ÂºÂ¿ (Ã„ÂÃƒÆ’ TÃƒÂCH HÃ¡Â»Â¢P ZIP & PPTX VÃƒâ‚¬ SÃ¡Â»Â¬A LÃ¡Â»â€“I CHÃ¡Â»Å’N PAGE MP4)
-  // Logic xuÃ¡ÂºÂ¥t file thÃ¡Â»Â±c tÃ¡ÂºÂ¿ (BÃ¡ÂºÂ¢N FINAL - Ãƒâ€°P XUNG FPS Ã„ÂÃ¡Â»â€š ANIMATION SIÃƒÅ U MÃ†Â¯Ã¡Â»Â¢T)
   const executeExport = async () => {
     if (exportStatus !== 'idle') return;
 
-    if (exportSelectedPages.length === 0) return alert("Vui lÃƒÂ²ng chÃ¡Â»Ân ÃƒÂ­t nhÃ¡ÂºÂ¥t 1 trang!");
+    if (exportSelectedPages.length === 0) return alert("Vui lòng chọn ít nhất 1 trang!");
 
     setExportStatus('rendering');
     setExportProgress(5);
@@ -690,18 +764,14 @@ export default function EditorPage() {
         const endExportTime = selectedTimings[selectedTimings.length - 1].end;
         const exportDuration = endExportTime - startExportTime;
 
-        // 1. TUA VÃ¡Â»â‚¬ Ã„ÂÃ¡ÂºÂ¦U VÃƒâ‚¬ DÃ¡Â»Å’N DÃ¡ÂºÂ¸P
         setIsPlaying(false);
         setCurrentTime(startExportTime);
         setSelectedIds([]);
 
-        // 2. CHÃ¡Â»Å“ 300ms Ã„ÂÃ¡Â»â€š RENDER XONG TRÃ¡ÂºÂ NG THÃƒÂI 0s
         setTimeout(() => {
-          // Ã°Å¸â€Â¥ NÃƒâ€šNG FPS LÃƒÅ N 60 Ã„ÂÃ¡Â»â€š BÃ¡ÂºÂ®T CHUYÃ¡Â»â€šN Ã„ÂÃ¡Â»ËœNG MÃ†Â¯Ã¡Â»Â¢T NHÃ¡ÂºÂ¤T
           const stream = canvas.captureStream(60);
           const mimeType = MediaRecorder.isTypeSupported('video/webm; codecs=vp9') ? 'video/webm; codecs=vp9' : 'video/webm';
 
-          // Ãƒâ€°p chÃ¡ÂºÂ¥t lÃ†Â°Ã¡Â»Â£ng bitrate lÃƒÂªn 5Mbps cho video nÃƒÂ©t cÃ„Æ’ng
           const recorder = new MediaRecorder(stream, {
             mimeType,
             videoBitsPerSecond: 5000000
@@ -712,13 +782,12 @@ export default function EditorPage() {
             if (e.data && e.data.size > 0) chunks.push(e.data);
           };
 
-          // Ã°Å¸â€Â¥ BÃ¡ÂºÂ¬T MÃƒÂY BÃ†Â M FPS: Ãƒâ€°p Konva phÃ¡ÂºÂ£i vÃ¡ÂºÂ½ lÃ¡ÂºÂ¡i Ã„â€˜Ã¡Â»â€œ hÃ¡Â»Âa liÃƒÂªn tÃ¡Â»Â¥c Ã„â€˜Ã¡Â»Æ’ feed cho Camera
           const forceRedrawAnim = new Konva.Animation(() => {
             if (layerRef.current) layerRef.current.draw();
           });
 
           recorder.onstop = async () => {
-            forceRedrawAnim.stop(); // Quay xong thÃƒÂ¬ tÃ¡ÂºÂ¯t ÃƒÂ©p xung ngay lÃ¡ÂºÂ­p tÃ¡Â»Â©c
+            forceRedrawAnim.stop();
 
             setExportStatus('uploading');
             setExportProgress(90);
@@ -732,17 +801,15 @@ export default function EditorPage() {
               setExportStatus('completed');
               setTimeout(() => setExportStatus('idle'), 3000);
             } catch (err) {
-              alert("LÃ¡Â»â€”i tÃ¡ÂºÂ£i video tÃ¡Â»Â« Server!");
+              alert("Lỗi tải video từ Server!");
               setExportStatus('idle');
             }
           };
 
-          // 3. ACTION! BÃ¡ÂºÂ¬T MÃƒÂY QUAY VÃƒâ‚¬ CHÃ¡ÂºÂ Y HIÃ¡Â»â€ U Ã¡Â»Â¨NG
-          forceRedrawAnim.start(); // KÃƒÂ­ch hoÃ¡ÂºÂ¡t mÃƒÂ¡y bÃ†Â¡m FPS trÃ†Â°Ã¡Â»â€ºc
+          forceRedrawAnim.start();
           recorder.start();
           setIsPlaying(true);
 
-          // TiÃ¡ÂºÂ¿n trÃƒÂ¬nh %
           const progressInterval = setInterval(() => {
             const currentT = currentTimeRef.current;
             const p = Math.min(85, ((currentT - startExportTime) / exportDuration) * 90);
@@ -755,37 +822,29 @@ export default function EditorPage() {
             }
           }, 100);
 
-        }, 300); // TrÃ¡Â»â€¦ 300ms
+        }, 300);
 
       } else {
-        // ... (PhÃ¡ÂºÂ§n xuÃ¡ÂºÂ¥t Ã¡ÂºÂ£nh PNG/JPG giÃ¡Â»Â¯ nguyÃƒÂªn) {
-        // XÃ¡Â»Â­ lÃƒÂ½ Ã¡ÂºÂ£nh PNG/JPG/PPTX
         setExportProgress(30);
         const pagesToExport = pages.filter(p => exportSelectedPages.includes(p.id));
 
         if (exportConfig.format === 'pptx') {
           const pptx = new pptxgen();
-          // Set layout chuÃ¡ÂºÂ©n 16:9 (tÃ†Â°Ã†Â¡ng Ã„â€˜Ã†Â°Ã†Â¡ng 10 x 5.625 inches)
           pptx.layout = 'LAYOUT_16x9';
 
           pagesToExport.forEach(p => {
             const slide = pptx.addSlide();
 
-            // 1. Ã„ÂÃ¡Â»â€¢ mÃƒÂ u nÃ¡Â»Ân nÃ¡ÂºÂ¿u cÃƒÂ³
             if (p.background_color) {
               slide.background = { color: p.background_color.replace('#', '') };
             }
 
-            // 2. LÃ¡ÂºÂ¥y dÃ¡Â»Â¯ liÃ¡Â»â€¡u mÃ¡ÂºÂ£ng elements chuÃ¡ÂºÂ©n 
             const pageElements = p.id === currentPageId ? elements : (p.elements || []);
 
-            // 3. DuyÃ¡Â»â€¡t qua tÃ¡Â»Â«ng layer vÃƒÂ  "vÃ¡ÂºÂ½" lÃ¡ÂºÂ¡i chÃƒÂºng
-            // Ã°Å¸â€Â¥ FIX 1: Khai bÃƒÂ¡o rÃƒÂµ (el: any) Ã„â€˜Ã¡Â»Æ’ hÃ¡ÂºÂ¿t bÃƒÂ¡o Ã„â€˜Ã¡Â»Â
             pageElements.forEach((el: any) => {
 
-              // Ã°Å¸â€Â¥ FIX 2: DÃƒÂ¹ng sÃ¡Â»â€˜ Inch thay vÃƒÂ¬ % Ã„â€˜Ã¡Â»Æ’ TypeScript vÃƒÂ  PPTX cÃƒÂ¹ng vui vÃ¡ÂºÂ»
-              const pptxWidth = 10; // KÃƒÂ­ch thÃ†Â°Ã¡Â»â€ºc chuÃ¡ÂºÂ©n 10 inches
-              const pptxHeight = 5.625; // KÃƒÂ­ch thÃ†Â°Ã¡Â»â€ºc chuÃ¡ÂºÂ©n 5.625 inches
+              const pptxWidth = 10;
+              const pptxHeight = 5.625;
 
               const x = (el.x / stageWidth) * pptxWidth;
               const y = (el.y / stageHeight) * pptxHeight;
@@ -794,12 +853,10 @@ export default function EditorPage() {
 
               const colorHex = el.fill ? el.fill.replace('#', '') : '000000';
 
-              // Quy Ã„â€˜Ã¡Â»â€¢i Ã„â€˜Ã¡Â»â„¢ mÃ¡Â»Â opacity sang transparency cÃ¡Â»Â§a PowerPoint (0 - 100%)
               const transparency = el.opacity !== undefined ? (1 - el.opacity) * 100 : 0;
               const rotate = el.rotation || 0;
 
               if (el.type === 'text') {
-                // ChuyÃ¡Â»Æ’n Ã„â€˜Ã¡Â»â€¢i px sang Point cÃ¡Â»Â§a PPTX (Slide 16:9 dÃƒÂ i 10 inch, 1 inch = 72 point => mÃƒÂ n hÃƒÂ¬nh dÃƒÂ i 720 point)
                 const ptSize = (el.fontSize / stageWidth) * 720;
 
                 slide.addText(el.text || el.content || ' ', {
@@ -838,7 +895,7 @@ export default function EditorPage() {
                     rotate
                   });
                 } catch (e) {
-                  console.error("LÃ¡Â»â€”i khi thÃƒÂªm Ã¡ÂºÂ£nh vÃƒÂ o PPTX:", e);
+                  console.error("Lỗi khi thêm ảnh vào PPTX:", e);
                 }
               }
             });
@@ -846,7 +903,6 @@ export default function EditorPage() {
 
           await pptx.writeFile({ fileName: `${design?.title || 'Kanva_Export'}.pptx` });
         } else {
-          // PNG/JPG vÃ¡Â»â€ºi Scaling
           if (pagesToExport.length === 1) {
             const dataURL = stageRef.current.toDataURL({ pixelRatio: exportScale });
             saveAs(dataURL, `${design?.title}.${exportConfig.format}`);
@@ -866,7 +922,7 @@ export default function EditorPage() {
       }
     } catch (error) {
       setExportStatus('idle');
-      alert("LÃ¡Â»â€”i xuÃ¡ÂºÂ¥t file!");
+      alert("Lỗi xuất file!");
     }
   };
 
@@ -917,13 +973,9 @@ export default function EditorPage() {
             const img = new window.Image();
             img.src = base64Url;
             img.onload = () => {
-              // 1. ThÃƒÂªm vÃƒÂ o Canvas vÃ¡Â»â€ºi kÃƒÂ­ch thÃ†Â°Ã¡Â»â€ºc chuÃ¡ÂºÂ©n gÃ¡Â»â€˜c
               addImageOriginal(base64Url, img.width, img.height);
-
-              // 2. GÃ¡Â»Â­i bÃ¡ÂºÂ£n sao cÃ¡Â»Â§a Ã¡ÂºÂ£nh vÃƒÂ o Tab Uploads Ã„â€˜Ã¡Â»Æ’ quÃ¡ÂºÂ£n lÃƒÂ½ tÃ¡ÂºÂ­p trung
               setUploadedImages(prev => [{ id: crypto.randomUUID(), url: base64Url, width: img.width, height: img.height }, ...prev]);
 
-              // 3. TÃ¡Â»Â± Ã„â€˜Ã¡Â»â„¢ng bÃ¡ÂºÂ­t Tab Uploads ra cho ngÃ†Â°Ã¡Â»Âi dÃƒÂ¹ng dÃ¡Â»â€¦ nhÃƒÂ¬n thÃ¡ÂºÂ¥y
               setActiveTab('uploads');
             };
           };
@@ -935,14 +987,13 @@ export default function EditorPage() {
     };
     window.addEventListener('paste', handlePaste as any);
     return () => window.removeEventListener('paste', handlePaste as any);
-  }, [stageWidth, stageHeight]);
+  }, [stageWidth, stageHeight, elements]);
 
   // States cho Version History
   const [showVersionModal, setShowVersionModal] = useState(false);
   const [versions, setVersions] = useState<any[]>([]);
   const [isRestoring, setIsRestoring] = useState(false);
 
-  // GÃ¡Â»Âi khi bÃ¡ÂºÂ¥m nÃƒÂºt "Version History"
   const handleOpenVersionHistory = async () => {
     setShowVersionModal(true);
     try {
@@ -951,29 +1002,27 @@ export default function EditorPage() {
     } catch (error) { console.error(error); }
   };
 
-  // KhÃƒÂ´i phÃ¡Â»Â¥c bÃ¡ÂºÂ£n cÃ…Â©
   const handleRestore = async (versionId: string) => {
-    if (!window.confirm("BÃ¡ÂºÂ£n thiÃ¡ÂºÂ¿t kÃ¡ÂºÂ¿ hiÃ¡Â»â€¡n tÃ¡ÂºÂ¡i sÃ¡ÂºÂ½ bÃ¡Â»â€¹ ghi Ã„â€˜ÃƒÂ¨. BÃ¡ÂºÂ¡n cÃƒÂ³ chÃ¡ÂºÂ¯c chÃ¡ÂºÂ¯n muÃ¡Â»â€˜n khÃƒÂ´i phÃ¡Â»Â¥c?")) return;
+    if (!window.confirm("Bạn thiết kế hiện tại sẽ bị ghi đè. Bạn có chắc chắn muốn khôi phục?")) return;
     setIsRestoring(true);
     try {
       await restoreDesignVersion(id!, versionId);
-      alert("Ã„ÂÃƒÂ£ khÃƒÂ´i phÃ¡Â»Â¥c thÃƒÂ nh cÃƒÂ´ng!");
-      window.location.reload(); // CÃƒÂ¡ch sÃ¡ÂºÂ¡ch nhÃ¡ÂºÂ¥t lÃƒÂ  F5 lÃ¡ÂºÂ¡i trang Ã„â€˜Ã¡Â»Æ’ nÃ¡ÂºÂ¡p lÃ¡ÂºÂ¡i dÃ¡Â»Â¯ liÃ¡Â»â€¡u mÃ¡Â»â€ºi tÃ¡Â»Â« DB
+      alert("Đã khôi phục thành công!");
+      window.location.reload();
     } catch (error) {
-      alert("LÃ¡Â»â€”i khi khÃƒÂ´i phÃ¡Â»Â¥c");
+      alert("Lỗi khi khôi phục");
     } finally {
       setIsRestoring(false);
     }
   };
 
-  // ChÃ¡Â»Â¥p mÃ¡Â»â„¢t phiÃƒÂªn bÃ¡ÂºÂ£n thÃ¡Â»Â§ cÃƒÂ´ng
   const handleSaveVersion = async () => {
-    await handleSave(true); // NhÃ¡Â»â€º lÃ†Â°u DB hiÃ¡Â»â€¡n tÃ¡ÂºÂ¡i trÃ†Â°Ã¡Â»â€ºc
+    await handleSave(true);
     try {
       await createDesignVersion(id!);
-      alert("Ã„ÂÃƒÂ£ chÃ¡Â»Â¥p vÃƒÂ  lÃ†Â°u thÃƒÂ nh 1 phiÃƒÂªn bÃ¡ÂºÂ£n lÃ¡Â»â€¹ch sÃ¡Â»Â­!");
+      alert("Đã chụp và lưu thành 1 phiên bản lịch sử!");
     } catch (error) {
-      alert("LÃ¡Â»â€”i khi lÃ†Â°u phiÃƒÂªn bÃ¡ÂºÂ£n");
+      alert("Lỗi khi lưu phiên bản");
     }
   };
 
@@ -1006,57 +1055,67 @@ export default function EditorPage() {
         handleSave={handleSave}
         handleSaveVersion={handleSaveVersion}
         handleOpenVersionHistory={handleOpenVersionHistory}
+        currentRole={currentRole}
+        onOpenShare={() => setShowShareModal(true)}
+        activeUsers={activeUsers}
+        isConnected={isConnected}
+        currentUserId={user?.id}
       />
 
       {/* 2. MAIN AREA */}
       <div className="flex-1 flex overflow-hidden relative">
 
         {/* Icon Rail */}
-        <EditorSidebar
-          activeTab={activeTab}
-          setActiveTab={(tab: any) => {
-            setActiveTab(tab);
-            if (tab) { setShowPositionBox(false); setShowAnimateBox(false); }
-          }}
-          currentPageType={currentPageType}
-          handleFontUpload={handleFontUpload}
-        />
+        {canEdit && (
+          <EditorSidebar
+            activeTab={activeTab}
+            setActiveTab={(tab: any) => {
+              setActiveTab(tab);
+              if (tab) { setShowPositionBox(false); setShowAnimateBox(false); }
+            }}
+            currentPageType={currentPageType}
+            handleFontUpload={handleFontUpload}
+          />
+        )}
 
-        {/* Sidebar Drawer (panel trÆ°á»£t tá»« trÃ¡i) */}
-        <SidebarDrawer
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          showPositionBox={showPositionBox}
-          setShowPositionBox={setShowPositionBox}
-          showAnimateBox={showAnimateBox}
-          setShowAnimateBox={setShowAnimateBox}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          handleSearch={handleSearch}
-          searchResults={searchResults}
-          addRectangle={addRectangle}
-          addImage={addImage}
-          recentStickers={recentStickers}
-          uploadedImages={uploadedImages}
-          uploadProgress={uploadProgress}
-          handleImageUpload={handleImageUpload}
-          addImageOriginal={addImageOriginal}
-          addText={addText}
-          customFonts={customFonts}
-          handleFontUpload={handleFontUpload}
-          elements={elements}
-          selectedIds={selectedIds}
-          setSelectedIds={setSelectedIds}
-          draggedLayerIdx={draggedLayerIdx}
-          dragOverIdx={dragOverIdx}
-          handleLayerDragStart={handleLayerDragStart}
-          handleLayerDragOver={handleLayerDragOver}
-          handleLayerDragLeave={handleLayerDragLeave}
-          handleLayerDrop={handleLayerDrop}
-          handleLayerDragEnd={handleLayerDragEnd}
-          selectedElement={selectedElement}
-          updateElement={updateElement}
-        />
+        {/* Sidebar Drawer */}
+        {canEdit && (
+          <SidebarDrawer
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            showPositionBox={showPositionBox}
+            setShowPositionBox={setShowPositionBox}
+            showAnimateBox={showAnimateBox}
+            setShowAnimateBox={setShowAnimateBox}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            handleSearch={handleSearch}
+            searchResults={searchResults}
+            addRectangle={addRectangle}
+            addImage={addImage}
+            recentStickers={recentStickers}
+            uploadedImages={uploadedImages}
+            uploadProgress={uploadProgress}
+            handleImageUpload={handleImageUpload}
+            addImageOriginal={addImageOriginal}
+            addText={addText}
+            customFonts={customFonts}
+            handleFontUpload={handleFontUpload}
+            elements={elements}
+            selectedIds={selectedIds}
+            setSelectedIds={setSelectedIds}
+            draggedLayerIdx={draggedLayerIdx}
+            dragOverIdx={dragOverIdx}
+            handleLayerDragStart={handleLayerDragStart}
+            handleLayerDragOver={handleLayerDragOver}
+            handleLayerDragLeave={handleLayerDragLeave}
+            handleLayerDrop={handleLayerDrop}
+            handleLayerDragEnd={handleLayerDragEnd}
+            selectedElement={selectedElement}
+            updateElement={updateElement}
+            updateElements={updateElements}
+          />
+        )}
 
         {/* 3. KHU VÃ¡Â»Â°C LÃƒâ‚¬M VIÃ¡Â»â€ C CHÃƒ NH */}
         <div className="flex-1 bg-white/40 flex flex-col relative overflow-hidden">
@@ -1072,7 +1131,7 @@ export default function EditorPage() {
             )}
 
             <AnimatePresence>
-              {selectedElement && currentPageType === 'canvas' && (
+              {selectedIds.length > 0 && currentPageType === 'canvas' && (
                 <motion.div
                   initial={{ opacity: 0, y: 15, scale: 0.9 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1080,16 +1139,35 @@ export default function EditorPage() {
                   transition={{ duration: 0.25, ease: 'easeOut' }}
                   className="absolute top-6 left-1/2 -translate-x-1/2 z-[60]"
                 >
-                  <ElementToolbar
-                    element={selectedElement}
-                    onUpdate={updateElement}
-                    onDelete={deleteSelectedElement}
-                    onMove={moveElement}
-                    fontList={customFonts}
-                    onTogglePosition={() => { setShowPositionBox(!showPositionBox); setShowAnimateBox(false); }}
-                    onToggleAnimate={() => { setShowAnimateBox(!showAnimateBox); setShowPositionBox(false); }}
-                    onRemoveBackground={handleRemoveBackground}
-                  />
+                  {selectedIds.length === 1 && selectedElement ? (
+                    <ElementToolbar
+                      element={selectedElement}
+                      onUpdate={updateElement}
+                      onDelete={deleteSelectedElement}
+                      onMove={moveElement}
+                      fontList={customFonts}
+                      onTogglePosition={() => { setShowPositionBox(!showPositionBox); setShowAnimateBox(false); }}
+                      onToggleAnimate={() => { setShowAnimateBox(!showAnimateBox); setShowPositionBox(false); }}
+                      onRemoveBackground={handleRemoveBackground}
+                    />
+                  ) : (
+                    <div className="bg-white rounded-xl shadow-lg border border-slate-200 px-3 py-2 flex items-center gap-4">
+                      <span className="text-sm font-bold text-slate-600 px-2 border-r border-slate-200">{selectedIds.length} elements</span>
+                      <button
+                        onClick={() => { setShowAnimateBox(!showAnimateBox); setShowPositionBox(false); }}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition ${showAnimateBox ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                      >
+                        <Zap size={16} /> Animate
+                      </button>
+                      <button
+                        onClick={deleteSelectedElement}
+                        className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                        title="Delete all"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      </button>
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1103,8 +1181,6 @@ export default function EditorPage() {
                 onClose={() => setShowTransitionBox(false)}
               />
             )}
-
-            {/* Animate Box Ä‘Ã£ Ä‘Æ°á»£c Ä‘Æ°a vÃ o SidebarDrawer */}
 
             {/* Core editors */}
             {currentPageType === 'canvas' && (
@@ -1153,6 +1229,9 @@ export default function EditorPage() {
               }}
               reorderPages={reorderPages}
               updateElement={updateElement}
+              updatePage={(id: string, updates: any) => {
+                setPages(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+              }}
               designType={design?.design_type || 'presentation'}
               selectedIds={selectedIds}
               setSelectedIds={setSelectedIds}
@@ -1199,12 +1278,31 @@ export default function EditorPage() {
         />
       )}
 
+      {/* SHARE MODAL */}
+      {showShareModal && id && (
+        <ShareModal
+          designId={id}
+          currentRole={currentRole}
+          onClose={() => setShowShareModal(false)}
+        />
+      )}
+
       {/* EXPORT PROGRESS TOAST */}
       <ExportProgressToast
         exportStatus={exportStatus}
         exportProgress={exportProgress}
         exportFormat={exportConfig.format}
       />
+
+      {/* READ-ONLY OVERLAY (viewer/commenter): Khóa toàn bộ tương tác trên Canvas */}
+      {isReadOnly && (
+        <div
+          className="fixed inset-0 z-[15] pointer-events-auto"
+          style={{ background: 'transparent', cursor: currentRole === 'commenter' ? 'crosshair' : 'not-allowed' }}
+          onMouseDown={e => e.stopPropagation()}
+          onKeyDown={e => e.stopPropagation()}
+        />
+      )}
     </div>
   );
 }

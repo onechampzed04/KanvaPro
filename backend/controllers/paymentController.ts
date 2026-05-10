@@ -56,5 +56,28 @@ export const paymentController = {
       console.error('Lỗi ở paymentController.payosWebhook:', error);
       res.status(400).json({ success: false, error: 'Invalid webhook data' });
     }
+  },
+
+  // ----------------------------------------------------------------------
+  // 4. Lịch sử thanh toán
+  // ----------------------------------------------------------------------
+  getBillingHistory: async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id;
+      // Tránh việc import db trực tiếp vào controller nếu architecture là service-based
+      // Nhưng để nhanh theo SQL Draft, ta có thể dùng db config ở đây hoặc tạo db query
+      const db = require('../config/db').default;
+      const result = await db.query(`
+        SELECT p.id, p.amount, p.status, p.created_at, p.transaction_id, p.metadata 
+        FROM payments p 
+        WHERE p.user_id = $1 AND p.status != 'pending'
+        ORDER BY p.created_at DESC
+      `, [userId]);
+      
+      res.json({ history: result.rows });
+    } catch (error) {
+      console.error('Lỗi lấy lịch sử thanh toán:', error);
+      res.status(500).json({ error: 'Lỗi server khi lấy lịch sử thanh toán' });
+    }
   }
 };

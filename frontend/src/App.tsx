@@ -7,6 +7,7 @@ import EditorPage from './pages/EditorPage';
 import PricingPage from './pages/PricingPage';
 import PaymentSuccessPage from './pages/PaymentSuccessPage';
 import PaymentCancelPage from './pages/PaymentCancelPage';
+import BillingPage from './pages/BillingPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -26,12 +27,11 @@ export default function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/pricing" element={<PricingPage />} />
 
-          {/* Callback pages từ PayOS - không cần đăng nhập vì PayOS redirect về đây */}
           <Route path="/payment/success" element={<PaymentSuccessPage />} />
           <Route path="/payment/cancel" element={<PaymentCancelPage />} />
 
-          {/* Protected routes */}
           <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/billing" element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
           <Route path="/design/:id" element={<ProtectedRoute><EditorPage /></ProtectedRoute>} />
         </Routes>
       </AuthProvider>

@@ -44,5 +44,23 @@ export const authService = {
     await db.execute('UPDATE otps SET expires_at = NOW() WHERE id = $1', [otpId]);
   },
 
-  
+  getUserWithSubscription: async (id: string): Promise<any> => {
+    return await db.getOne(
+      `SELECT 
+         u.id, u.email, u.name, u.role, u.is_verified,
+         us.id AS sub_id,
+         us.plan_id,
+         us.status AS sub_status,
+         us.current_period_end,
+         sp.name AS plan_name,
+         sp.slug AS plan_slug
+       FROM users u
+       LEFT JOIN user_subscriptions us ON us.user_id = u.id
+       LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+       WHERE u.id = $1
+       ORDER BY us.current_period_end DESC NULLS LAST
+       LIMIT 1`,
+      [id]
+    );
+  },
 };

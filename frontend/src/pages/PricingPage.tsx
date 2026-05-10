@@ -14,14 +14,12 @@ export default function PricingPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCheckingOut, setIsCheckingOut] = useState<string | null>(null);
 
-  // 1. Tải danh sách các gói cước từ DB
   useEffect(() => {
     const loadPlans = async () => {
       try {
         const data = await fetchActiveSubscriptions();
         let plansData = data.subscriptions || data.plans || data || [];
         
-        // Loại bỏ gói Free (giá = 0) khỏi danh sách hiển thị
         plansData = plansData.filter((plan: any) => Number(plan.monthly_price) > 0);
         
         setSubscriptions(plansData);
@@ -34,28 +32,24 @@ export default function PricingPage() {
     loadPlans();
   }, []);
 
-  // 2. Xử lý khi User bấm nút thanh toán
   const handleSubscribe = async (sub: any) => {
-    // Nếu là gói Free (Giá = 0) -> Cho về Dashboard xài luôn
+
     if (Number(sub.monthly_price) === 0) {
       navigate('/');
       return;
     }
 
-    // Bắt buộc đăng nhập trước khi mua gói mất tiền
     if (!user) {
       alert("Vui lòng đăng nhập tài khoản trước khi nâng cấp!");
       navigate('/login');
       return;
     }
 
-    // Nếu đang dùng gói này rồi -> Không làm gì
     if (isPro && planSlug === sub.slug) {
       alert("Bạn đang sử dụng gói này! Gói sẽ tự động gia hạn khi hết thời hạn.");
       return;
     }
 
-    // Bắt đầu quá trình gọi PayOS
     try {
       setIsCheckingOut(sub.id);
       
@@ -65,7 +59,6 @@ export default function PricingPage() {
         planName: sub.name
       });
 
-      // Nếu Backend trả về checkoutUrl của PayOS -> Chuyển hướng sang trang thanh toán
       if (response.checkoutUrl) {
         window.location.href = response.checkoutUrl;
       }

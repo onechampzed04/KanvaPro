@@ -32,7 +32,8 @@ export default function LoginPage() {
         setUserId(data.userId);
         setShowOtp(true);
       } else {
-        login(data.user);
+        if (data.token) localStorage.setItem('token', data.token);
+        await login(data.user);
         navigate('/');
       };
     } catch (err: any) {
@@ -56,7 +57,8 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       
-      login(data.user);
+      if (data.token) localStorage.setItem('token', data.token);
+      await login(data.user);
       navigate('/');
     } catch (err: any) {
       setError(err.message);
@@ -123,14 +125,6 @@ export default function LoginPage() {
                 <span className="px-4 bg-transparent text-slate-400 font-medium">Or</span>
               </div>
             </div>
-
-            <button
-              type="button"
-              onClick={() => { setEmail('demo@example.com'); setPassword('password'); }}
-              className="w-full bg-white text-slate-600 border border-slate-200 py-3.5 px-4 rounded-2xl hover:bg-slate-50 hover:text-slate-800 transition-all shadow-sm font-bold flex items-center justify-center gap-2"
-            >
-              Use Demo Account
-            </button>
           </form>
         ) : (
           <motion.form initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} onSubmit={handleVerifyOtp} className="space-y-6">

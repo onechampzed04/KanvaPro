@@ -14,8 +14,8 @@ const getHeaders = () => {
 };
 
 // 1. Lấy danh sách thiết kế
-export const fetchDesigns = async () => {
-  const response = await fetch(`${BASE_URL}/designs/my`, {
+export const fetchDesigns = async (tab: string = 'my_designs') => {
+  const response = await fetch(`${BASE_URL}/designs/my?tab=${tab}`, {
     headers: getHeaders()
   });
   if (!response.ok) throw new Error('Failed to fetch designs');
@@ -173,7 +173,6 @@ export const updateSubscription = async (id: string, subscriptionData: any) => {
   return res.json();
 };
 
-// Ẩn/Xóa mềm gói cước
 export const deleteSubscription = async (id: string) => {
   const res = await fetch(`/api/subscriptions/${id}`, {
     method: 'DELETE',
@@ -226,5 +225,64 @@ export const verifyPayment = async (orderCode: string) => {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Lỗi xác minh thanh toán');
   }
+  return res.json();
+};
+
+// ==========================================
+// SHARE MANAGEMENT APIs
+// ==========================================
+
+export const fetchDesignShares = async (designId: string) => {
+  const res = await fetch(`/api/designs/${designId}/shares`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Lỗi lấy danh sách chia sẻ');
+  return res.json();
+};
+
+export const shareDesign = async (designId: string, email: string, role: string) => {
+  const res = await fetch(`/api/designs/${designId}/share`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ email, role })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Lỗi chia sẻ');
+  return data;
+};
+
+export const updateShareRole = async (designId: string, userId: string, role: string) => {
+  const res = await fetch(`/api/designs/${designId}/share/${userId}`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ role })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Lỗi cập nhật quyền');
+  return data;
+};
+
+export const removeShare = async (designId: string, userId: string) => {
+  const res = await fetch(`/api/designs/${designId}/share/${userId}`, {
+    method: 'DELETE',
+    headers: getHeaders()
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Lỗi gỡ quyền');
+  return data;
+};
+
+export const togglePublicLink = async (designId: string, isPublic: boolean) => {
+  const res = await fetch(`/api/designs/${designId}/public`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ is_public: isPublic })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Lỗi cập nhật public link');
+  return data;
+};
+
+export const fetchShareLink = async (designId: string) => {
+  const res = await fetch(`/api/designs/${designId}/share-link`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Lỗi lấy link chia sẻ');
   return res.json();
 };

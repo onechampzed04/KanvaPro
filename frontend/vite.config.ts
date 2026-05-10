@@ -16,12 +16,25 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      // Thêm đoạn này vào để sửa lỗi 404
       proxy: {
         '/api': {
           target: 'http://localhost:3000',
           changeOrigin: true,
           secure: false,
+        },
+        // ── Socket.io WebSocket proxy ──────────────────────────────────────
+        // Phải proxy '/socket.io' để WebSocket handshake đi qua Vite dev server
+        '/socket.io': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+          ws: true, // BẮT BUỘC: Enable WebSocket upgrade
+          secure: false,
+          configure: (proxy) => {
+            proxy.on('error', (err: any) => {
+              // Bỏ qua lỗi ECONNABORTED do Vite/trình duyệt ngắt kết nối đột ngột
+              if (err.code === 'ECONNABORTED') return;
+            });
+          }
         },
         '/assets': {
           target: 'http://localhost:3000',
@@ -31,8 +44,12 @@ export default defineConfig(({ mode }) => {
           target: 'http://localhost:3000',
           changeOrigin: true,
         },
+        '/bg-removed': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
       },
       hmr: process.env.DISABLE_HMR !== 'true',
     },
   };
-});
+});

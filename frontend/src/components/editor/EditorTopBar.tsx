@@ -1,7 +1,9 @@
 // src/components/editor/EditorTopBar.tsx
 import { Link } from 'react-router-dom';
-import { ChevronLeft, Download, Save, History, PlusCircle } from 'lucide-react';
+import { ChevronLeft, Download, Save, History, PlusCircle, Share2, Eye, Pencil, MessageSquare, Crown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import CollaboratorAvatars from './CollaboratorAvatars';
+import type { CollaboratorInfo } from '../../hooks/useCollaboration';
 
 interface EditorTopBarProps {
   design: any;
@@ -27,7 +29,21 @@ interface EditorTopBarProps {
   handleSave: (silent?: boolean) => void;
   handleSaveVersion: () => void;
   handleOpenVersionHistory: () => void;
+  // RBAC Props
+  currentRole: 'owner' | 'editor' | 'commenter' | 'viewer';
+  onOpenShare: () => void;
+  // Collaboration Props
+  activeUsers: CollaboratorInfo[];
+  isConnected: boolean;
+  currentUserId?: string;
 }
+
+const ROLE_BADGE: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string }> = {
+  owner:     { label: 'Owner',     icon: <Crown size={11} />,         color: 'text-amber-600',  bg: 'bg-amber-50 border-amber-200' },
+  editor:    { label: 'Editor',    icon: <Pencil size={11} />,        color: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-200' },
+  commenter: { label: 'Commenter', icon: <MessageSquare size={11} />, color: 'text-emerald-600',bg: 'bg-emerald-50 border-emerald-200' },
+  viewer:    { label: 'Viewer',    icon: <Eye size={11} />,           color: 'text-slate-600',  bg: 'bg-slate-100 border-slate-200' },
+};
 
 export default function EditorTopBar({
   design, saveStatus, isSaving,
@@ -37,13 +53,22 @@ export default function EditorTopBar({
   exportSelectedPages, setExportSelectedPages,
   pages, stageWidth, stageHeight,
   executeExport, handleSave, handleSaveVersion, handleOpenVersionHistory,
+  currentRole, onOpenShare,
+  activeUsers, isConnected, currentUserId,
 }: EditorTopBarProps) {
+  const isOwner = currentRole === 'owner';
+  const canEdit = currentRole === 'owner' || currentRole === 'editor';
+  const badge = ROLE_BADGE[currentRole];
+
   return (
-    <div className="h-14 bg-white/70 backdrop-blur-xl border-b border-white/60 flex items-center justify-between px-4 z-30 shadow-sm">
+    <div className="h-14 bg-white/70 backdrop-blur-xl border-b border-white/60 flex items-center justify-between px-4 z-30 shadow-sm" style={{ position: 'relative' }}>
+      {/* LEFT */}
       <div className="flex items-center gap-4">
-        <Link to="/" className="p-2 text-slate-500 hover:text-slate-800 hover:bg-white/50 rounded-full transition"><ChevronLeft size={20} /></Link>
+        <Link to="/" className="p-2 text-slate-500 hover:text-slate-800 hover:bg-white/50 rounded-full transition">
+          <ChevronLeft size={20} />
+        </Link>
         <div className="flex flex-col">
-          {isEditingTitle ? (
+          {isEditingTitle && canEdit ? (
             <input
               type="text" autoFocus value={tempTitle}
               onChange={(e) => setTempTitle(e.target.value)}
@@ -53,44 +78,98 @@ export default function EditorTopBar({
             />
           ) : (
             <span
-              onDoubleClick={() => setIsEditingTitle(true)}
-              className="font-bold text-sm tracking-tight text-slate-800 cursor-text hover:bg-white/50 rounded px-1 -ml-1 transition border border-transparent hover:border-slate-300"
+              onDoubleClick={() => canEdit && setIsEditingTitle(true)}
+              className={`font-bold text-sm tracking-tight text-slate-800 rounded px-1 -ml-1 transition border border-transparent ${canEdit ? 'cursor-text hover:bg-white/50 hover:border-slate-300' : 'cursor-default'}`}
             >
               {design?.title || 'Untitled Design'}
             </span>
           )}
-          <div className="flex items-center gap-1.5 px-1 -ml-1 mt-0.5">
-            <div className={`w-1.5 h-1.5 rounded-full ${saveStatus === 'saving' ? 'bg-amber-400 animate-pulse' : saveStatus === 'unsaved' ? 'bg-rose-400' : 'bg-emerald-400'}`} />
-            <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-              {saveStatus === 'saving' ? 'Đang lưu...' : saveStatus === 'unsaved' ? 'Có thay đổi chưa lưu' : 'Đã lưu vào hệ thống'}
+          <div className="flex items-center gap-2 px-1 -ml-1 mt-0.5">
+            {/* Save status — chỉ hiển thị khi canEdit */}
+            {canEdit && (
+              <div className="flex items-center gap-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full ${saveStatus === 'saving' ? 'bg-amber-400 animate-pulse' : saveStatus === 'unsaved' ? 'bg-rose-400' : 'bg-emerald-400'}`} />
+                <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
+                  {saveStatus === 'saving' ? 'Đang lưu...' : saveStatus === 'unsaved' ? 'Có thay đổi chưa lưu' : 'Đã lưu'}
+                </span>
+              </div>
+            )}
+            {/* Role badge */}
+            <span className={`flex items-center gap-1 text-[10px] font-bold ${badge.color} ${badge.bg} px-2 py-0.5 rounded-full border`}>
+              {badge.icon} {badge.label}
             </span>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 relative">
-        <button
-          onClick={handleSaveVersion}
-          className="px-3 py-1.5 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/50 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-indigo-200"
-          title="Chụp lại phiên bản hiện tại"
-        >
-          <PlusCircle size={14} /> Save Version
-        </button>
+      {/* CENTER – Collaborator Avatars (absolute centered) */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-2 pointer-events-auto z-10">
+        <CollaboratorAvatars
+          users={activeUsers}
+          currentUserId={currentUserId}
+          isConnected={isConnected}
+        />
+      </div>
 
-        <button
-          onClick={handleOpenVersionHistory}
-          className="px-3 py-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100/50 rounded-lg text-sm font-bold transition flex items-center gap-1.5"
-        >
-          <History size={16} /> History
-        </button>
+      {/* RIGHT */}
+      <div className="flex items-center gap-2 relative">
 
-        <button
-          onClick={() => handleSave(false)}
-          disabled={isSaving}
-          className="px-4 py-1.5 bg-gradient-to-r from-sky-400 to-pink-400 text-white hover:from-sky-500 hover:to-pink-500 rounded-lg text-sm font-bold flex items-center gap-2 transition shadow-sm disabled:opacity-50"
-        >
-          <Save size={16} /> Save
-        </button>
+        {/* Save Version — chỉ owner/editor */}
+        {canEdit && (
+          <button
+            onClick={handleSaveVersion}
+            className="px-3 py-1.5 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/50 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-indigo-200"
+            title="Chụp lại phiên bản hiện tại"
+          >
+            <PlusCircle size={14} /> Save Version
+          </button>
+        )}
+
+        {/* Version History — chỉ owner/editor */}
+        {canEdit && (
+          <button
+            onClick={handleOpenVersionHistory}
+            className="px-3 py-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100/50 rounded-lg text-sm font-bold transition flex items-center gap-1.5"
+          >
+            <History size={16} /> History
+          </button>
+        )}
+
+        {/* Save — chỉ owner/editor */}
+        {canEdit && (
+          <button
+            onClick={() => handleSave(false)}
+            disabled={isSaving}
+            className="px-4 py-1.5 bg-gradient-to-r from-sky-400 to-pink-400 text-white hover:from-sky-500 hover:to-pink-500 rounded-lg text-sm font-bold flex items-center gap-2 transition shadow-sm disabled:opacity-50"
+          >
+            <Save size={16} /> Save
+          </button>
+        )}
+
+        {/* SHARE BUTTON */}
+        {isOwner ? (
+          // Owner: nút đầy đủ
+          <button
+            onClick={onOpenShare}
+            className="px-4 py-1.5 bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition shadow-sm shadow-violet-200"
+          >
+            <Share2 size={16} /> Share
+          </button>
+        ) : currentRole === 'editor' ? (
+          // Editor: thấy nút nhưng disabled với tooltip
+          <div className="relative group">
+            <button
+              onClick={onOpenShare}
+              className="px-4 py-1.5 bg-slate-100 text-slate-400 rounded-lg text-sm font-bold flex items-center gap-2 border border-slate-200 cursor-not-allowed"
+              disabled
+            >
+              <Share2 size={16} /> Share
+            </button>
+            <div className="absolute top-10 right-0 hidden group-hover:block z-50 w-56 bg-slate-800 text-white text-xs rounded-xl px-3 py-2 shadow-xl">
+              Chỉ Owner mới có thể quản lý quyền chia sẻ
+            </div>
+          </div>
+        ) : null /* viewer/commenter không thấy nút share */}
 
         {/* EXPORT POPOVER */}
         <div className="relative">

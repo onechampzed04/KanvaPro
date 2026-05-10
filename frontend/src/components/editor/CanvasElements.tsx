@@ -33,6 +33,7 @@ export const URLImage = ({ image, onSelect, onChange, onDragMove }: any) => {
           height: Math.max(5, node.height() * Math.abs(scaleY)),
           scaleX: Math.sign(scaleX),
           scaleY: Math.sign(scaleY),
+          rotation: node.rotation(),
         });
       }}
     />
@@ -65,6 +66,7 @@ export const CircleShape = ({ shape, onSelect, onChange, onDragMove }: any) => {
           radius: Math.max(5, shape.radius * Math.abs(scaleX)),
           scaleX: Math.sign(scaleX),
           scaleY: Math.sign(scaleY),
+          rotation: node.rotation(),
         });
       }}
     />
@@ -98,6 +100,7 @@ export const RectangleShape = ({ shape, onSelect, onChange, onDragMove }: any) =
           height: Math.max(5, node.height() * Math.abs(scaleY)),
           scaleX: Math.sign(scaleX),
           scaleY: Math.sign(scaleY),
+          rotation: node.rotation(),
         });
       }}
     />
@@ -139,6 +142,7 @@ export const EditableText = ({ text, onSelect, onDblClick, onChange, isEditing, 
           width: newWidth,
           scaleX: Math.sign(scaleX),
           scaleY: Math.sign(scaleY),
+          rotation: node.rotation(),
         });
       }}
     />

@@ -52,7 +52,8 @@ export default function RegisterPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       
-      login(data.user);
+      if (data.token) localStorage.setItem('token', data.token);
+      await login(data.user);
       navigate('/');
     } catch (err: any) {
       setError(err.message);

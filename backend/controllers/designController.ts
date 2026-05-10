@@ -39,10 +39,15 @@ export const createDesign = async (req: Request, res: Response) => {
 
 export const getUserDesigns = async (req: Request, res: Response) => {
     const userId = (req as any).user?.id;
+    const tab = req.query.tab as string;
 
     try {
-        // THAY db.all bằng db.query và lấy .rows
-        const result = await designService.getUserDesigns(userId);
+        let result;
+        if (tab === 'shared') {
+            result = await designService.getSharedDesigns(userId);
+        } else {
+            result = await designService.getUserDesigns(userId);
+        }
         res.json({ designs: result });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch designs' });
@@ -56,8 +61,9 @@ export const getDesignById = async (req: Request, res: Response) => {
         if (!design) return res.status(404).json({ error: 'Design not found' });
 
         const pages = await designPageService.getPagesWithElementsByDesignId(id);
+        const currentUserRole = (req as any).designRole || null;
 
-        res.json({ ...design, pages });
+        res.json({ ...design, pages, current_user_role: currentUserRole });
     } catch (error) {
         console.error("Lỗi getDesignById:", error);
         res.status(500).json({ error: 'Internal server error' });
@@ -98,6 +104,8 @@ export const saveFullDesign = async (req: Request, res: Response) => {
         return res.status(401).json({ error: "Unauthorized: Missing User ID" });
     }
 
+    // Chỉ Owner và Editor mới được lưu (đã được kiểm tra bởi requireRole middleware)
+    // saveFullDesign không còn ràng buộc user_id = owner nữa
     try {
         await designService.saveFullDesign(id, userId, { title, thumbnail_url }, pages);
 
@@ -219,7 +227,6 @@ export const getRecentStickers = async (req: Request, res: Response) => {
 //     }
 // };
 
-// ... (Giữ nguyên các hàm bên trên)
 export const exportVideo = async (req: Request, res: Response) => {
     try {
         const file = (req as any).file;

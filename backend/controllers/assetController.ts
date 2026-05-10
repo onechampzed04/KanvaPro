@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import 'multer';
+type MulterFile = Express.Multer.File;
 import db from '../config/db';
 import { Asset } from '../models/Asset';
 import { AssetType } from '../models/enums';
@@ -75,7 +77,7 @@ export const uploadFont = async (req: Request, res: Response) => {
     const user = (req as any).user;
     if (!user?.id) return res.status(401).json({ error: 'Unauthorized' });
 
-    const file = (req as any).file as Express.Multer.File | undefined;
+    const file = (req as any).file as MulterFile | undefined;
     if (!file) return res.status(400).json({ error: 'No font file provided' });
 
     const ext = path.extname(file.originalname).toLowerCase();
@@ -142,7 +144,7 @@ export const getUserFonts = async (req: Request, res: Response) => {
  */
 export const removeBackground = async (req: Request, res: Response) => {
   try {
-    const file = req.file;
+    const file = (req as any).file as MulterFile | undefined;
     if (!file) {
       return res.status(400).json({ error: 'No image uploaded' });
     }
