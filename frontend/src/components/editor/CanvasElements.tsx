@@ -4,7 +4,7 @@ import { Rect, Circle, Text, Image as KonvaImage, Transformer } from 'react-konv
 import useImage from 'use-image';
 
 // --- IMAGE COMPONENT ---
-export const URLImage = ({ image, onSelect, onChange, onDragMove }: any) => {
+export const URLImage = ({ image, onSelect, onChange, onChangeFinal, onDragMove, onActionStart }: any) => {
   const [img] = useImage(image.src, 'anonymous');
   const shapeRef = useRef<any>(null);
 
@@ -17,15 +17,26 @@ export const URLImage = ({ image, onSelect, onChange, onDragMove }: any) => {
       image={img}
       {...image}
       draggable
-      onDragMove={onDragMove}
-      onDragEnd={(e) => onChange({ ...image, x: e.target.x(), y: e.target.y() })}
+      onDragStart={() => onActionStart?.()}
+      onTransformStart={() => onActionStart?.()}
+      onDragMove={(e) => {
+        onDragMove?.(e);
+        const newX = e.target.x();
+        const newY = e.target.y();
+        setTimeout(() => {
+          onChange({ ...image, x: newX, y: newY });
+        }, 0);
+      }}
+      onDragEnd={(e) => {
+        onChangeFinal({ ...image, x: e.target.x(), y: e.target.y() });
+      }}
       onTransformEnd={() => {
         const node = shapeRef.current;
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
         node.scaleX(1);
         node.scaleY(1);
-        onChange({
+        onChangeFinal({
           ...image,
           x: node.x(),
           y: node.y(),
@@ -41,7 +52,7 @@ export const URLImage = ({ image, onSelect, onChange, onDragMove }: any) => {
 };
 
 // --- CIRCLE COMPONENT ---
-export const CircleShape = ({ shape, onSelect, onChange, onDragMove }: any) => {
+export const CircleShape = ({ shape, onSelect, onChange, onChangeFinal, onDragMove, onActionStart }: any) => {
   const shapeRef = useRef<any>(null);
   return (
     <Circle
@@ -51,15 +62,26 @@ export const CircleShape = ({ shape, onSelect, onChange, onDragMove }: any) => {
       ref={shapeRef}
       {...shape}
       draggable
-      onDragMove={onDragMove}
-      onDragEnd={(e) => onChange({ ...shape, x: e.target.x(), y: e.target.y() })}
+      onDragStart={() => onActionStart?.()}
+      onTransformStart={() => onActionStart?.()}
+      onDragMove={(e) => {
+        onDragMove?.(e);
+        const newX = e.target.x();
+        const newY = e.target.y();
+        setTimeout(() => {
+          onChange({ ...shape, x: newX, y: newY });
+        }, 0);
+      }}
+      onDragEnd={(e) => {
+        onChangeFinal({ ...shape, x: e.target.x(), y: e.target.y() });
+      }}
       onTransformEnd={() => {
         const node = shapeRef.current;
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
         node.scaleX(1);
         node.scaleY(1);
-        onChange({
+        onChangeFinal({
           ...shape,
           x: node.x(),
           y: node.y(),
@@ -74,7 +96,7 @@ export const CircleShape = ({ shape, onSelect, onChange, onDragMove }: any) => {
 };
 
 // --- RECTANGLE COMPONENT ---
-export const RectangleShape = ({ shape, onSelect, onChange, onDragMove }: any) => {
+export const RectangleShape = ({ shape, onSelect, onChange, onChangeFinal, onDragMove, onActionStart }: any) => {
   const shapeRef = useRef<any>(null);
   return (
     <Rect
@@ -84,15 +106,26 @@ export const RectangleShape = ({ shape, onSelect, onChange, onDragMove }: any) =
       ref={shapeRef}
       {...shape}
       draggable
-      onDragMove={onDragMove}
-      onDragEnd={(e) => onChange({ ...shape, x: e.target.x(), y: e.target.y() })}
+      onDragStart={() => onActionStart?.()}
+      onTransformStart={() => onActionStart?.()}
+      onDragMove={(e) => {
+        onDragMove?.(e);
+        const newX = e.target.x();
+        const newY = e.target.y();
+        setTimeout(() => {
+          onChange({ ...shape, x: newX, y: newY });
+        }, 0);
+      }}
+      onDragEnd={(e) => {
+        onChangeFinal({ ...shape, x: e.target.x(), y: e.target.y() });
+      }}
       onTransformEnd={() => {
         const node = shapeRef.current;
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
         node.scaleX(1);
         node.scaleY(1);
-        onChange({
+        onChangeFinal({
           ...shape,
           x: node.x(),
           y: node.y(),
@@ -108,7 +141,7 @@ export const RectangleShape = ({ shape, onSelect, onChange, onDragMove }: any) =
 };
 
 // --- EDITABLE TEXT COMPONENT ---
-export const EditableText = ({ text, onSelect, onDblClick, onChange, isEditing, onDragMove }: any) => {
+export const EditableText = ({ text, onSelect, onDblClick, onChange, onChangeFinal, isEditing, onDragMove, onActionStart }: any) => {
   const shapeRef = useRef<any>(null);
   return (
     <Text
@@ -120,8 +153,19 @@ export const EditableText = ({ text, onSelect, onDblClick, onChange, isEditing, 
       onDblClick={onDblClick}
       draggable={!isEditing}
       id={text.id}
-      onDragMove={onDragMove}
-      onDragEnd={(e) => onChange({ ...text, x: e.target.x(), y: e.target.y() })}
+      onDragStart={() => onActionStart?.()}
+      onTransformStart={() => onActionStart?.()}
+      onDragMove={(e) => {
+        onDragMove?.(e);
+        const newX = e.target.x();
+        const newY = e.target.y();
+        setTimeout(() => {
+          onChange({ ...text, x: newX, y: newY });
+        }, 0);
+      }}
+      onDragEnd={(e) => {
+        onChangeFinal({ ...text, x: e.target.x(), y: e.target.y() });
+      }}
       onTransformEnd={() => {
         const node = shapeRef.current;
         const scaleX = node.scaleX();
@@ -134,7 +178,7 @@ export const EditableText = ({ text, onSelect, onDblClick, onChange, isEditing, 
         const newFontSize = Math.max(8, Math.round(currentFontSize * Math.abs(scaleY)));
         const newWidth   = Math.max(20, Math.round(node.width() * Math.abs(scaleX)));
 
-        onChange({
+        onChangeFinal({
           ...text,
           x: node.x(),
           y: node.y(),

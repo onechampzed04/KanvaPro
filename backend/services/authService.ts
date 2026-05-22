@@ -47,7 +47,8 @@ export const authService = {
   getUserWithSubscription: async (id: string): Promise<any> => {
     return await db.getOne(
       `SELECT 
-         u.id, u.email, u.name, u.role, u.is_verified,
+         u.id, u.email, u.name, u.role, u.is_verified, u.avatar_url,
+         u.storage_used_bytes, u.max_storage_gb,
          us.id AS sub_id,
          us.plan_id,
          us.status AS sub_status,

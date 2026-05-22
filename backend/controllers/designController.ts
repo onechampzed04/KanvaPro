@@ -70,6 +70,36 @@ export const getDesignById = async (req: Request, res: Response) => {
     }
 };
 
+
+// === FIX #4: LAZY LOADING - GET THÔNG TIN MỎNG (không có elements) ===
+export const getDesignMeta = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const design = await designService.getDesignById(id);
+        if (!design) return res.status(404).json({ error: 'Design not found' });
+
+        const pages = await designPageService.getPagesByDesignIdWithoutElements(id);
+        const currentUserRole = (req as any).designRole || null;
+
+        res.json({ ...design, pages, current_user_role: currentUserRole });
+    } catch (error) {
+        console.error("Lỗi getDesignMeta:", error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+// === FIX #4: LAZY LOADING - LẤY ELEMENTS CỦA MỘT TRANG ===
+export const getPageElements = async (req: Request, res: Response) => {
+    const { pageId } = req.params;
+    try {
+        const elements = await designPageService.getElementsByPageId(pageId);
+        res.json({ pageId, elements });
+    } catch (error) {
+        console.error("Lỗi getPageElements:", error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
 export const updateDesign = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { title, elements } = req.body;
@@ -97,19 +127,36 @@ export const deleteDesign = async (req: Request, res: Response) => {
 
 export const saveFullDesign = async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { title, thumbnail_url, pages } = req.body;
+    const { title, thumbnail_url, pages, version } = req.body;
     const userId = (req as any).user?.id;
 
     if (!userId) {
         return res.status(401).json({ error: "Unauthorized: Missing User ID" });
     }
 
-    // Chỉ Owner và Editor mới được lưu (đã được kiểm tra bởi requireRole middleware)
-    // saveFullDesign không còn ràng buộc user_id = owner nữa
     try {
+        // === OCC: Chỉ conflict khi người dùng KHÁC lưu (không phải autosave của chính mình) ===
+        if (version) {
+            const current = await db.getOne(
+                `SELECT updated_at, last_modified_by FROM designs WHERE id = $1`,
+                [id]
+            );
+            if (current && current.last_modified_by && current.last_modified_by !== userId) {
+                const dbTimestamp = new Date(current.updated_at).getTime();
+                const clientTimestamp = new Date(version).getTime();
+                if (dbTimestamp > clientTimestamp + 5000) {
+                    return res.status(409).json({
+                        error: 'Conflict: Design was modified by another user',
+                        server_version: current.updated_at,
+                    });
+                }
+            }
+        }
+
         await designService.saveFullDesign(id, userId, { title, thumbnail_url }, pages);
 
-        res.json({ success: true, message: "Design saved successfully!" });
+        const updated = await db.getOne(`SELECT updated_at FROM designs WHERE id = $1`, [id]);
+        res.json({ success: true, message: "Design saved successfully!", updated_at: updated?.updated_at });
     } catch (error) {
         console.error("Save Design Error:", error);
         res.status(500).json({ error: "Internal Server Error" });
@@ -336,4 +383,176 @@ export const restoreDesignVersion = async (req: Request, res: Response) => {
     } catch (error) {
         res.status(500).json({ error: "Lỗi khôi phục phiên bản" });
     }
+};
+
+// ── TRASH BIN ────────────────────────────────────────────────────────────────
+
+export const getTrashDesigns = async (req: Request, res: Response) => {
+    const userId = (req as any).user?.id;
+    try {
+        const result = await db.query(
+            `SELECT * FROM designs WHERE user_id = $1 AND is_deleted = true ORDER BY deleted_at DESC`,
+            [userId]
+        );
+        res.json({ designs: result.rows });
+    } catch { res.status(500).json({ error: 'Failed to fetch trash designs' }); }
+};
+
+export const emptyTrash = async (req: Request, res: Response) => {
+    const userId = (req as any).user?.id;
+    try {
+        await db.execute('DELETE FROM designs WHERE user_id = $1 AND is_deleted = true', [userId]);
+        res.json({ message: 'Trash emptied' });
+    } catch { res.status(500).json({ error: 'Failed to empty trash' }); }
+};
+
+export const restoreDesign = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = (req as any).user?.id;
+    try {
+        await db.execute(
+            'UPDATE designs SET is_deleted = false, deleted_at = NULL WHERE id = $1 AND user_id = $2',
+            [id, userId]
+        );
+        res.json({ message: 'Design restored' });
+    } catch { res.status(500).json({ error: 'Restore failed' }); }
+};
+
+export const permanentlyDeleteDesign = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = (req as any).user?.id;
+    try {
+        await db.execute(
+            'DELETE FROM designs WHERE id = $1 AND user_id = $2 AND is_deleted = true',
+            [id, userId]
+        );
+        res.json({ message: 'Permanently deleted' });
+    } catch { res.status(500).json({ error: 'Permanent delete failed' }); }
+};
+
+export const bulkDeleteDesigns = async (req: Request, res: Response) => {
+    const { designIds } = req.body;
+    const userId = (req as any).user?.id;
+    if (!Array.isArray(designIds) || designIds.length === 0) {
+        return res.status(400).json({ error: 'Invalid design IDs' });
+    }
+    try {
+        await db.query(
+            'UPDATE designs SET is_deleted = true, deleted_at = NOW() WHERE id = ANY($1) AND user_id = $2',
+            [designIds, userId]
+        );
+        res.json({ message: 'Moved to trash' });
+    } catch { res.status(500).json({ error: 'Bulk delete failed' }); }
+};
+
+
+// ── VIDEO JOB QUEUE (FIX #5: Server-side render) ─────────────────────────────
+// In-memory Map làm Queue đơn giản — không cần Redis cho đồ án
+const videoJobs = new Map<string, {
+    state: 'pending' | 'processing' | 'completed' | 'failed';
+    progress: number;
+    downloadUrl?: string;
+    error?: string;
+    createdAt: Date;
+}>();
+
+export const createVideoJob = async (req: Request, res: Response) => {
+    const { title, pages, fps = 60 } = req.body;
+    if (!pages || !Array.isArray(pages) || pages.length === 0) {
+        return res.status(400).json({ error: 'Không có trang nào để render' });
+    }
+
+    const jobId = uuidv4();
+    videoJobs.set(jobId, { state: 'pending', progress: 0, createdAt: new Date() });
+    res.json({ jobId, message: 'Video job created. Poll /export/video-job/:jobId for status.' });
+
+    // Render chạy hoàn toàn trong background (không block API)
+    setImmediate(async () => {
+        const job = videoJobs.get(jobId)!;
+        job.state = 'processing';
+
+        try {
+            const tempDir = path.join(os.tmpdir(), `kanva_video_${jobId}`);
+            await fs.ensureDir(tempDir);
+            const outputPath = path.join(tempDir, `output_${jobId}.mp4`);
+            let concatContent = '';
+
+            for (let i = 0; i < pages.length; i++) {
+                const page = pages[i];
+                const color = (page.background_color || '#ffffff').replace('#', '');
+                const duration = Number(page.duration) || 5;
+                const w = page.width || 1920;
+                const h = page.height || 1080;
+                const segPath = path.join(tempDir, `seg_${i}.mp4`);
+                const segPathUnix = segPath.replace(/\\/g, '/');
+
+                // Dùng FFmpeg tạo màu nền cho từng trang
+                // Production: thay bằng Puppeteer chụp ảnh Canvas thật
+                await new Promise<void>((resolve, reject) => {
+                    ffmpeg()
+                        .input(`color=c=#${color}:s=${w}x${h}:r=${fps}:d=${duration}`)
+                        .inputFormat('lavfi')
+                        .output(segPath)
+                        .outputOptions(['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p'])
+                        .on('end', () => resolve())
+                        .on('error', (e: Error) => reject(e))
+                        .run();
+                });
+
+                concatContent += `file '${segPathUnix}'\n`;
+                job.progress = Math.round(((i + 1) / pages.length) * 80);
+            }
+
+            // Ghi file danh sách concat
+            const concatList = path.join(tempDir, 'concat.txt');
+            await fs.writeFile(concatList, concatContent);
+
+            // Ghép tất cả các đoạn lại thành 1 file MP4
+            await new Promise<void>((resolve, reject) => {
+                ffmpeg()
+                    .input(concatList)
+                    .inputOptions(['-f', 'concat', '-safe', '0'])
+                    .output(outputPath)
+                    .outputOptions(['-c', 'copy'])
+                    .on('end', () => resolve())
+                    .on('error', (e: Error) => reject(e))
+                    .run();
+            });
+
+            job.progress = 95;
+
+            // Lưu file vào public/exports để trả link tải về
+            const exportDir = path.join(process.cwd(), 'public', 'exports');
+            await fs.ensureDir(exportDir);
+            const safeName = (title || 'video').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const exportFileName = `${safeName}_${jobId}.mp4`;
+            await fs.copy(outputPath, path.join(exportDir, exportFileName));
+            await fs.remove(tempDir);
+
+            job.state = 'completed';
+            job.progress = 100;
+            job.downloadUrl = `/exports/${exportFileName}`;
+
+        } catch (err: any) {
+            console.error('[VideoJob] Render error:', err.message);
+            job.state = 'failed';
+            job.error = err.message;
+        }
+
+        // Dọn job khỏi memory sau 1 giờ
+        setTimeout(() => videoJobs.delete(jobId), 3600 * 1000);
+    });
+};
+
+export const getVideoJobStatus = async (req: Request, res: Response) => {
+    const { jobId } = req.params;
+    const job = videoJobs.get(jobId);
+    if (!job) return res.status(404).json({ error: 'Job không tồn tại hoặc đã hết hạn' });
+    res.json({
+        jobId,
+        state: job.state,
+        progress: job.progress,
+        downloadUrl: job.downloadUrl,
+        error: job.error,
+    });
 };

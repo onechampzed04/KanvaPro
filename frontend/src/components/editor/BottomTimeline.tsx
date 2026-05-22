@@ -1,14 +1,20 @@
 // src/components/editor/BottomTimeline.tsx
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Maximize2, Minimize2, Music, ZoomIn, Plus, Type, Image as ImageIcon, Zap } from 'lucide-react';
+import { Play, Pause, Maximize2, Minimize2, Music, ZoomIn, Plus, Type, Image as ImageIcon, Zap, Grid2X2, X } from 'lucide-react';
 
 export default function BottomTimeline(props: any) {
-  const { pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, updatePage, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime } = props;
+  const { pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, updatePage, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime, onOpenTransition, onReorder, showGridView, setShowGridView } = props;
 
   const [viewMode, setViewMode] = useState<'thumbnail' | 'timeline'>('thumbnail');
   const [zoomLevel, setZoomLevel] = useState(1);
   const [timelineHeight, setTimelineHeight] = useState(288); // 72 * 4 = 288px default cho h-72
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (designType !== 'presentation') {
+      setViewMode('thumbnail');
+    }
+  }, [designType]);
 
   const PIXELS_PER_SECOND = 40 * zoomLevel;
   const LANE_HEIGHT = 28; // px per lane row
@@ -42,8 +48,17 @@ export default function BottomTimeline(props: any) {
   };
   const handleDrop = (e: React.DragEvent, index: number) => {
     e.preventDefault();
-    if (draggedIdx !== null && draggedIdx !== index && reorderPages) {
-      reorderPages(draggedIdx, index);
+    if (draggedIdx !== null && draggedIdx !== index) {
+      if (reorderPages) {
+        reorderPages(draggedIdx, index);
+      }
+      // After reordering, compute new page order and notify EditorPage to sync to backend
+      if (onReorder) {
+        const newPages = [...pages];
+        const [moved] = newPages.splice(draggedIdx, 1);
+        newPages.splice(index, 0, moved);
+        onReorder(newPages.map((p: any, i: number) => ({ ...p, page_order: i })));
+      }
     }
     setDraggedIdx(null);
   };
@@ -194,24 +209,39 @@ export default function BottomTimeline(props: any) {
       {/* TOP CONTROLS (Thanh menu đổi màu theo Mode) */}
       <div className={`h-10 border-b flex items-center justify-between px-4 shrink-0 transition-colors ${viewMode === 'timeline' ? 'bg-slate-50/80 border-slate-200' : 'bg-white/50 border-white/40'}`}>
         <div className="flex items-center gap-4 text-slate-700">
-          <button onClick={() => { setIsPlaying(!isPlaying); if (currentTime >= totalDuration) setCurrentTime(0); }} className="hover:text-indigo-500 transition w-6 flex justify-center">
-            {isPlaying ? <Pause size={16} /> : <Play size={16} className="fill-current" />}
-          </button>
-          <span className="text-xs font-bold font-mono tracking-wider w-16 opacity-80">00:{(Number(currentTime) || 0).toFixed(1).padStart(4, '0')}</span>
-          {viewMode === 'timeline' && (
-            <div className="flex items-center gap-2 ml-4">
-              <ZoomIn size={14} className="text-slate-400" />
-              <input type="range" min="0.5" max="3" step="0.1" value={zoomLevel} onChange={e => setZoomLevel(Number(e.target.value))} className="w-24 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-            </div>
+          {designType === 'presentation' && (
+            <>
+              <button onClick={() => { setIsPlaying(!isPlaying); if (currentTime >= totalDuration) setCurrentTime(0); }} className="hover:text-indigo-500 transition w-6 flex justify-center">
+                {isPlaying ? <Pause size={16} /> : <Play size={16} className="fill-current" />}
+              </button>
+              <span className="text-xs font-bold font-mono tracking-wider w-16 opacity-80">00:{(Number(currentTime) || 0).toFixed(1).padStart(4, '0')}</span>
+              {viewMode === 'timeline' && (
+                <div className="flex items-center gap-2 ml-4">
+                  <ZoomIn size={14} className="text-slate-400" />
+                  <input type="range" min="0.5" max="3" step="0.1" value={zoomLevel} onChange={e => setZoomLevel(Number(e.target.value))} className="w-24 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        {/* Nút bật/tắt Timeline chỉ dành cho Presentation/Video */}
-        {(designType === 'presentation' || designType === 'video') && (
-          <button onClick={() => setViewMode(viewMode === 'thumbnail' ? 'timeline' : 'thumbnail')} className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded transition ${viewMode === 'timeline' ? 'bg-indigo-100 hover:bg-indigo-200 text-indigo-700' : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 shadow-sm'}`}>
-            {viewMode === 'thumbnail' ? <><Maximize2 size={12} /> Timeline Mode</> : <><Minimize2 size={12} /> Normal Mode</>}
+        <div className="flex items-center gap-2">
+          {/* Grid View button */}
+          <button
+            onClick={() => setShowGridView(true)}
+            className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 shadow-sm transition"
+            title="Grid View – Xem tất cả trang"
+          >
+            <Grid2X2 size={12} /> Grid View
           </button>
-        )}
+
+          {/* Nút bật/tắt Timeline chỉ dành cho Presentation */}
+          {designType === 'presentation' && (
+            <button onClick={() => setViewMode(viewMode === 'thumbnail' ? 'timeline' : 'thumbnail')} className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded transition ${viewMode === 'timeline' ? 'bg-indigo-100 hover:bg-indigo-200 text-indigo-700' : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 shadow-sm'}`}>
+              {viewMode === 'thumbnail' ? <><Maximize2 size={12} /> Timeline Mode</> : <><Minimize2 size={12} /> Normal Mode</>}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* CHẾ ĐỘ 1: NORMAL MODE (Thumbnails sáng sủa, kéo thả giống Canva tĩnh) */}
@@ -245,7 +275,7 @@ export default function BottomTimeline(props: any) {
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400 font-medium">Empty Page</div>
                     )}
-                    {(designType === 'presentation' || designType === 'video') && (
+                    {designType === 'presentation' && (
                       <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[8px] font-bold px-1 rounded">{page.duration || 5}s</span>
                     )}
                   </button>
@@ -422,6 +452,7 @@ export default function BottomTimeline(props: any) {
           </div>
         </div>
       )}
+
     </div>
   );
 }

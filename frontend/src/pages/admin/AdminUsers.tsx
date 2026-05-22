@@ -1,0 +1,442 @@
+import { useState, useEffect, useCallback } from 'react';
+import { fetchAdminUsersV2, updateUserQuotaV2, banUserV2 } from '../../api/adminApi';
+import { Search, Shield, Ban, Crown, MoreVertical, RefreshCw, HardDrive, UserCheck, AlertTriangle } from 'lucide-react';
+import Swal from 'sweetalert2';
+import { useAuth } from '../../context/AuthContext';
+
+function formatBytes(b: number) {
+  if (!b) return '0 B';
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${(b / 1024 ** 3).toFixed(2)} GB`;
+}
+
+type UserRowV2 = {
+  id: string; email: string; name: string; role: string;
+  is_verified: boolean; status: string;
+  max_storage_gb: string; used_storage_bytes: string;
+  ban_reason: string; created_at: string;
+  isOnline: boolean;
+};
+
+export default function AdminUsers() {
+  const { user: currentUser } = useAuth();
+  const [users, setUsers] = useState<UserRowV2[]>([]);
+  const [total, setTotal] = useState(0);
+  const [onlineCount, setOnlineCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const limit = 10;
+  const [loading, setLoading] = useState(true);
+
+  // Filters
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  // Modals
+  const [selectedUser, setSelectedUser] = useState<UserRowV2 | null>(null);
+  const [showBanModal, setShowBanModal] = useState(false);
+  const [banReason, setBanReason] = useState('');
+  
+  const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [editRole, setEditRole] = useState('');
+  const [editQuota, setEditQuota] = useState(1);
+
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchAdminUsersV2({ page, limit, search, role: roleFilter, status: statusFilter });
+      setUsers(data.users || []);
+      setTotal(data.total || 0);
+      setOnlineCount(data.onlineCount || 0);
+    } catch (err) {
+      console.error(err);
+      Swal.fire('Lỗi', 'Không thể tải danh sách người dùng', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [page, limit, search, roleFilter, statusFilter]);
+
+  useEffect(() => {
+    loadUsers();
+    // Auto refresh real-time status every 15s
+    const interval = setInterval(() => {
+      loadUsers();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [loadUsers]);
+
+  const handleBanSubmit = async () => {
+    if (!selectedUser) return;
+    try {
+      const targetStatus = selectedUser.status === 'active' ? 'banned' : 'active';
+      await banUserV2(selectedUser.id, targetStatus, banReason);
+      Swal.fire('Thành công', `Đã ${targetStatus === 'banned' ? 'khóa' : 'mở khóa'} tài khoản!`, 'success');
+      setShowBanModal(false);
+      setBanReason('');
+      loadUsers();
+    } catch (err: any) {
+      Swal.fire('Lỗi', err.message || 'Có lỗi xảy ra', 'error');
+    }
+  };
+
+  const handleQuotaSubmit = async () => {
+    if (!selectedUser) return;
+    try {
+      await updateUserQuotaV2(selectedUser.id, editRole, editQuota);
+      Swal.fire('Thành công', 'Cập nhật phân quyền và hạn mức thành công!', 'success');
+      setShowQuotaModal(false);
+      loadUsers();
+    } catch (err: any) {
+      Swal.fire('Lỗi', err.message || 'Có lỗi xảy ra', 'error');
+    }
+  };
+
+  const openBanModal = (u: UserRowV2) => {
+    if (u.id === currentUser?.id) {
+      Swal.fire('Từ chối', 'Bạn không thể tự khóa tài khoản của chính mình!', 'warning');
+      return;
+    }
+    setSelectedUser(u);
+    setBanReason(u.ban_reason || '');
+    setShowBanModal(true);
+  };
+
+  const openQuotaModal = (u: UserRowV2) => {
+    setSelectedUser(u);
+    setEditRole(u.role);
+    setEditQuota(parseFloat(u.max_storage_gb) || 1);
+    setShowQuotaModal(true);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* ── Header ── */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+            Quản trị Người dùng
+          </h1>
+          <p className="text-gray-400 mt-1">Kiểm soát truy cập, phân quyền và hạn mức lưu trữ Real-time</p>
+        </div>
+        <button onClick={loadUsers} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-white transition-all">
+          <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+          Làm mới
+        </button>
+      </div>
+
+      {/* ── Top Cards ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="p-6 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-gray-400 text-sm font-medium">Tổng Người Dùng</p>
+              <h3 className="text-3xl font-bold text-white mt-2">{total}</h3>
+            </div>
+            <div className="p-3 bg-blue-500/20 text-blue-400 rounded-xl">
+              <Shield size={24} />
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-6 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/10 blur-3xl rounded-full"></div>
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-gray-400 text-sm font-medium">Đang Online</p>
+              <div className="flex items-center gap-3 mt-2">
+                <h3 className="text-3xl font-bold text-white">{onlineCount}</h3>
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                </span>
+              </div>
+            </div>
+            <div className="p-3 bg-green-500/20 text-green-400 rounded-xl">
+              <UserCheck size={24} />
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-gray-400 text-sm font-medium">Cảnh báo Quota</p>
+              <h3 className="text-3xl font-bold text-white mt-2">
+                {users.filter(u => (parseInt(u.used_storage_bytes) / (parseFloat(u.max_storage_gb) * 1024**3)) > 0.8).length}
+              </h3>
+              <p className="text-xs text-orange-400 mt-1">Users dùng &gt; 80%</p>
+            </div>
+            <div className="p-3 bg-orange-500/20 text-orange-400 rounded-xl">
+              <HardDrive size={24} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Filters ── */}
+      <div className="p-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl flex flex-col md:flex-row gap-4 items-center">
+        <div className="relative flex-1 w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+          <input
+            type="text"
+            placeholder="Tìm theo tên, email..."
+            className="w-full pl-10 pr-4 py-2.5 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+            value={search} onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+        <select
+          value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
+          className="px-4 py-2.5 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none w-full md:w-auto"
+        >
+          <option value="">Tất cả Role</option>
+          <option value="super_admin">Super Admin</option>
+          <option value="admin">Admin</option>
+          <option value="vip_user">VIP User</option>
+          <option value="free_user">Free User</option>
+        </select>
+        <select
+          value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="px-4 py-2.5 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none w-full md:w-auto"
+        >
+          <option value="">Tất cả Trạng thái</option>
+          <option value="active">Hoạt động</option>
+          <option value="banned">Bị Khóa</option>
+        </select>
+      </div>
+
+      {/* ── Table ── */}
+      <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm text-gray-300">
+            <thead className="bg-black/20 text-gray-400">
+              <tr>
+                <th className="px-6 py-4 font-medium">Người dùng</th>
+                <th className="px-6 py-4 font-medium">Phân quyền</th>
+                <th className="px-6 py-4 font-medium">Trạng thái</th>
+                <th className="px-6 py-4 font-medium min-w-[200px]">Lưu trữ (Quota)</th>
+                <th className="px-6 py-4 font-medium text-right">Hành động</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {users.map(u => {
+                const used = parseInt(u.used_storage_bytes);
+                const max = parseFloat(u.max_storage_gb) * 1024 ** 3;
+                const percent = Math.min((used / max) * 100, 100);
+                const isWarning = percent > 80;
+
+                return (
+                  <tr key={u.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold uppercase">
+                            {u.name.charAt(0)}
+                          </div>
+                          {u.isOnline && (
+                            <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-[#1a1a2e] rounded-full"></div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="font-medium text-white flex items-center gap-2">
+                            {u.name}
+                            {u.role.includes('admin') && <Crown size={14} className="text-yellow-400" />}
+                          </div>
+                          <div className="text-xs text-gray-500">{u.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2.5 py-1 rounded-md text-xs font-medium ${
+                        u.role === 'super_admin' ? 'bg-purple-500/20 text-purple-400' :
+                        u.role === 'admin' ? 'bg-blue-500/20 text-blue-400' :
+                        u.role === 'vip_user' ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {u.role.replace('_', ' ').toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`flex items-center gap-1.5 ${
+                        u.status === 'active' ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {u.status === 'active' ? <UserCheck size={16} /> : <Ban size={16} />}
+                        {u.status === 'active' ? 'Active' : 'Banned'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex justify-between text-xs mb-1">
+                        <span>{formatBytes(used)}</span>
+                        <span className="text-gray-500">{u.max_storage_gb} GB</span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-1.5">
+                        <div 
+                          className={`h-1.5 rounded-full ${isWarning ? 'bg-red-500' : 'bg-indigo-500'}`} 
+                          style={{ width: `${percent}%` }}
+                        ></div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button 
+                          onClick={() => openQuotaModal(u)}
+                          className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors"
+                          title="Cấu hình Quota"
+                        >
+                          <HardDrive size={18} />
+                        </button>
+                        <button 
+                          onClick={() => openBanModal(u)}
+                          className={`p-2 rounded-lg transition-colors ${
+                            u.status === 'active' ? 'hover:bg-red-500/20 text-gray-400 hover:text-red-400' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                          }`}
+                          title={u.status === 'active' ? 'Khóa tài khoản' : 'Mở khóa'}
+                        >
+                          <Ban size={18} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                    Không tìm thấy người dùng nào phù hợp.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        
+        {/* Pagination */}
+        <div className="px-6 py-4 border-t border-white/5 flex justify-between items-center bg-black/10">
+          <span className="text-sm text-gray-400">
+            Hiển thị trang {page} / {Math.ceil(total / limit) || 1}
+          </span>
+          <div className="flex gap-2">
+            <button 
+              disabled={page === 1} onClick={() => setPage(p => p - 1)}
+              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 disabled:opacity-50 rounded-lg transition-colors text-sm"
+            >
+              Trước
+            </button>
+            <button 
+              disabled={page >= Math.ceil(total / limit)} onClick={() => setPage(p => p + 1)}
+              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 disabled:opacity-50 rounded-lg transition-colors text-sm"
+            >
+              Sau
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Ban Modal ── */}
+      {showBanModal && selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#1a1a2e] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+              <AlertTriangle className="text-red-500" />
+              {selectedUser.status === 'active' ? 'Khóa Tài Khoản' : 'Mở Khóa Tài Khoản'}
+            </h3>
+            <p className="text-gray-400 text-sm mb-6">
+              Bạn đang thao tác với người dùng <strong className="text-white">{selectedUser.name}</strong> ({selectedUser.email}).
+              {selectedUser.status === 'active' && ' Hành động này sẽ lập tức Force Logout người dùng khỏi mọi thiết bị.'}
+            </p>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Lý do (Bắt buộc khi khóa)</label>
+                <textarea
+                  className="w-full px-4 py-3 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none focus:border-red-500"
+                  rows={3}
+                  value={banReason}
+                  onChange={e => setBanReason(e.target.value)}
+                  placeholder="Nhập lý do vi phạm..."
+                ></textarea>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button 
+                onClick={() => setShowBanModal(false)}
+                className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-colors font-medium"
+              >
+                Hủy bỏ
+              </button>
+              <button 
+                onClick={handleBanSubmit}
+                className={`flex-1 px-4 py-2.5 rounded-xl font-medium transition-colors ${
+                  selectedUser.status === 'active' ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-500 hover:bg-green-600 text-white'
+                }`}
+              >
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quota & Role Modal ── */}
+      {showQuotaModal && selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#1a1a2e] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-2">Cấu hình Cấp bậc & Lưu trữ</h3>
+            <p className="text-gray-400 text-sm mb-6">
+              Thiết lập dành riêng cho <strong className="text-white">{selectedUser.name}</strong>.
+            </p>
+            
+            <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Phân Quyền (Role)</label>
+                <select
+                  value={editRole} onChange={e => setEditRole(e.target.value)}
+                  className="w-full px-4 py-3 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="super_admin">Super Admin</option>
+                  <option value="admin">Admin</option>
+                  <option value="vip_user">VIP User</option>
+                  <option value="free_user">Free User</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="flex justify-between text-sm font-medium text-gray-300 mb-1">
+                  <span>Hạn mức Dung lượng</span>
+                  <span className="text-indigo-400">{editQuota} GB</span>
+                </label>
+                <input
+                  type="range"
+                  min="0.5" max="100" step="0.5"
+                  value={editQuota}
+                  onChange={e => setEditQuota(parseFloat(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+                <div className="flex justify-between text-xs text-gray-500 mt-2">
+                  <span>0.5 GB</span>
+                  <span>100 GB</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button 
+                onClick={() => setShowQuotaModal(false)}
+                className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-colors font-medium"
+              >
+                Hủy bỏ
+              </button>
+              <button 
+                onClick={handleQuotaSubmit}
+                className="flex-1 px-4 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl font-medium transition-colors"
+              >
+                Lưu cấu hình
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

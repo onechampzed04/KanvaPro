@@ -32,21 +32,14 @@ def remove_background():
         return {'error': 'No image provided'}, 400
     
     try:
-        # Nhận file ảnh từ request
         file = request.files['image']
-        
-        # Đọc ảnh gốc bằng PIL
         input_image = Image.open(file.stream)
-        
-        # Gọi rembg để tách nền
         output_image = remove(input_image)
         
-        # Chuyển đổi kết quả sang định dạng PNG (hỗ trợ nền trong suốt)
         img_byte_arr = io.BytesIO()
         output_image.save(img_byte_arr, format='PNG')
         img_byte_arr.seek(0)
         
-        # Trả về kết quả trực tiếp dưới dạng binary image
         return send_file(
             img_byte_arr,
             mimetype='image/png',
@@ -57,6 +50,61 @@ def remove_background():
         print("Error processing image:")
         traceback.print_exc()
         return {'error': str(e)}, 500
+
+
+@app.route('/remove-bg-mask', methods=['POST'])
+def remove_bg_mask():
+    """
+    Nhận ảnh gốc + ảnh mask (vùng trắng = vùng cần xóa, nền đen = giữ lại).
+    Sử dụng PIL để đục lỗ kênh alpha của ảnh gốc dựa trên mask,
+    chỉ xóa các pixel nằm trong vùng trắng của mask.
+    """
+    if 'image' not in request.files or 'mask' not in request.files:
+        return {'error': 'Both image and mask are required'}, 400
+
+    try:
+        from PIL import ImageChops
+
+        # Đọc ảnh gốc và chuyển về RGBA để có kênh alpha
+        input_image = Image.open(request.files['image'].stream).convert('RGBA')
+
+        # Đọc ảnh mask và chuyển về Grayscale (L)
+        # Vùng trắng (255) = xóa, vùng đen (0) = giữ nguyên
+        mask_image = Image.open(request.files['mask'].stream).convert('L')
+
+        # Đảm bảo mask cùng kích thước với ảnh gốc
+        if mask_image.size != input_image.size:
+            mask_image = mask_image.resize(input_image.size, Image.LANCZOS)
+
+        # Tách các kênh của ảnh gốc
+        r, g, b, alpha = input_image.split()
+
+        # Đảo ngược mask: vùng trắng (muốn xóa) → đen trong alpha
+        inverted_mask = ImageChops.invert(mask_image)
+
+        # Nhân alpha gốc với inverted_mask:
+        # - Vùng bị tô (mask=255 → inverted=0): alpha → 0 (trong suốt)
+        # - Vùng không tô (mask=0 → inverted=255): alpha giữ nguyên
+        new_alpha = ImageChops.multiply(alpha, inverted_mask)
+
+        # Ghép lại với kênh alpha mới
+        input_image.putalpha(new_alpha)
+
+        img_byte_arr = io.BytesIO()
+        input_image.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0)
+
+        return send_file(
+            img_byte_arr,
+            mimetype='image/png',
+            as_attachment=True,
+            download_name='brush_erased.png'
+        )
+    except Exception as e:
+        print("Error processing brush mask:")
+        traceback.print_exc()
+        return {'error': str(e)}, 500
+
 
 @app.route('/generate-image', methods=['POST'])
 def generate_image():

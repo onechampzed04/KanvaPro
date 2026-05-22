@@ -1,7 +1,45 @@
 // src/components/editor/CanvasEditor.tsx
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Stage, Layer, Rect, Transformer, Group, Line } from 'react-konva';
+import React, { useRef, useEffect, useState, useCallback, memo } from 'react';
+import { Stage, Layer, Rect, Transformer, Group, Line, Circle, Text } from 'react-konva';
 import { CircleShape, RectangleShape, EditableText, URLImage, IndividualBorder } from './CanvasElements';
+
+// ─── THUẬT TOÁN DOUGLAS-PEUCKER ─────────────────────────────────────────────
+// Rút gọn mảng points [x0,y0,x1,y1,...] để giảm số điểm vẽ mà không làm méo hình
+function perpendicularDistance(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  if (dx === 0 && dy === 0) return Math.hypot(px - ax, py - ay);
+  const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function douglasPeucker(points: number[], epsilon: number): number[] {
+  if (points.length < 6) return points; // cần ít nhất 3 điểm
+  const pts: [number, number][] = [];
+  for (let i = 0; i < points.length; i += 2) pts.push([points[i], points[i + 1]]);
+
+  function rdp(start: number, end: number, result: boolean[]) {
+    let maxDist = 0;
+    let maxIdx = start;
+    for (let i = start + 1; i < end; i++) {
+      const d = perpendicularDistance(pts[i][0], pts[i][1], pts[start][0], pts[start][1], pts[end][0], pts[end][1]);
+      if (d > maxDist) { maxDist = d; maxIdx = i; }
+    }
+    if (maxDist > epsilon) {
+      rdp(start, maxIdx, result);
+      result[maxIdx] = true;
+      rdp(maxIdx, end, result);
+    }
+  }
+
+  const keep = new Array(pts.length).fill(false);
+  keep[0] = true;
+  keep[pts.length - 1] = true;
+  rdp(0, pts.length - 1, keep);
+  const simplified: number[] = [];
+  keep.forEach((v, i) => { if (v) { simplified.push(pts[i][0], pts[i][1]); } });
+  return simplified;
+}
 
 interface CanvasEditorProps {
   stageRef: any;
@@ -16,20 +54,119 @@ interface CanvasEditorProps {
   editingId: string | null;
   setEditingId: (id: string | null) => void;
   updateElement: (el: any) => void;
+  updateElementImmediate: (el: any) => void;
   selectionRect: any;
   handleMouseDown: (e: any) => void;
   handleMouseMove: (e: any) => void;
   handleMouseUp: (e: any) => void;
   isPlaying: boolean;
   currentTime: number;
+  canEdit?: boolean;
+  onResizeLive?: (w: number, h: number) => void;
+  onResizeFinal?: (w: number, h: number, dx: number, dy: number) => void;
+  activeTool?: 'select' | 'draw' | 'shape' | 'line' | 'sticky' | 'text';
+  setActiveTool?: (tool: any) => void;
+  addElement?: (el: any) => void;
+  isWhiteboard?: boolean;
+  // Undo/Redo hooks: được gọi trước mỗi thao tác chỉnh sửa
+  onActionStart?: () => void;
+  // Được gọi khi người dùng xong chỉnh sửa text (để push undo snapshot thông minh)
+  onTextEditEnd?: (finalText: string, elementId: string) => void;
+  // Preview animation: IDs of elements that should be hidden (not yet "appeared")
+  animPreviewHiddenIds?: Set<string>;
+  // Which animationOrder step is currently animating in (for applying the correct effect)
+  animPreviewCurrentStep?: number;
+  // Progress 0→1 of the current step's entry animation
+  animPreviewProgress?: number;
 }
+
+// ─── CACHED LINE COMPONENT ────────────────────────────────────────────────────
+// Memo: chỉ re-render khi el thay đổi thực sự. Sau mount gọi .cache() để tạo bitmap GPU.
+const CachedLine = memo(({ el, activeTool, onDragMove, onDragEnd, onClick }: {
+  el: any;
+  activeTool?: string;
+  onDragMove: (e: any) => void;
+  onDragEnd: (e: any) => void;
+  onClick: (e: any) => void;
+}) => {
+  const lineRef = useRef<any>(null);
+
+  // Tính toán Bounding Box từ mảng points để phủ vùng click toàn bộ khung hộp
+  const { minX, minY, width, height } = React.useMemo(() => {
+    const pts = el.points || [];
+    if (pts.length === 0) return { minX: 0, minY: 0, width: 0, height: 0 };
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < pts.length; i += 2) {
+      const x = pts[i];
+      const y = pts[i + 1];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return {
+      minX,
+      minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
+  }, [el.points]);
+
+  useEffect(() => {
+    const node = lineRef.current;
+    if (!node) return;
+    
+    // Chỉ cache nếu là nét vẽ tay siêu phức tạp (nhiều hơn 150 điểm) để tối ưu hiệu năng.
+    // Với nét vẽ bình thường (dưới 150 điểm), không cache giúp giữ nét vẽ sắc nét và đảm bảo hitStrokeWidth hoạt động chuẩn xác.
+    if (el.points && el.points.length > 150) {
+      node.cache({ offset: 25 });
+    } else {
+      node.clearCache();
+    }
+    node.getLayer()?.batchDraw();
+  }, [el.points, el.stroke, el.strokeWidth]);
+
+  return (
+    <Line
+      ref={lineRef}
+      id={el.id}
+      points={el.points}
+      stroke={el.stroke || '#6366f1'}
+      strokeWidth={el.strokeWidth || 3}
+      hitStrokeWidth={20}
+      tension={el.tension || 0}
+      lineCap={el.lineCap || 'round'}
+      lineJoin={el.lineJoin || 'round'}
+      x={el.x || 0}
+      y={el.y || 0}
+      draggable={activeTool === 'select' || !activeTool}
+      onDragMove={onDragMove}
+      onDragEnd={onDragEnd}
+      onClick={onClick}
+      perfectDrawEnabled={!el.points || el.points.length <= 150}
+      // Bắt click trên toàn bộ bounding box của nét vẽ (cộng thêm 10px lề xung quanh)
+      hitFunc={(ctx, shape) => {
+        ctx.beginPath();
+        ctx.rect(minX - 10, minY - 10, width + 20, height + 20);
+        ctx.closePath();
+        ctx.fillStrokeShape(shape);
+      }}
+    />
+  );
+});
 
 export default function CanvasEditor(props: CanvasEditorProps) {
   const {
     stageRef, layerRef, trRef, selectionRectRef, stageWidth, stageHeight,
     currentPage, elements, selectedIds, editingId, setEditingId,
-    updateElement, selectionRect, handleMouseDown, handleMouseMove, handleMouseUp
+    updateElement, updateElementImmediate, selectionRect,
+    handleMouseDown, handleMouseMove, handleMouseUp
   } = props;
+
+  // ─── Ref cho Static Group để áp dụng Konva Caching ─────────────────────
+  const staticGroupRef = useRef<any>(null);
+  // Track text state khi bắt đầu edit để kiểm tra thay đổi khi blur
+  const editingOriginalTextRef = useRef<string | null>(null);
 
   const editingElement = elements.find(el => el.id === editingId);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -40,6 +177,29 @@ export default function CanvasEditor(props: CanvasEditorProps) {
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
+  const [lines, setLines] = useState<any[]>([]);
+  const isDrawingRef = useRef(false);
+
+  // DOT PATTERN CHO WHITEBOARD
+  const [dotPattern, setDotPattern] = useState<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (props.isWhiteboard) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 40;
+      canvas.height = 40;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#cbd5e1'; // slate-300
+        ctx.beginPath();
+        ctx.arc(4, 4, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const img = new window.Image();
+      img.src = canvas.toDataURL();
+      img.onload = () => setDotPattern(img);
+    }
+  }, [props.isWhiteboard]);
+
   // logic tự động Fit To Screen
   const fitToScreen = useCallback(() => {
     if (!containerRef.current) return;
@@ -49,20 +209,32 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     const padding = 80;
     const scaleX = (clientWidth - padding) / stageWidth;
     const scaleY = (clientHeight - padding) / stageHeight;
-    const newScale = Math.min(scaleX, scaleY, 2);
+    let newScale = Math.min(scaleX, scaleY, 2);
+
+    if (props.isWhiteboard) {
+      newScale = 1; // Default to 100% zoom cho whiteboard để khung trông rất to
+    }
 
     setScale(newScale);
     setPosition({
       x: (clientWidth - stageWidth * newScale) / 2,
       y: (clientHeight - stageHeight * newScale) / 2
     });
-  }, [stageWidth, stageHeight]);
+  }, [stageWidth, stageHeight, props.isWhiteboard]);
 
-  // cập nhật khi Resize trình duyệt hoặc đổi Project mới
+  // cập nhật khi Resize trình duyệt hoặc đổi Project mới (Tránh tự reset camera khi auto-expand stageWidth/Height)
+  const lastPageIdRef = useRef<string | null>(null);
   useEffect(() => {
-    fitToScreen();
-    window.addEventListener('resize', fitToScreen);
-    return () => window.removeEventListener('resize', fitToScreen);
+    if (currentPage?.id && currentPage.id !== lastPageIdRef.current) {
+      fitToScreen();
+      lastPageIdRef.current = currentPage.id;
+    }
+  }, [currentPage?.id, fitToScreen]);
+
+  useEffect(() => {
+    const handleResize = () => fitToScreen();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, [fitToScreen]);
 
   // Chặn mặc định Zoom của Chrome
@@ -112,7 +284,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
         x: pointer.x - mousePointTo.x * newScale,
         y: pointer.y - mousePointTo.y * newScale,
       });
-    } else {
+    } else if (props.activeTool === 'select' || !props.activeTool) {
       // --- PAN (KÉO MÀN HÌNH BẰNG CHUỘT GIỮA / SCROLL TRƠN) ---
       setPosition((prev) => ({
         x: prev.x - (e.evt.shiftKey ? e.evt.deltaY : e.evt.deltaX),
@@ -121,23 +293,40 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     }
   };
 
+  // ─── Konva Group Caching: gộp các element tĩnh thành 1 bitmap GPU ──────
+  useEffect(() => {
+    const group = staticGroupRef.current;
+    if (!group) return;
+    // Không cache khi đang play animation
+    if (props.isPlaying) {
+      group.clearCache();
+      group.getLayer()?.batchDraw();
+      return;
+    }
+    // Chỉ cache khi có nhiều element tĩnh (>= 10) để tránh overhead
+    const staticElements = elements.filter(el => !selectedIds.includes(el.id) && el.id !== editingId);
+    if (staticElements.length >= 10) {
+      // Thêm padding nhỏ để tránh clipping
+      group.cache({ offset: 50, pixelRatio: window.devicePixelRatio || 1 });
+    } else {
+      group.clearCache();
+    }
+    group.getLayer()?.batchDraw();
+  }, [elements, selectedIds, editingId, props.isPlaying]);
+
   useEffect(() => {
     if (trRef.current && layerRef.current) {
-      // Tìm các vật thể dựa theo ID người dùng đang chọn
       const nodes = selectedIds.map(id => layerRef.current.findOne(`#${id}`)).filter(Boolean);
 
-      trRef.current.nodes(nodes); // gắn khung viền vào các vật thể
+      trRef.current.nodes(nodes);
 
-      const rotater = trRef.current.findOne('.rotater'); // núm xoay
+      const rotater = trRef.current.findOne('.rotater');
       if (rotater) {
         rotater.sceneFunc((ctx: any, shape: any) => {
-
           ctx.beginPath();
           ctx.arc(0, 0, 10, 0, Math.PI * 2);
-
           ctx.fillStrokeShape(shape);
 
-          // vẽ icon xoay tròn
           const nativeCtx = ctx._context || ctx;
           nativeCtx.save();
           nativeCtx.translate(-7, -7);
@@ -148,14 +337,11 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           nativeCtx.lineWidth = 3;
           nativeCtx.lineCap = 'round';
           nativeCtx.lineJoin = 'round';
-
-          // Đảm bảo không bị đè path
           nativeCtx.beginPath();
           nativeCtx.stroke(path);
           nativeCtx.restore();
         });
 
-        // Hitbox để bắt sự kiện click/kéo (To hơn một chút cho dễ bắt)
         rotater.hitFunc((ctx: any, shape: any) => {
           ctx.beginPath();
           ctx.arc(0, 0, 15, 0, Math.PI * 2);
@@ -251,19 +437,260 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     }
   }, [stageWidth, stageHeight]);
 
-  const handleDragEnd = useCallback(() => {
+  const handleDragEnd = useCallback((e: any) => {
     setGuidelines([]);
-  }, []);
+
+    // INFINITE CANVAS AUTO-EXPAND LOGIC
+    const node = e.target;
+    if (node.id() === 'bg' || node.name() === 'guideline' || node.getClassName() === 'Transformer') return;
+    
+    const parent = node.getParent();
+    if (!parent) return;
+
+    const box = node.getClientRect({ relativeTo: parent });
+    if (!box) return;
+
+    if (!props.isWhiteboard) return;
+
+    const PADDING = 150;
+    const STEP = 500;
+    let newW = stageWidth;
+    let newH = stageHeight;
+    let dx = 0;
+    let dy = 0;
+
+    if (box.x + box.width > stageWidth - PADDING) newW = stageWidth + STEP;
+    if (box.y + box.height > stageHeight - PADDING) newH = stageHeight + STEP;
+    if (box.x < PADDING) { newW += STEP; dx = -STEP; }
+    if (box.y < PADDING) { newH += STEP; dy = -STEP; }
+
+    if (newW !== stageWidth || newH !== stageHeight) {
+      // SỬA LỖI GIẬT CAMERA: Di chuyển camera tương ứng với độ tịnh tiến của vật thể
+      setPosition(prev => ({
+        x: prev.x + dx * scale,
+        y: prev.y + dy * scale
+      }));
+      if (props.onResizeFinal) props.onResizeFinal(newW, newH, dx, dy);
+    }
+  }, [stageWidth, stageHeight, scale, props]);
+
+  const getStageRelativePointerPos = useCallback((e: any) => {
+    const stage = stageRef.current;
+    if (!stage) return null;
+
+    const clientX = e.clientX !== undefined ? e.clientX : (e.evt?.clientX !== undefined ? e.evt.clientX : null);
+    const clientY = e.clientY !== undefined ? e.clientY : (e.evt?.clientY !== undefined ? e.evt.clientY : null);
+
+    if (clientX !== null && clientY !== null) {
+      const rect = stage.container().getBoundingClientRect();
+      const transform = stage.getAbsoluteTransform().copy().invert();
+      return transform.point({ x: clientX - rect.left, y: clientY - rect.top });
+    }
+
+    return stage.getRelativePointerPosition();
+  }, [stageRef]);
+
+  // TOOLBOX EVENT HANDLERS
+  const onStageMouseDown = (e: any) => {
+    if (props.activeTool === 'draw' || props.activeTool === 'line') {
+      isDrawingRef.current = true;
+      const pos = stageRef.current?.getRelativePointerPosition();
+      if (!pos) return;
+      
+      const currentLines = [...lines, { tool: props.activeTool, points: [pos.x, pos.y] }];
+      setLines(currentLines);
+
+      let localLines = currentLines;
+
+      const handleGlobalDrawingMove = (moveEvt: MouseEvent) => {
+        if (!isDrawingRef.current) return;
+        const point = getStageRelativePointerPos(moveEvt);
+        if (!point) return;
+
+        let lastLine = { ...localLines[localLines.length - 1] };
+        if (props.activeTool === 'draw') {
+          const newPoints = lastLine.points.concat([point.x, point.y]);
+          lastLine.points = newPoints.length > 16 && newPoints.length % 16 === 0
+            ? douglasPeucker(newPoints, 1.5)
+            : newPoints;
+        } else {
+          lastLine.points = [lastLine.points[0], lastLine.points[1], point.x, point.y];
+        }
+
+        localLines = [...localLines.slice(0, -1), lastLine];
+        setLines(localLines);
+      };
+
+      const handleGlobalDrawingUp = (upEvt: MouseEvent) => {
+        isDrawingRef.current = false;
+        window.removeEventListener('mousemove', handleGlobalDrawingMove);
+        window.removeEventListener('mouseup', handleGlobalDrawingUp);
+
+        const lastLine = localLines[localLines.length - 1];
+        if (lastLine && props.addElement) {
+          const finalPoints = props.activeTool === 'draw'
+            ? douglasPeucker(lastLine.points, 2)
+            : lastLine.points;
+          props.addElement({
+            id: crypto.randomUUID(),
+            type: 'line',
+            tool: props.activeTool,
+            points: finalPoints,
+            stroke: '#6366f1',
+            strokeWidth: props.activeTool === 'draw' ? 3 : 2,
+            tension: props.activeTool === 'draw' ? 0.5 : 0,
+            lineCap: 'round',
+            lineJoin: 'round',
+            x: 0,
+            y: 0,
+          });
+
+          // AUTO EXPAND KHUNG KHI VẼ CHẠM LỀ
+          const xs = lastLine.points.filter((_: any, i: number) => i % 2 === 0);
+          const ys = lastLine.points.filter((_: any, i: number) => i % 2 !== 0);
+          const minX = Math.min(...xs);
+          const maxX = Math.max(...xs);
+          const minY = Math.min(...ys);
+          const maxY = Math.max(...ys);
+
+          if (!props.isWhiteboard) {
+            setLines([]);
+            return;
+          }
+
+          const PADDING = 150;
+          const STEP = 500;
+          let newW = stageWidth;
+          let newH = stageHeight;
+          let dx = 0; let dy = 0;
+
+          if (maxX > stageWidth - PADDING) newW = stageWidth + STEP;
+          if (maxY > stageHeight - PADDING) newH = stageHeight + STEP;
+          if (minX < PADDING) { newW += STEP; dx = -STEP; }
+          if (minY < PADDING) { newH += STEP; dy = -STEP; }
+
+          if (newW !== stageWidth || newH !== stageHeight) {
+            // SỬA LỖI GIẬT CAMERA KHI ĐANG VẼ
+            setPosition(prev => ({
+              x: prev.x + dx * scale,
+              y: prev.y + dy * scale
+            }));
+            if (props.onResizeFinal) props.onResizeFinal(newW, newH, dx, dy);
+          }
+        }
+        setLines([]);
+      };
+
+      window.addEventListener('mousemove', handleGlobalDrawingMove);
+      window.addEventListener('mouseup', handleGlobalDrawingUp);
+      return;
+    }
+
+    if (props.activeTool === 'sticky') {
+      const pos = stageRef.current?.getRelativePointerPosition();
+      if (pos && props.addElement) {
+        props.addElement({
+          id: crypto.randomUUID(), type: 'text', text: 'Ghi chú', x: pos.x, y: pos.y, width: 200, height: 200,
+          fill: '#334155', backgroundColor: '#fef08a', fontSize: 18, fontFamily: 'Inter', align: 'center', verticalAlign: 'middle', padding: 20,
+        });
+      }
+      return;
+    }
+    
+    if (props.activeTool === 'text') {
+      const pos = stageRef.current?.getRelativePointerPosition();
+      if (pos && props.addElement) {
+        props.addElement({
+          id: crypto.randomUUID(), type: 'text', text: 'Nhập văn bản', x: pos.x, y: pos.y, width: 200, height: 50,
+          fill: '#000000', fontSize: 24, fontFamily: 'Inter', align: 'left', verticalAlign: 'top', padding: 10,
+        });
+      }
+      return;
+    }
+
+    if (!props.activeTool || props.activeTool === 'select') {
+      props.handleMouseDown(e);
+    }
+  };
+
+
+
   // LOGIC XỬ LÝ HIỆU ỨNG (ANIMATION IN & OUT) & ĐỘ DÀI (DURATION)
   const animatedElements = elements.map(el => {
-    // Nếu đang dừng ở 0s (Chế độ Edit bình thường), hiện tất cả mọi thứ
+    // Preview mode: ẩn elements chưa đến lượt xuất hiện
+    if (props.animPreviewHiddenIds?.has(el.id)) {
+      return { ...el, opacity: 0, listening: false };
+    }
+
+    // Preview mode: apply đúng animation effect cho elements đang animate vào
+    const previewCurrentStep = props.animPreviewCurrentStep;
+    const previewProgress = props.animPreviewProgress ?? 1;
+    if (
+      previewCurrentStep !== undefined && previewCurrentStep >= 0 &&
+      previewProgress < 1 &&
+      (el.animationOrder ?? 999) === previewCurrentStep &&
+      el.animation?.in && el.animation.in !== 'none'
+    ) {
+      const ease = 1 - Math.pow(1 - previewProgress, 3);
+      const baseOpacity = el.opacity ?? 1;
+      let newEl = { ...el };
+      switch (el.animation.in) {
+        case 'appear':
+          newEl.opacity = previewProgress > 0 ? baseOpacity : 0;
+          break;
+        case 'fade':
+          newEl.opacity = baseOpacity * ease;
+          break;
+        case 'flyIn':
+          newEl.y = el.y + (1 - ease) * 200;
+          newEl.opacity = baseOpacity * ease;
+          break;
+        case 'floatIn':
+          newEl.y = el.y + (1 - ease) * 50;
+          newEl.opacity = baseOpacity * ease;
+          break;
+        case 'zoom':
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.opacity = baseOpacity * ease;
+          break;
+        case 'growAndTurn':
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.rotation = (el.rotation || 0) - 90 * (1 - ease);
+          newEl.opacity = baseOpacity * ease;
+          break;
+        case 'swivel':
+          newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2);
+          break;
+        case 'bounce': {
+          const spring = 1 - Math.cos(previewProgress * Math.PI * 3) * Math.exp(-previewProgress * 5);
+          newEl.scaleX = (el.scaleX || 1) * spring;
+          newEl.scaleY = (el.scaleY || 1) * spring;
+          break;
+        }
+        case 'wipe':
+          newEl.scaleX = (el.scaleX || 1) * ease;
+          newEl.opacity = baseOpacity * ease;
+          break;
+        case 'split':
+          newEl.scaleY = (el.scaleY || 1) * ease;
+          newEl.opacity = baseOpacity * ease;
+          break;
+        default:
+          newEl.opacity = baseOpacity * ease;
+          break;
+      }
+      return newEl;
+    }
+
+    if (!el.timeline) return el; // Các phần tử vẽ tay/sticky không có timeline sẽ không bị dính animation
     if (props.currentTime === 0 && !props.isPlaying) return el;
 
     const start = el.timeline?.start || 0;
     const duration = el.timeline?.duration || 5;
     const end = start + duration;
 
-    // Lấy tên hiệu ứng (Nếu không có thì mặc định là 'none')
     const animIn = el.animation?.in || 'none';
     const animOut = el.animation?.out || 'none';
 
@@ -277,7 +704,6 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
     const animDuration = 0.5;
 
-    //  TÍNH TOÁN TIẾN ĐỘ VÀO (IN) VÀ RA (OUT) TỪ 0 ĐẾN 1
     let progressIn = 1;
     let progressOut = 1;
 
@@ -287,9 +713,8 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       progressOut = (end - props.currentTime) / animDuration;
     }
 
-    // 3. APPLY HIỆU ỨNG IN (Khi tiến độ In < 1)
     if (progressIn < 1 && animIn !== 'none') {
-      const ease = 1 - Math.pow(1 - progressIn, 3); // Cubic Ease Out (Nhanh lúc đầu, mượt về cuối)
+      const ease = 1 - Math.pow(1 - progressIn, 3);
       const baseOpacity = el.opacity ?? 1;
 
       switch (animIn) {
@@ -312,12 +737,10 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2);
           break;
         case 'bounce':
-          // Mô phỏng lực đàn hồi (Spring Physics) cực kỳ tự nhiên
           const spring = 1 - Math.cos(progressIn * Math.PI * 3) * Math.exp(-progressIn * 5);
           newEl.scaleX = (el.scaleX || 1) * spring;
           newEl.scaleY = (el.scaleY || 1) * spring;
           break;
-        // Các hiệu ứng cực khó vẽ bằng Canvas (như Split, Wipe) sẽ được Fallback về Fade+Zoom
         default:
           newEl.scaleX = (el.scaleX || 1) * ease;
           newEl.scaleY = (el.scaleY || 1) * ease;
@@ -326,9 +749,8 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       }
     }
 
-    // 4. APPLY HIỆU ỨNG OUT (Khi tiến độ Out < 1)
     else if (progressOut < 1 && animOut !== 'none') {
-      const ease = 1 - Math.pow(1 - progressOut, 3); // Mượt dần khi biến mất
+      const ease = 1 - Math.pow(1 - progressOut, 3);
       const baseOpacity = el.opacity ?? 1;
 
       switch (animOut) {
@@ -409,58 +831,95 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     }
   }
 
+  // Cursor style tương ứng với công cụ đang chọn
+  const cursorStyle: React.CSSProperties = {
+    cursor: props.activeTool === 'draw' || props.activeTool === 'line' ? 'crosshair'
+      : props.activeTool === 'text' ? 'text'
+      : props.activeTool === 'sticky' ? 'cell'
+      : 'default'
+  };
+
   return (
     <div
       ref={containerRef}
       className="absolute inset-0 bg-slate-200 overflow-hidden outline-none"
       tabIndex={0}
+      style={cursorStyle}
     >
       <Stage
         ref={stageRef}
-        width={containerSize.width} // Mở rộng Stage 100% bằng màn hình
+        width={containerSize.width}
         height={containerSize.height}
-        x={position.x} // Đẩy khung vẽ ra giữa
+        x={position.x}
         y={position.y}
         scaleX={scale}
         scaleY={scale}
         onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
+        onMouseDown={onStageMouseDown}
       >
+        {/* ── STATIC LAYER: background + tất cả vật thể tĩnh ── */}
         <Layer ref={layerRef} onDragEnd={handleDragEnd}>
           <Rect
             id="bg"
-            width={stageWidth}
-            height={stageHeight}
+            width={props.isWhiteboard ? 100000 : stageWidth}
+            height={props.isWhiteboard ? 100000 : stageHeight}
             fill={currentPage?.background_color || "#ffffff"}
-            shadowBlur={15}
+            fillPatternImage={props.isWhiteboard ? (dotPattern || undefined) : undefined}
+            fillPatternRepeat="repeat"
+            shadowBlur={props.isWhiteboard ? 0 : 15}
             shadowColor="rgba(0,0,0,0.1)"
-            x={pageAnim.x} y={pageAnim.y} opacity={pageAnim.opacity}
+            x={props.isWhiteboard ? -50000 : pageAnim.x}
+            y={props.isWhiteboard ? -50000 : pageAnim.y}
+            opacity={pageAnim.opacity}
             scaleX={pageAnim.scaleX} scaleY={pageAnim.scaleY}
-            offsetX={pageAnim.offsetX} offsetY={pageAnim.offsetY}
+            offsetX={props.isWhiteboard ? 0 : pageAnim.offsetX}
+            offsetY={props.isWhiteboard ? 0 : pageAnim.offsetY}
           />
 
           <Group
-            clipX={0} clipY={0} clipWidth={stageWidth} clipHeight={stageHeight}
+            clipX={props.isWhiteboard ? -50000 : 0}
+            clipY={props.isWhiteboard ? -50000 : 0}
+            clipWidth={props.isWhiteboard ? 100000 : stageWidth}
+            clipHeight={props.isWhiteboard ? 100000 : stageHeight}
             x={pageAnim.x} y={pageAnim.y} opacity={pageAnim.opacity}
             scaleX={pageAnim.scaleX} scaleY={pageAnim.scaleY}
             offsetX={pageAnim.offsetX} offsetY={pageAnim.offsetY}
+            listening={!props.activeTool || props.activeTool === 'select'}
           >
             {animatedElements.map((el) => {
-              if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} onSelect={() => { }} onDragMove={handleDragMove} />;
-              if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={el} onChange={updateElement} onSelect={() => { }} onDragMove={handleDragMove} />;
+              const isActive = selectedIds.includes(el.id) || editingId === el.id;
+              if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
+              if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
               if (el.type === 'text') return (
                 <EditableText
                   key={el.id} text={el}
-                  onDblClick={() => setEditingId(el.id)}
+                  onDblClick={() => {
+                    // Lưu lại text gốc khi bắt đầu edit để kiểm tra sau khi blur
+                    editingOriginalTextRef.current = el.text;
+                    setEditingId(el.id);
+                  }}
                   onChange={updateElement}
+                  onChangeFinal={updateElementImmediate}
                   isEditing={editingId === el.id}
                   onSelect={() => { }}
                   onDragMove={handleDragMove}
+                  onActionStart={props.onActionStart}
                 />
               );
-              if (el.type === 'image') return <URLImage key={el.id} image={el} onChange={updateElement} onSelect={() => { }} onDragMove={handleDragMove} />;
+              if (el.type === 'image') return <URLImage key={el.id} image={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
+              if (el.type === 'line') return (
+                <CachedLine
+                  key={el.id}
+                  el={el}
+                  activeTool={props.activeTool}
+                  onDragMove={handleDragMove}
+                  onDragEnd={(e: any) => {
+                    props.onActionStart?.();
+                    updateElementImmediate({ ...el, x: e.target.x(), y: e.target.y() });
+                  }}
+                  onClick={(e: any) => props.handleMouseDown({ target: e.target })}
+                />
+              );
               return null;
             })}
             {guidelines.map((guide, i) => (
@@ -468,7 +927,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
             ))}
           </Group>
 
-          {selectionRect.visible && (
+          {selectionRect.visible && props.activeTool === 'select' && (
             <Rect
               ref={selectionRectRef}
               x={selectionRect.x}
@@ -485,6 +944,22 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           <Transformer ref={trRef} borderStroke="#6366f1" anchorStroke="#6366f1" anchorFill="#ffffff" anchorSize={8} boundBoxFunc={(oldBox, newBox) => newBox.width < 5 || newBox.height < 5 ? oldBox : newBox} />
           {selectedIds.length > 1 && selectedIds.map(id => <IndividualBorder key={`border-${id}`} nodeId={id} />)}
         </Layer>
+
+        {/* ── DYNAMIC LAYER: chỉ chứa nét vẽ tạm thời đang kéo (60fps, tách biệt) ── */}
+        <Layer listening={false}>
+          {lines.map((line, i) => (
+            <Line
+              key={i}
+              points={line.points}
+              stroke="#6366f1"
+              strokeWidth={props.activeTool === 'draw' ? 3 : 2}
+              tension={props.activeTool === 'draw' ? 0.5 : 0}
+              lineCap="round"
+              lineJoin="round"
+              perfectDrawEnabled={false}
+            />
+          ))}
+        </Layer>
       </Stage>
 
       {editingElement && (
@@ -493,14 +968,23 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           autoFocus
           value={editingElement.text}
           onChange={(e) => updateElement({ ...editingElement, text: e.target.value })}
-          onBlur={() => setEditingId(null)}
-
+          onBlur={() => {
+            // ─── Undo thông minh cho Text: chỉ push snapshot 1 lần khi kết thúc edit ─
+            const finalText = editingElement.text;
+            const originalText = editingOriginalTextRef.current;
+            if (originalText !== null && finalText !== originalText) {
+              // Thông báo cho EditorPage biết text đã thay đổi để đẩy undo snapshot
+              props.onTextEditEnd?.(finalText, editingElement.id);
+            }
+            editingOriginalTextRef.current = null;
+            setEditingId(null);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
+              editingOriginalTextRef.current = null;
               setEditingId(null);
             }
           }}
-
           style={{
             position: 'absolute',
             top: position.y + (editingElement.y * scale),
@@ -521,8 +1005,8 @@ export default function CanvasEditor(props: CanvasEditorProps) {
             padding: 0,
             margin: 0,
             overflow: 'hidden',
-            whiteSpace: 'pre-wrap',   // Bắt buộc: Đảm bảo xuống dòng chuẩn xác
-            wordWrap: 'break-word'    // Bắt buộc: Cắt chữ khi đụng lề phải
+            whiteSpace: 'pre-wrap',
+            wordWrap: 'break-word'
           }}
         />
       )}

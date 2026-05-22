@@ -1,1 +1,202 @@
 @import "tailwindcss";
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .doc-print-area,
+  .doc-print-area * {
+    visibility: visible;
+  }
+  .doc-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   KANVAPRO — EDITOR MICRO-INTERACTIONS & GLASSMORPHISM
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Custom scrollbar (thin, modern) ────────────────── */
+.custom-scrollbar::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track,
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb,
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 99px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover,
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* ── Glassmorphism panels ────────────────────────────── */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 8px 32px rgba(99, 102, 241, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+/* ── Tool button micro-interactions ─────────────────── */
+.editor-tool-btn {
+  position: relative;
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.15s ease,
+              background-color 0.15s ease;
+}
+.editor-tool-btn:hover {
+  transform: scale(1.07);
+}
+.editor-tool-btn:active {
+  transform: scale(0.95);
+}
+
+/* Glow effect on hover for primary buttons */
+.editor-tool-btn.active,
+.editor-tool-btn:hover {
+  box-shadow: 0 0 0 0px rgba(99, 102, 241, 0);
+}
+.editor-tool-btn:hover::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.12), transparent 70%);
+  pointer-events: none;
+}
+
+/* ── Sidebar icon rail — glow on active ─────────────── */
+.sidebar-icon-active {
+  background: linear-gradient(135deg, #fce7f3, #fdf2f8);
+  box-shadow:
+    0 2px 8px rgba(236, 72, 153, 0.2),
+    inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+/* ── Animation Panel cards ───────────────────────────── */
+.anim-card {
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.18s ease,
+              border-color 0.15s ease;
+}
+.anim-card:hover {
+  transform: translateX(2px);
+  box-shadow: 0 2px 12px rgba(139, 92, 246, 0.12);
+}
+
+/* ── Layer panel item hover ──────────────────────────── */
+.layer-item {
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+.layer-item:hover {
+  background: rgba(248, 250, 252, 0.9);
+}
+.layer-item.selected {
+  background: rgba(238, 242, 255, 0.95);
+  box-shadow: inset 3px 0 0 #6366f1;
+}
+
+/* ── Animation order badge pulse ─────────────────────── */
+@keyframes badge-ping {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
+}
+.anim-badge {
+  animation: badge-ping 2s ease-in-out infinite;
+}
+.anim-badge:hover {
+  animation: none;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.3);
+}
+
+/* ── Floating toolbar — premium shadow ───────────────── */
+.floating-toolbar {
+  box-shadow:
+    0 4px 24px rgba(99, 102, 241, 0.14),
+    0 1px 4px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+/* ── Smart guide lines (for future snapping overlay) ─── */
+.snap-guide-h {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: #6366f1;
+  pointer-events: none;
+  z-index: 200;
+  box-shadow: 0 0 4px rgba(99, 102, 241, 0.5);
+}
+.snap-guide-v {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: #6366f1;
+  pointer-events: none;
+  z-index: 200;
+  box-shadow: 0 0 4px rgba(99, 102, 241, 0.5);
+}
+
+/* ── Right panel slide-in ────────────────────────────── */
+.right-panel-enter {
+  animation: slideInRight 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ── Drag-and-drop placeholder ───────────────────────── */
+.reorder-item-dragging {
+  opacity: 0.5;
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.25) !important;
+  scale: 1.02;
+  z-index: 999 !important;
+}
+
+/* ── Toolbar button tooltip ──────────────────────────── */
+[title]:not([title=""]) {
+  position: relative;
+}
+
+/* ── Framer-motion Reorder.Item drag cursor ──────────── */
+[data-framer-component-type="ReorderItem"] {
+  cursor: grab;
+}
+[data-framer-component-type="ReorderItem"]:active {
+  cursor: grabbing;
+}
+
+/* ── Preview progress bar shimmer ───────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+.preview-progress-bar {
+  background: linear-gradient(
+    90deg,
+    #7c3aed 0%,
+    #a78bfa 40%,
+    #7c3aed 80%,
+    #6366f1 100%
+  );
+  background-size: 200% auto;
+  animation: shimmer 1.8s linear infinite;
+}

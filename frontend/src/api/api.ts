@@ -13,6 +13,50 @@ const getHeaders = () => {
   };
 };
 
+// ==========================================
+// HÀM MỚI: UPLOAD ẢNH LÊN SERVER (thay thế Base64)
+// ==========================================
+/**
+ * Upload file ảnh lên server, nhận về URL tĩnh để gán vào element.src.
+ * Sử dụng thay cho FileReader.readAsDataURL() để tránh lưu Base64 trong DB.
+ */
+export const uploadImageFile = async (file: File): Promise<{ url: string; width?: number; height?: number }> => {
+  const token = localStorage.getItem('token');
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const response = await fetch('/api/assets/upload-image', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to upload image');
+  }
+  return response.json();
+};
+
+/**
+ * Upload blob thumbnail (từ stage.toBlob()) lên server cho 1 page.
+ * Gọi âm thầm sau mỗi lần chuyển trang - không nhồi vào payload JSON lưu design.
+ */
+export const uploadPageThumbnail = async (blob: Blob, pageId: string): Promise<string> => {
+  const formData = new FormData();
+  formData.append('thumbnail', blob, `thumb_${pageId}.png`);
+  formData.append('pageId', pageId);
+
+  const response = await fetch('/api/assets/upload-thumbnail', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) return ''; // Thất bại âm thầm, không làm hỏng luồng chính
+  const data = await response.json();
+  return data.url || '';
+};
+
 // 1. Lấy danh sách thiết kế
 export const fetchDesigns = async (tab: string = 'my_designs') => {
   const response = await fetch(`${BASE_URL}/designs/my?tab=${tab}`, {
@@ -23,12 +67,13 @@ export const fetchDesigns = async (tab: string = 'my_designs') => {
 };
 
 // 2. Tạo thiết kế mới (API mới)
-export const createDesign = async (designData: { 
-  title: string, 
-  design_type: string, 
+export const createDesign = async (designData: {
+  title: string,
+  design_type: string,
   page_type: string,
-  width: number | null, 
-  height: number | null 
+  width: number | null,
+  height: number | null,
+  team_id?: string
 }) => {
   const response = await fetch(`${BASE_URL}/designs`, {
     method: 'POST',
@@ -41,19 +86,19 @@ export const createDesign = async (designData: {
 };
 
 export const saveDesign = async (designId: string, payload: any) => {
-    const token = localStorage.getItem('token');
-    const response = await fetch(`/api/designs/${designId}/save`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
-    });
-    return response.json();
+  const token = localStorage.getItem('token');
+  const response = await fetch(`/api/designs/${designId}/save`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  });
+  return response.json();
 };
 
-export const updateDesignFull = async (designId: string, data: { title: string, pages: any[] }) => {
+export const updateDesignFull = async (designId: string, data: { title: string, pages: any[], version?: string | null, thumbnail_url?: string }) => {
   const token = localStorage.getItem('token');
   const response = await fetch(`/api/designs/${designId}`, {
     method: 'PUT',
@@ -63,8 +108,15 @@ export const updateDesignFull = async (designId: string, data: { title: string, 
     },
     body: JSON.stringify(data)
   });
-  
-  if (!response.ok) throw new Error('Failed to save design');
+
+  if (!response.ok) {
+    // === FIX: N\u00e9m l\u1ed7i c\u00f3 status \u0111\u1ec3 catch block ph\u00e2n bi\u1ec7t 409 Conflict ===
+    const errBody = await response.json().catch(() => ({}));
+    const err: any = new Error(errBody.error || `Failed to save design (HTTP ${response.status})`);
+    err.status = response.status;
+    err.body = errBody;
+    throw err;
+  }
   return response.json();
 };
 
@@ -93,43 +145,43 @@ export const restoreDesignVersion = async (designId: string, versionId: string) 
 // HÀM MỚI: UPLOAD VIDEO ĐỂ XUẤT FILE MP4 (GIẢI MÃ BASE64)
 // ==========================================
 export const uploadVideoForExport = async (videoBlob: Blob): Promise<Blob> => {
-    const formData = new FormData();
-    formData.append('video', videoBlob, 'export.webm');
+  const formData = new FormData();
+  formData.append('video', videoBlob, 'export.webm');
 
-    try {
-        const token = localStorage.getItem('token');
-        const headers: any = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
+  try {
+    const token = localStorage.getItem('token');
+    const headers: any = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const response = await fetch('/api/designs/export/video', {
-            method: 'POST',
-            headers: headers,
-            body: formData, 
-        });
+    const response = await fetch('/api/designs/export/video', {
+      method: 'POST',
+      headers: headers,
+      body: formData,
+    });
 
-        if (!response.ok) {
-            throw new Error(`Server responded with status ${response.status}`);
-        }
-
-        // 🔥 CHỐNG VITE PROXY: Nhận JSON thay vì Blob để không bị đứt đường truyền
-        const json = await response.json();
-        if (!json.success || !json.data) {
-            throw new Error('Dữ liệu trả về không hợp lệ');
-        }
-
-        // Giải mã chuỗi Base64 dài loằng ngoằng về lại thành File MP4
-        const binaryString = window.atob(json.data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        return new Blob([bytes], { type: 'video/mp4' });
-
-    } catch (error) {
-        console.error('Failed to upload and convert video:', error);
-        throw error;
+    if (!response.ok) {
+      throw new Error(`Server responded with status ${response.status}`);
     }
+
+    // 🔥 CHỐNG VITE PROXY: Nhận JSON thay vì Blob để không bị đứt đường truyền
+    const json = await response.json();
+    if (!json.success || !json.data) {
+      throw new Error('Dữ liệu trả về không hợp lệ');
+    }
+
+    // Giải mã chuỗi Base64 dài loằng ngoằng về lại thành File MP4
+    const binaryString = window.atob(json.data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    return new Blob([bytes], { type: 'video/mp4' });
+
+  } catch (error) {
+    console.error('Failed to upload and convert video:', error);
+    throw error;
+  }
 };
 
 // ==========================================
@@ -228,6 +280,40 @@ export const verifyPayment = async (orderCode: string) => {
   return res.json();
 };
 
+// [MỚI] User tự bấm "Tôi đã chuyển khoản - Kiểm tra lại"
+// Gọi cho các giao dịch Pending trong Billing History
+export const verifyOrderByCode = async (orderCode: string) => {
+  const res = await fetch(`/api/payments/verify-order?orderCode=${orderCode}`, {
+    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Lỗi kiểm tra giao dịch');
+  return data;
+};
+
+// [MỚI] Preview cấn trừ (tạm tính) trước khi xác nhận mua gói mới
+// Dùng để hiện Modal Checkout Preview trước khi redirect PayOS
+export const previewUpgrade = async (planId: string) => {
+  const res = await fetch(`/api/payments/preview-upgrade?planId=${planId}`, {
+    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Lỗi tính toán cấn trừ');
+  return data;
+};
+
+// [MỚI] User hủy gia hạn tự động (vẫn dùng nốt đến cuối kỳ)
+export const cancelAutoRenewal = async () => {
+  const res = await fetch('/api/payments/cancel-renewal', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Lỗi hủy gia hạn');
+  return data;
+};
+
+
 // ==========================================
 // SHARE MANAGEMENT APIs
 // ==========================================
@@ -285,4 +371,101 @@ export const fetchShareLink = async (designId: string) => {
   const res = await fetch(`/api/designs/${designId}/share-link`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Lỗi lấy link chia sẻ');
   return res.json();
+};
+
+// ==========================================
+// TRASH BIN APIs
+// ==========================================
+export const fetchTrashDesigns = async () => {
+  const res = await fetch(`${BASE_URL}/designs/trash`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Lỗi lấy thùng rác');
+  return res.json();
+};
+
+export const restoreDesign = async (designId: string) => {
+  const res = await fetch(`${BASE_URL}/designs/trash/${designId}/restore`, {
+    method: 'PUT',
+    headers: getHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Khôi phục thất bại');
+  return data;
+};
+
+export const permanentlyDeleteDesign = async (designId: string) => {
+  const res = await fetch(`${BASE_URL}/designs/trash/${designId}/permanent`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Xóa thất bại');
+  return data;
+};
+
+export const bulkDeleteDesigns = async (designIds: string[]) => {
+  const res = await fetch(`${BASE_URL}/designs/bulk-delete`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ designIds }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Xóa hàng loạt thất bại');
+  return data;
+};
+
+export const emptyTrash = async () => {
+  const res = await fetch(`${BASE_URL}/designs/trash/empty`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Dọn rác thất bại');
+  return data;
+};
+
+// ==========================================
+// TEAM APIs
+// ==========================================
+export const fetchMyTeams = async () => {
+  const res = await fetch(`${BASE_URL}/teams/my-teams`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Lỗi lấy danh sách nhóm');
+  return res.json();
+};
+
+export const createTeam = async (data: { name: string; max_members?: number }) => {
+  const res = await fetch(`${BASE_URL}/teams`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Tạo nhóm thất bại');
+  return json;
+};
+
+export const fetchTeamById = async (teamId: string) => {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Lỗi lấy thông tin nhóm');
+  return res.json();
+};
+
+export const inviteTeamMember = async (teamId: string, email: string, role: string = 'member') => {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}/members`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ email, role }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Mời thành viên thất bại');
+  return data;
+};
+
+export const removeTeamMember = async (teamId: string, memberId: string) => {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}/members/${memberId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Xóa thành viên thất bại');
+  return data;
 };

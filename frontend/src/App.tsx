@@ -8,6 +8,14 @@ import PricingPage from './pages/PricingPage';
 import PaymentSuccessPage from './pages/PaymentSuccessPage';
 import PaymentCancelPage from './pages/PaymentCancelPage';
 import BillingPage from './pages/BillingPage';
+import TrashPage from './pages/TrashPage';
+import TeamsPage from './pages/TeamsPage';
+import AdminLayout from './pages/admin/AdminLayout';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminUsers from './pages/admin/AdminUsers';
+import AdminAssets from './pages/admin/AdminAssets';
+import AdminTemplates from './pages/admin/AdminTemplates';
+import AdminSubscriptions from './pages/admin/AdminSubscriptions';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -23,18 +31,31 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
+          {/* ── Public ── */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/pricing" element={<PricingPage />} />
-
           <Route path="/payment/success" element={<PaymentSuccessPage />} />
           <Route path="/payment/cancel" element={<PaymentCancelPage />} />
 
+          {/* ── User ── */}
           <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/billing" element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
           <Route path="/design/:id" element={<ProtectedRoute><EditorPage /></ProtectedRoute>} />
+          <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
+          <Route path="/teams" element={<ProtectedRoute><TeamsPage /></ProtectedRoute>} />
+
+          {/* ── Admin Panel ── */}
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<AdminDashboard />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="assets" element={<AdminAssets />} />
+            <Route path="templates" element={<AdminTemplates />} />
+            <Route path="subscriptions" element={<AdminSubscriptions />} />
+          </Route>
         </Routes>
       </AuthProvider>
     </BrowserRouter>
   );
 }
+

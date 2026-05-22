@@ -1,0 +1,64 @@
+import express from 'express';
+import { authenticate } from '../middleware/authMiddleware';
+import { isAdmin } from '../middleware/isAdmin';
+import {
+  getMetrics, getUsers, updateUserRole, toggleUserBan,
+  getAdminAssets, bulkUploadAssets, updateAsset, deleteAsset,
+  getDesigns, publishTemplate, unpublishTemplate, adminUpload,
+  getAdminSubscriptions, createManualSubscription,
+  updateSubscriptionStatus, terminateSubscription,
+  subscriptionPlanController, getAdminPayments,
+  getAdminUsers, banUser, updateUserQuota,
+  adminForceSuccessPayment, revokeSubscription, adminCancelRenewal,
+} from '../controllers/adminController';
+
+const router = express.Router();
+
+// All admin routes require authentication + admin role
+router.use(authenticate, isAdmin);
+
+// Dashboard
+router.get('/metrics', getMetrics);
+
+// Users (Real-time V2)
+router.get('/users-v2', getAdminUsers);
+router.post('/users-v2/:id/ban', banUser);
+router.put('/users-v2/:id/quota', updateUserQuota);
+
+// Legacy fallback
+router.get('/users', getUsers);
+router.put('/users/:id/role', updateUserRole);
+router.put('/users/:id/ban', toggleUserBan);
+
+// Assets
+router.get('/assets', getAdminAssets);
+router.post('/assets/bulk', adminUpload.array('files', 100), bulkUploadAssets);
+router.patch('/assets/:id', updateAsset);
+router.delete('/assets/:id', deleteAsset);
+
+// Designs & Templates
+router.get('/designs', getDesigns);
+router.post('/templates/publish', publishTemplate);
+router.delete('/templates/:design_id', unpublishTemplate);
+
+// ── Subscriptions ──────────────────────────────────────────────────────────
+router.get('/subscriptions', getAdminSubscriptions);
+router.post('/subscriptions/manual', createManualSubscription);
+router.put('/subscriptions/:id', updateSubscriptionStatus);
+router.delete('/subscriptions/:id', terminateSubscription);
+// [MỚI] 2 nút thay cho Terminate đơn lẻ
+router.post('/subscriptions/:id/cancel-renewal', adminCancelRenewal); // Hủy gia hạn (dùng nốt đến cuối kỳ)
+router.post('/subscriptions/:id/revoke', revokeSubscription);          // Ngắt ngay lập tức
+
+// ── Plans ──────────────────────────────────────────────────────────────────
+router.get('/plans', subscriptionPlanController.getAll);
+router.post('/plans', subscriptionPlanController.create);
+router.put('/plans/:id', subscriptionPlanController.update);
+router.delete('/plans/:id', subscriptionPlanController.delete);
+
+// ── Payments / Revenue ─────────────────────────────────────────────────────
+router.get('/payments', getAdminPayments);
+// [MỚI] Admin duyệt tay giao dịch Pending (PayOS webhook bị miss)
+router.post('/payments/:id/force-success', adminForceSuccessPayment);
+
+export default router;

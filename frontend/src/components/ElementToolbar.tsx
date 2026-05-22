@@ -1,6 +1,6 @@
 // src/components/ElementToolbar.tsx
 import React from 'react';
-import { Bold, Italic, Underline, ArrowUp, ArrowDown, Trash2, Layers, Zap, Eraser } from 'lucide-react';
+import { Bold, Italic, Underline, ArrowUp, ArrowDown, Trash2, Layers, Zap, Eraser, Brush } from 'lucide-react';
 
 interface ElementToolbarProps {
   element: any;
@@ -11,9 +11,13 @@ interface ElementToolbarProps {
   onTogglePosition: () => void;
   onToggleAnimate: () => void;
   onRemoveBackground?: (element: any) => void;
+  onBrushErase?: (element: any) => void;  // Mới: mở BrushEraserModal
 }
 
-export default function ElementToolbar({ element, onUpdate, onDelete, onMove, fontList, onTogglePosition, onToggleAnimate, onRemoveBackground }: ElementToolbarProps) {
+export default function ElementToolbar({
+  element, onUpdate, onDelete, onMove, fontList,
+  onTogglePosition, onToggleAnimate, onRemoveBackground, onBrushErase,
+}: ElementToolbarProps) {
   const handleChange = (key: string, value: any) => {
     onUpdate({ ...element, [key]: value });
   };
@@ -29,7 +33,6 @@ export default function ElementToolbar({ element, onUpdate, onDelete, onMove, fo
   };
 
   return (
-    // Đã thay đổi class ở đây thành dạng bong bóng nổi
     <div className="flex items-center gap-3 px-5 py-2.5 bg-white/95 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-200/80 rounded-2xl pointer-events-auto transition-all">
       
       {/* 1. CÔNG CỤ CHO TEXT */}
@@ -51,14 +54,26 @@ export default function ElementToolbar({ element, onUpdate, onDelete, onMove, fo
 
       {/* 2. CÔNG CỤ CHO IMAGE / STICKER */}
       {(element.type === 'image' || element.type === 'sticker') && (
-        <div className="flex items-center border-r border-slate-200 pr-4 shrink-0">
-          <button onClick={() => onRemoveBackground?.(element)} className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-purple-100 to-indigo-100 text-indigo-700 hover:from-purple-200 hover:to-indigo-200 rounded-xl transition text-xs font-extrabold shadow-sm">
+        <div className="flex items-center border-r border-slate-200 pr-4 gap-2 shrink-0">
+          {/* Xóa nền tự động bằng AI */}
+          <button
+            onClick={() => onRemoveBackground?.(element)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-purple-100 to-indigo-100 text-indigo-700 hover:from-purple-200 hover:to-indigo-200 rounded-xl transition text-xs font-extrabold shadow-sm"
+          >
             <Eraser size={14} strokeWidth={2.5} /> BG Remover
+          </button>
+          {/* Bôi vùng xóa nền bằng cọ vẽ */}
+          <button
+            onClick={() => onBrushErase?.(element)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-100 to-orange-100 text-amber-700 hover:from-amber-200 hover:to-orange-200 rounded-xl transition text-xs font-extrabold shadow-sm"
+            title="Bôi vùng cần xóa nền"
+          >
+            <Brush size={14} strokeWidth={2.5} /> Brush Erase
           </button>
         </div>
       )}
 
-      {/* 3. CÔNG CỤ CHUNG (Dành cho mọi Element) */}
+      {/* 3. CÔNG CỤ CHUNG */}
       <div className="flex items-center border-r border-slate-200 pr-4 gap-2 shrink-0">
          {(element.type === 'text' || element.type === 'rect' || element.type === 'circle') && (
             <div className="flex items-center gap-1 mr-2">

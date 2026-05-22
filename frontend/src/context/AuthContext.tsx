@@ -16,6 +16,9 @@ export interface User {
   role: string;
   is_verified?: boolean;
   subscription: UserSubscription | null;
+  avatar_url?: string | null;
+  storage_used_bytes?: number;
+  max_storage_gb?: number;
 }
 
 interface AuthContextType {
@@ -24,6 +27,7 @@ interface AuthContextType {
   login: (user: User) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
+  updateAvatar: (avatarUrl: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -62,6 +66,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     fetchCurrentUser().finally(() => setLoading(false));
   }, [fetchCurrentUser]);
 
+  // Global Real-time Listener (Force Logout)
+  useEffect(() => {
+    if (!user) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    import('socket.io-client').then(({ io }) => {
+      // FIX TS2339: dùng window.location.hostname thay vì import.meta.env.DEV
+      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const socketUrl = isDev ? 'http://localhost:3000' : '';
+      const socket = io(socketUrl, {
+        path: '/socket.io',
+        transports: ['websocket', 'polling'],
+        withCredentials: true,
+      });
+
+      socket.on('connect', () => {
+        socket.emit('join-global', { token });
+      });
+
+      socket.on('auth:force_logout', (data: { reason: string }) => {
+        import('sweetalert2').then((Swal) => {
+          Swal.default.fire({
+            icon: 'error',
+            title: 'Tài khoản bị khóa!',
+            text: data.reason || 'Tài khoản của bạn đã bị vô hiệu hóa bởi ban quản trị.',
+            confirmButtonText: 'Đóng',
+            allowOutsideClick: false
+          }).then(() => {
+            fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
+              setUser(null);
+              localStorage.removeItem('token');
+              window.location.href = '/login';
+            });
+          });
+        });
+      });
+
+      return () => {
+        socket.disconnect();
+      };
+    });
+  }, [user?.id]);
+
   const login = async (userData: User) => {
     setUser(userData);
     await fetchCurrentUser();
@@ -78,8 +126,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await fetchCurrentUser();
   }, [fetchCurrentUser]);
 
+  // Cập nhật avatar_url trong state ngay lập tức (không cần gọi lại API)
+  const updateAvatar = useCallback((avatarUrl: string) => {
+    setUser(prev => prev ? { ...prev, avatar_url: avatarUrl } : prev);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser, updateAvatar }}>
       {children}
     </AuthContext.Provider>
   );

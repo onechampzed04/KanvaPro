@@ -218,5 +218,153 @@ export const paymentService = {
       console.error('❌ Lỗi xử lý Webhook PayOS:', error);
       throw error;
     }
-  }
+  },
+
+  // =========================================================================
+  // Hàm 4: Admin duyệt tay giao dịch bị treo (Force Activate)
+  // Admin đã xác nhận tiền về tài khoản thật, kích hoạt gói bằng payment DB id
+  // =========================================================================
+  forceActivateByPaymentId: async (paymentDbId: string) => {
+    // Lấy payment record theo UUID trong DB (không phải orderCode)
+    const paymentRes = await db.query(
+      `SELECT id, user_id, metadata, transaction_id, status FROM payments WHERE id = $1`,
+      [paymentDbId]
+    );
+    if (paymentRes.rows.length === 0) throw new Error('Không tìm thấy giao dịch');
+
+    const payment = paymentRes.rows[0];
+    if (payment.status === 'succeeded') {
+      return { success: true, message: 'Giao dịch này đã được xử lý trước đó' };
+    }
+
+    // Dùng lại hàm activateSubscription nội bộ thông qua transaction_id (orderCode)
+    const activated = await activateSubscription(payment.transaction_id);
+    if (!activated) {
+      // Trường hợp payment không còn pending (đã xử lý song song) — vẫn coi là OK
+      return { success: true, message: 'Giao dịch đã được xử lý trước đó' };
+    }
+    return { success: true, message: `Đã kích hoạt gói thành công cho user ${payment.user_id}` };
+  },
+
+  // =========================================================================
+  // Hàm 5: User tự bấm "Tôi đã chuyển khoản" — hỏi lại PayOS theo orderCode
+  // Dùng cho BillingPage: các đơn Pending có nút "Kiểm tra lại"
+  // =========================================================================
+  verifyByOrderCode: async (orderCode: string) => {
+    // Hỏi PayOS trạng thái thực tế
+    let paymentInfo: any;
+    try {
+      paymentInfo = await payos.paymentRequests.get(orderCode);
+    } catch (err) {
+      console.error('[VerifyByOrderCode] Lỗi gọi PayOS API:', err);
+      throw new Error('Không thể kết nối PayOS để kiểm tra. Vui lòng thử lại sau.');
+    }
+
+    console.log(`[VerifyByOrderCode] orderCode=${orderCode} payosStatus=${paymentInfo?.status}`);
+
+    if (paymentInfo?.status !== 'PAID') {
+      return {
+        success: false,
+        status: paymentInfo?.status || 'UNKNOWN',
+        message: 'PayOS chưa ghi nhận thanh toán thành công. Vui lòng đợi thêm vài phút.',
+      };
+    }
+
+    const activated = await activateSubscription(orderCode);
+    if (!activated) {
+      return { success: true, message: 'Giao dịch đã được xử lý trước đó. Gói của bạn đã được kích hoạt.' };
+    }
+    return { success: true, message: 'Xác nhận thành công! Gói Pro đã được kích hoạt.' };
+  },
+
+  // =========================================================================
+  // Hàm 6: Preview cấn trừ (Proration Preview) — không tạo link, chỉ tính tiền
+  // Frontend gọi trước khi hiện Modal xác nhận mua gói mới
+  // =========================================================================
+  previewUpgrade: async (userId: string, newPlanId: string) => {
+    const newPlanRes = await db.query(
+      `SELECT id, name, monthly_price FROM subscription_plans WHERE id = $1 AND is_active = true`,
+      [newPlanId]
+    );
+    if (newPlanRes.rows.length === 0) throw new Error('Gói cước không tồn tại hoặc không còn hiệu lực');
+
+    const newPlan = newPlanRes.rows[0];
+    const originalAmount = Number(newPlan.monthly_price);
+    let deductionValue = 0;
+    let currentPlanName: string | null = null;
+    let remainingDays = 0;
+
+    // Kiểm tra user có gói cũ đang active không
+    const currentSubRes = await db.query(
+      `SELECT us.current_period_end, sp.monthly_price, sp.name, us.cancel_at
+       FROM user_subscriptions us
+       JOIN subscription_plans sp ON us.plan_id = sp.id
+       WHERE us.user_id = $1 AND us.status = 'active'`,
+      [userId]
+    );
+
+    if (currentSubRes.rows.length > 0) {
+      const currentSub = currentSubRes.rows[0];
+      currentPlanName = currentSub.name;
+      const endDate = new Date(currentSub.current_period_end);
+      const now = new Date();
+
+      if (endDate > now) {
+        const remainingMs = endDate.getTime() - now.getTime();
+        remainingDays = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
+
+        const currentPlanPrice = Number(currentSub.monthly_price);
+        // Tính cấn trừ dựa trên số ngày còn lại so với tổng chu kỳ (30 ngày)
+        deductionValue = Math.floor((remainingDays / 30) * currentPlanPrice);
+        if (deductionValue > currentPlanPrice) deductionValue = currentPlanPrice;
+      }
+    }
+
+    let finalAmount = originalAmount - deductionValue;
+    if (finalAmount < 2000) finalAmount = 2000; // PayOS tối thiểu 2,000 VNĐ
+
+    return {
+      newPlanName: newPlan.name,
+      originalAmount,        // Giá gốc gói mới
+      deductionValue,        // Số tiền được cấn trừ từ gói cũ
+      finalAmount,           // Số tiền thực tế phải trả
+      currentPlanName,       // Tên gói cũ (null nếu chưa có gói)
+      remainingDays,         // Số ngày còn lại của gói cũ
+    };
+  },
+
+  // =========================================================================
+  // Hàm 7: User hủy gia hạn tự động (Cancel at period end)
+  // =========================================================================
+  cancelAutoRenewal: async (userId: string) => {
+    const subRes = await db.query(
+      `SELECT id, current_period_end, cancel_at FROM user_subscriptions
+       WHERE user_id = $1 AND status = 'active'`,
+      [userId]
+    );
+    if (subRes.rows.length === 0) throw new Error('Không tìm thấy gói đang active');
+
+    const sub = subRes.rows[0];
+    if (sub.cancel_at) {
+      return {
+        success: true,
+        message: 'Gói của bạn đã được đánh dấu hủy gia hạn trước đó',
+        cancelAt: sub.cancel_at,
+      };
+    }
+
+    // Đánh dấu hủy vào cuối kỳ — KHÔNG đổi status, user vẫn dùng đến hết ngày
+    await db.query(
+      `UPDATE user_subscriptions
+       SET cancel_at = current_period_end, updated_at = NOW()
+       WHERE id = $1`,
+      [sub.id]
+    );
+
+    return {
+      success: true,
+      message: 'Đã hủy gia hạn tự động. Gói của bạn vẫn có hiệu lực đến ngày kết thúc.',
+      cancelAt: sub.current_period_end,
+    };
+  },
 };

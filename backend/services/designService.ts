@@ -9,7 +9,7 @@ export const designService = {
     // Hàm tạo design mới
     // Hàm tạo design mới (Đã update theo DB chuẩn)
     createDesign: async (design: any): Promise<string> => {
-        const { id, user_id, title, width, height, design_type, page_type } = design; 
+        const { id, user_id, title, width, height, design_type, page_type, team_id } = design; 
         const client = await db.connect();
 
         try {
@@ -17,9 +17,9 @@ export const designService = {
 
             // 1. Tạo bản ghi trong bảng designs (Lớp vỏ) - Đã bỏ width/height
             await client.query(`
-                INSERT INTO designs (id, user_id, title, design_type, is_public)
-                VALUES ($1, $2, $3, $4, false)
-            `, [id, user_id, title || 'Untitled Design', design_type || 'presentation']);
+                INSERT INTO designs (id, user_id, title, design_type, is_public, team_id)
+                VALUES ($1, $2, $3, $4, false, $5)
+            `, [id, user_id, title || 'Untitled Design', design_type || 'presentation', team_id || null]);
 
             // 2. Tạo trang đầu tiên mặc định trong design_pages (Lớp ruột)
             const firstPageId = uuidv4();
@@ -89,12 +89,14 @@ export const designService = {
         try {
             await client.query('BEGIN'); 
 
-            // 1. Cập nhật lớp vỏ Design (không cần check user_id vì middleware đã kiểm tra)
+            // 1. Cập nhật lớp vỏ Design + ghi last_modified_by để OCC theo dõi ai lưu cuối
+            // Không cần check user_id vì middleware đã kiểm tra quyền
             await client.query(`
                 UPDATE designs 
-                SET title = $1, thumbnail_url = $2, last_edited_at = NOW(), updated_at = NOW() 
+                SET title = $1, thumbnail_url = $2, last_edited_at = NOW(), updated_at = NOW(),
+                    last_modified_by = $4
                 WHERE id = $3
-            `, [designData.title, designData.thumbnail_url || null, designId]);
+            `, [designData.title, designData.thumbnail_url || null, designId, userId]);
 
             // 2. Gọi Nhạc trưởng PageService vào làm việc
             await designPageService.syncPagesForDesign(client, designId, pages);
@@ -110,9 +112,12 @@ export const designService = {
 
     getUserDesigns: async (userId: string): Promise<Design[]> => {
         const result = await db.query(`
-            SELECT * FROM designs 
-            WHERE user_id = $1 AND is_deleted = false
-            ORDER BY updated_at DESC
+            SELECT d.* 
+            FROM designs d
+            LEFT JOIN team_members tm ON d.team_id = tm.team_id
+            WHERE (d.user_id = $1 OR tm.user_id = $1) AND d.is_deleted = false
+            GROUP BY d.id
+            ORDER BY d.updated_at DESC
         `, [userId]);
         return result.rows;
     },

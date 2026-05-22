@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Search, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import LayerPanel from './LayerPanel';
 
 const PPTX_ANIMATIONS = [
   { id: 'none', label: 'None' },
@@ -59,6 +60,10 @@ interface SidebarDrawerProps {
   selectedElement?: any;
   updateElement?: (el: any) => void;
   updateElements?: (els: any[]) => void;
+  // New Layer Panel props
+  showLayerPanel?: boolean;
+  onLayerReorder?: (newEls: any[]) => void;
+  onLayerUpdateElement?: (el: any) => void;
 }
 
 export default function SidebarDrawer({
@@ -70,9 +75,10 @@ export default function SidebarDrawer({
   elements, selectedIds, setSelectedIds,
   draggedLayerIdx, dragOverIdx,
   handleLayerDragStart, handleLayerDragOver, handleLayerDragLeave, handleLayerDrop, handleLayerDragEnd,
-  selectedElement, updateElement, updateElements
+  selectedElement, updateElement, updateElements,
+  showLayerPanel, onLayerReorder, onLayerUpdateElement
 }: SidebarDrawerProps) {
-  const isOpen = !!(activeTab || showPositionBox || showAnimateBox);
+  const isOpen = !!(activeTab || showPositionBox || showAnimateBox || showLayerPanel);
   const [animTab, setAnimTab] = useState<'in' | 'out'>('in');
 
   // AI Image State
@@ -121,7 +127,7 @@ export default function SidebarDrawer({
         >
           <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white/50 shrink-0">
             <h2 className="font-extrabold text-slate-800 uppercase text-xs tracking-widest">
-              {showPositionBox ? 'Layer Position' : showAnimateBox ? 'Animations' : activeTab?.replace('_', ' ')}
+              {showLayerPanel ? 'Layers' : showPositionBox ? 'Layer Position' : showAnimateBox ? 'Animations' : activeTab?.replace('_', ' ')}
             </h2>
             <button
               onClick={() => { setActiveTab(null); setShowPositionBox(false); setShowAnimateBox(false); }}
@@ -281,7 +287,7 @@ export default function SidebarDrawer({
 
                   {/* Upload font mới */}
                   <label className="mt-3 flex items-center gap-2 w-full py-2.5 px-4 bg-indigo-50 border-2 border-dashed border-indigo-200 rounded-xl cursor-pointer hover:bg-indigo-100 hover:border-indigo-400 transition group">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500 group-hover:scale-110 transition-transform shrink-0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500 group-hover:scale-110 transition-transform shrink-0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
                     <span className="text-xs font-bold text-indigo-600">Upload Font (.ttf / .otf / .woff)</span>
                     <input
                       type="file"
@@ -294,6 +300,28 @@ export default function SidebarDrawer({
               </div>
             )}
 
+            {/* LAYER PANEL */}
+            {showLayerPanel && onLayerReorder && onLayerUpdateElement && (
+              <div className="-mx-4 -mt-4 h-full">
+                <LayerPanel
+                  elements={elements}
+                  selectedIds={selectedIds}
+                  onSelectElement={(id, multi) => {
+                    if (multi) {
+                      setSelectedIds(selectedIds.includes(id)
+                        ? selectedIds.filter(s => s !== id)
+                        : [...selectedIds, id]
+                      );
+                    } else {
+                      setSelectedIds([id]);
+                    }
+                  }}
+                  onReorder={onLayerReorder}
+                  onUpdateElement={onLayerUpdateElement}
+                />
+              </div>
+            )}
+
             {/* TAB: AI IMAGE */}
             {activeTab === 'ai_image' && (
               <div className="space-y-4">
@@ -302,22 +330,21 @@ export default function SidebarDrawer({
                     <Sparkles size={16} className="text-indigo-500" /> AI Image Generator
                   </h3>
                   <p className="text-[10px] text-indigo-700/80 mb-4 font-bold">Mô tả bức ảnh bạn muốn vẽ, AI sẽ tạo ra nó trong vài giây!</p>
-                  
+
                   <textarea
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
                     placeholder="Ví dụ: Một chú chó Corgi mặc đồ phi hành gia đang trên sao Hỏa, 3D render..."
                     className="w-full p-3 rounded-xl border-none ring-1 ring-indigo-200 focus:ring-2 focus:ring-indigo-500 bg-white shadow-sm text-xs font-bold text-slate-700 resize-none h-28 mb-3 outline-none"
                   />
-                  
+
                   <button
                     onClick={handleGenerateAiImage}
                     disabled={isGeneratingAi || !aiPrompt.trim()}
-                    className={`w-full py-3 rounded-xl font-extrabold text-white text-xs shadow-md flex items-center justify-center gap-2 transition-all ${
-                      isGeneratingAi || !aiPrompt.trim()
+                    className={`w-full py-3 rounded-xl font-extrabold text-white text-xs shadow-md flex items-center justify-center gap-2 transition-all ${isGeneratingAi || !aiPrompt.trim()
                         ? 'bg-slate-300 cursor-not-allowed'
                         : 'bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 hover:shadow-lg'
-                    }`}
+                      }`}
                   >
                     {isGeneratingAi ? (
                       <>
@@ -338,7 +365,7 @@ export default function SidebarDrawer({
             {/* POSITION / LAYERS BOX */}
 
             {showPositionBox && (
-              <div className="space-y-2 pb-2" onDragLeave={() => {}}>
+              <div className="space-y-2 pb-2" onDragLeave={() => { }}>
                 {elements.slice().reverse().map((el: any, index: number) => (
                   <motion.div
                     layout
@@ -352,11 +379,10 @@ export default function SidebarDrawer({
                     onDrop={(e: any) => handleLayerDrop(e, index)}
                     onDragEnd={handleLayerDragEnd}
                     onClick={() => setSelectedIds([el.id])}
-                    className={`relative w-full text-left p-2 rounded-xl text-xs font-bold border flex items-center gap-3 cursor-grab active:cursor-grabbing transition-colors ${
-                      selectedIds.includes(el.id)
+                    className={`relative w-full text-left p-2 rounded-xl text-xs font-bold border flex items-center gap-3 cursor-grab active:cursor-grabbing transition-colors ${selectedIds.includes(el.id)
                         ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm'
                         : 'bg-white border-slate-100 text-slate-600 hover:border-slate-300'
-                    } ${draggedLayerIdx === index ? 'shadow-xl border-indigo-500 ring-2 ring-indigo-200 z-50 bg-white scale-[1.02]' : 'z-0'}`}
+                      } ${draggedLayerIdx === index ? 'shadow-xl border-indigo-500 ring-2 ring-indigo-200 z-50 bg-white scale-[1.02]' : 'z-0'}`}
                   >
                     {/* Drop indicator */}
                     {dragOverIdx === index && draggedLayerIdx !== index && (
@@ -451,6 +477,26 @@ export default function SidebarDrawer({
                     />
                     Đồng bộ hiệu ứng Hiện & Ẩn
                   </label>
+                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
+                    <label className="text-xs font-bold text-slate-600">Thứ tự xuất hiện:</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      className="w-16 px-2 py-1.5 text-xs font-bold border border-slate-200 rounded-lg outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition"
+                      value={activeElement.animationOrder || 0}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 0;
+                        if (updateElements) {
+                          const newEls = selectedElements.map(el => ({ ...el, animationOrder: Math.max(0, val) }));
+                          updateElements(newEls);
+                        } else if (updateElement) {
+                          selectedElements.forEach(el => {
+                            updateElement({ ...el, animationOrder: Math.max(0, val) });
+                          });
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -492,13 +538,12 @@ export default function SidebarDrawer({
                               });
                             }
                           }}
-                          className={`py-3 px-2 text-xs font-bold rounded-xl border transition-all ${
-                            isActive
+                          className={`py-3 px-2 text-xs font-bold rounded-xl border transition-all ${isActive
                               ? (animTab === 'in'
-                                  ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm ring-2 ring-indigo-100'
-                                  : 'bg-rose-50 border-rose-400 text-rose-700 shadow-sm ring-2 ring-rose-100')
+                                ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm ring-2 ring-indigo-100'
+                                : 'bg-rose-50 border-rose-400 text-rose-700 shadow-sm ring-2 ring-rose-100')
                               : 'bg-white border-slate-100 text-slate-600 hover:border-indigo-200 hover:shadow-sm'
-                          }`}
+                            }`}
                         >
                           {anim.label}
                         </button>

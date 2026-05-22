@@ -15,40 +15,80 @@ export const designElementService = {
         });
     },
 
-    // Hàm nhận Transaction (client) từ trên truyền xuống để đồng bộ elements
+    // ─── BULK UPSERT với UNNEST: 1 câu SQL duy nhất thay vì vòng lặp for ──────
+    // Fix: dùng $5::text[] thay vì $5::jsonb[] vì pg driver không auto-cast
+    // JSON strings → jsonb[]. Thay vào đó cast t.properties::jsonb trong SELECT.
     syncElementsForPage: async (client: any, pageId: string, elements: any[]) => {
         if (!elements || !Array.isArray(elements)) return;
 
         const incomingIds = elements.map(el => el.id).filter(Boolean);
-        
+
         // 1. Xóa các element không còn tồn tại trên UI
         if (incomingIds.length > 0) {
-            const placeholders = incomingIds.map((_: string, i: number) => `$${i + 2}`).join(',');
-            await client.query(`DELETE FROM design_elements WHERE page_id = $1 AND id NOT IN (${placeholders})`, [pageId, ...incomingIds]);
+            await client.query(
+                `DELETE FROM design_elements WHERE page_id = $1 AND id != ALL($2::uuid[])`,
+                [pageId, incomingIds]
+            );
         } else {
             await client.query(`DELETE FROM design_elements WHERE page_id = $1`, [pageId]);
+            return; // Không có element nào để upsert
         }
 
-        // 2. Upsert (Cập nhật hoặc Thêm mới) các element hiện có
-        for (const el of elements) {
-            await client.query(`
-                INSERT INTO design_elements (id, page_id, element_type, z_index, properties, locked, visible)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (id) DO UPDATE SET 
-                    z_index = EXCLUDED.z_index,
-                    properties = EXCLUDED.properties,
-                    locked = EXCLUDED.locked,
-                    visible = EXCLUDED.visible,
-                    updated_at = NOW()
-            `, [
-                el.id || uuidv4(), 
-                pageId, 
-                el.element_type || el.type, 
-                el.z_index || 0, 
-                JSON.stringify(el.properties || el), // Chống lỗi nếu properties bị bọc sai
-                el.locked || false,
-                el.visible !== false
-            ]);
+        // 2. Chuẩn bị dữ liệu dưới dạng các mảng song song
+        const ids: string[]       = [];
+        const pageIds: string[]   = [];
+        const elemTypes: string[] = [];
+        const zIndices: number[]  = [];
+        const propsList: string[] = []; // ← text[], sau đó cast sang jsonb trong SQL
+        const lockedList: boolean[]  = [];
+        const visibleList: boolean[] = [];
+
+        for (let i = 0; i < elements.length; i++) {
+            const el = elements[i];
+            ids.push(el.id || uuidv4());
+            pageIds.push(pageId);
+            elemTypes.push(el.element_type || el.type || 'shape');
+            zIndices.push(typeof el.z_index === 'number' ? el.z_index : i);
+
+            // Serialize properties → chuỗi JSON an toàn
+            const rawProps = el.properties ?? el;
+            propsList.push(
+                typeof rawProps === 'string' ? rawProps : JSON.stringify(rawProps)
+            );
+
+            lockedList.push(el.locked === true);
+            visibleList.push(el.visible !== false);
         }
+
+        // 3. BULK INSERT/UPSERT với 1 câu SQL duy nhất
+        // - $3::text[]          : element_type nhận dưới dạng text
+        // - t.element_type::element_type : cast TEXT → PostgreSQL ENUM 'element_type'
+        // - $5::text[], t.properties::jsonb : cast TEXT → jsonb
+        await client.query(`
+            INSERT INTO design_elements (id, page_id, element_type, z_index, properties, locked, visible)
+            SELECT
+                t.id,
+                t.page_id,
+                t.elem_type,
+                t.z_index,
+                t.properties::jsonb,
+                t.locked,
+                t.visible
+            FROM UNNEST(
+                $1::uuid[],
+                $2::uuid[],
+                $3::element_type[],
+                $4::int[],
+                $5::text[],
+                $6::boolean[],
+                $7::boolean[]
+            ) AS t(id, page_id, elem_type, z_index, properties, locked, visible)
+            ON CONFLICT (id) DO UPDATE SET
+                z_index    = EXCLUDED.z_index,
+                properties = EXCLUDED.properties,
+                locked     = EXCLUDED.locked,
+                visible    = EXCLUDED.visible,
+                updated_at = NOW()
+        `, [ids, pageIds, elemTypes, zIndices, propsList, lockedList, visibleList]);
     }
 };

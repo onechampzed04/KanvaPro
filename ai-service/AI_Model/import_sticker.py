@@ -3,14 +3,11 @@ import os
 
 api = HfApi()
 
-# 1. Tìm kiếm dataset với từ khóa "sticker"
 search_term = "sticker"
 datasets = list(api.list_datasets(search=search_term))
 
-# 2. GIỚI HẠN: Chỉ lấy từ vị trí 0 đến 34 (tương ứng 34 file đầu tiên)
 datasets_subset = datasets[:34] 
 
-# Đường dẫn thư mục lưu trữ
 base_path = "E:/DoAn2026/Stickers_Data"
 
 if not os.path.exists(base_path):
@@ -18,7 +15,6 @@ if not os.path.exists(base_path):
 
 print(f"Tìm thấy tổng cộng {len(datasets)} datasets. Nhưng chỉ tải {len(datasets_subset)} datasets đầu tiên.")
 
-# Duyệt qua danh sách đã được cắt (subset)
 for i, ds in enumerate(datasets_subset):
     repo_id = ds.id
     folder_name = repo_id.replace("/", "_")

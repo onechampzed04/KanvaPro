@@ -48,6 +48,14 @@ export default defineConfig(({ mode }) => {
           target: 'http://localhost:3000',
           changeOrigin: true,
         },
+        '/uploads': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
+        '/exports': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
       },
       hmr: process.env.DISABLE_HMR !== 'true',
     },

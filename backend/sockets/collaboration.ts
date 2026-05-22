@@ -63,10 +63,51 @@ function verifySocketToken(token: string): { id: string; name: string; email: st
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
 
+export let globalIo: Server | null = null;
+const globalOnlineUsers = new Map<string, Set<string>>(); // userId -> Set of socketIds
+
+export function forceLogoutUser(userId: string, reason: string) {
+  if (globalIo) {
+    globalIo.to(`user-${userId}`).emit('auth:force_logout', { reason });
+    // Dọn dẹp sockets của user này
+    const userSockets = globalOnlineUsers.get(userId);
+    if (userSockets) {
+      userSockets.forEach(socketId => {
+        globalIo!.sockets.sockets.get(socketId)?.disconnect(true);
+      });
+      globalOnlineUsers.delete(userId);
+    }
+  }
+}
+
+export function getGlobalOnlineUsers(): string[] {
+  return Array.from(globalOnlineUsers.keys());
+}
+
 export function setupCollaboration(io: Server) {
+  globalIo = io;
+
   io.on('connection', (socket: Socket) => {
     let currentDesignId: string | null = null;
     let currentUser: CollaboratorInfo | null = null;
+    let globalUserId: string | null = null;
+
+    // ── 0. Join global room (AuthContext) ────────────────────────────────────
+    socket.on('join-global', ({ token }: { token: string }) => {
+      const userData = verifySocketToken(token);
+      if (userData) {
+        globalUserId = userData.id;
+        socket.join(`user-${userData.id}`);
+        
+        if (!globalOnlineUsers.has(userData.id)) {
+          globalOnlineUsers.set(userData.id, new Set());
+        }
+        globalOnlineUsers.get(userData.id)!.add(socket.id);
+        
+        // Notify admins if needed
+        io.to('admin-dashboard').emit('user-online', { userId: userData.id });
+      }
+    });
 
     // ── 1. Join design room ──────────────────────────────────────────────────
     socket.on('join-design', async ({ designId, token }: { designId: string; token: string }) => {
@@ -85,6 +126,16 @@ export function setupCollaboration(io: Server) {
       if (!userData) {
         socket.emit('error', { message: 'Unauthorized' });
         return;
+      }
+
+      // Automatically join global room if joining design
+      if (!globalUserId) {
+        globalUserId = userData.id;
+        socket.join(`user-${userData.id}`);
+        if (!globalOnlineUsers.has(userData.id)) {
+          globalOnlineUsers.set(userData.id, new Set());
+        }
+        globalOnlineUsers.get(userData.id)!.add(socket.id);
       }
 
       // Query DB for name if it's 'Anonymous' or if we want the accurate name
@@ -164,6 +215,27 @@ export function setupCollaboration(io: Server) {
       });
     });
 
+    // ── 3.5. Page Resize notification ────────────────────────────────────────
+    socket.on('resize-page', ({
+      designId, pageId, width, height, isLive
+    }: {
+      designId: string;
+      pageId: string;
+      width: number;
+      height: number;
+      isLive: boolean;
+    }) => {
+      if (!currentUser) return;
+      socket.to(`design:${designId}`).emit('page-resized', {
+        pageId,
+        width,
+        height,
+        isLive,
+        userId: currentUser.userId,
+        userName: currentUser.name
+      });
+    });
+
     // ── 4. Cursor position (optional UX touch) ───────────────────────────────
     socket.on('cursor-move', ({ designId, x, y }: { designId: string; x: number; y: number }) => {
       if (!currentUser) return;
@@ -175,14 +247,49 @@ export function setupCollaboration(io: Server) {
       });
     });
 
-    // ── 5. Disconnect ────────────────────────────────────────────────────────
+    // ── 5. Page Added (broadcast to collaborators) ─────────────────────────────
+    socket.on('page-added', ({ designId, newPage }: { designId: string; newPage: any }) => {
+      if (!currentUser) return;
+      // Broadcast tới tất cả user khác trong room
+      socket.to(`design:${designId}`).emit('page-added', {
+        newPage,
+        addedBy: {
+          userId: currentUser.userId,
+          name: currentUser.name,
+        },
+      });
+    });
+
+    // ── 6. Page Deleted (broadcast to collaborators) ─────────────────────────
+    socket.on('page-deleted', ({ designId, pageId }: { designId: string; pageId: string }) => {
+      if (!currentUser) return;
+      socket.to(`design:${designId}`).emit('page-deleted', {
+        pageId,
+        deletedBy: {
+          userId: currentUser.userId,
+          name: currentUser.name,
+        },
+      });
+    });
+
+    // ── 7. Disconnect ────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
       if (currentDesignId) {
         handleLeave(socket, currentDesignId, io);
       }
+      if (globalUserId) {
+        const userSockets = globalOnlineUsers.get(globalUserId);
+        if (userSockets) {
+          userSockets.delete(socket.id);
+          if (userSockets.size === 0) {
+            globalOnlineUsers.delete(globalUserId);
+            io.to('admin-dashboard').emit('user-offline', { userId: globalUserId });
+          }
+        }
+      }
     });
 
-    // ── 6. Explicit leave ────────────────────────────────────────────────────
+    // ── 8. Explicit leave ────────────────────────────────────────────────────
     socket.on('leave-design', ({ designId }: { designId: string }) => {
       handleLeave(socket, designId, io);
       currentDesignId = null;

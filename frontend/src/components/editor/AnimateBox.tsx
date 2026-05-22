@@ -51,7 +51,7 @@ export default function AnimateBox({ selectedElement, updateElement, onClose }: 
       </div>
 
       {/* Sync checkbox */}
-      <div className="px-4 py-3 shrink-0 border-b border-slate-100">
+      <div className="px-4 py-3 shrink-0 border-b border-slate-100 flex flex-col gap-3">
         <label className="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-slate-600 hover:text-indigo-600 transition">
           <input
             type="checkbox"
@@ -72,6 +72,20 @@ export default function AnimateBox({ selectedElement, updateElement, onClose }: 
           />
           Hiệu ứng Hiện &amp; Ẩn giống nhau
         </label>
+        
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] font-bold text-slate-600">Thứ tự xuất hiện:</label>
+          <input 
+            type="number" 
+            min="0"
+            className="w-16 px-2 py-1 text-xs border border-slate-200 rounded outline-none focus:border-indigo-500"
+            value={selectedElement.animationOrder || 0}
+            onChange={(e) => {
+              const val = parseInt(e.target.value) || 0;
+              updateElement({ ...selectedElement, animationOrder: Math.max(0, val) });
+            }}
+          />
+        </div>
       </div>
 
       {/* Animation grid */}

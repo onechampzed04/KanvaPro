@@ -19,9 +19,9 @@ export const checkDesignAccess = async (req: Request, res: Response, next: NextF
   }
 
   try {
-    // 1. Lấy thông tin design (owner + is_public)
+    // 1. Lấy thông tin design (owner + is_public + team_id)
     const designResult = await db.query(
-      'SELECT user_id, is_public FROM designs WHERE id = $1 AND is_deleted = false',
+      'SELECT user_id, team_id, is_public FROM designs WHERE id = $1 AND is_deleted = false',
       [designId]
     );
 
@@ -35,6 +35,20 @@ export const checkDesignAccess = async (req: Request, res: Response, next: NextF
     if (userId && design.user_id === userId) {
       req.designRole = 'owner';
       return next();
+    }
+
+    // 2.5 Kiểm tra quyền qua Team
+    if (userId && design.team_id) {
+      const teamResult = await db.query(
+        'SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2',
+        [design.team_id, userId]
+      );
+      if (teamResult.rows.length > 0) {
+        const tRole = teamResult.rows[0].role;
+        // owner, admin, member in team get 'editor' access to team designs. viewer gets 'viewer'
+        req.designRole = tRole === 'viewer' ? 'viewer' : 'editor';
+        return next();
+      }
     }
 
     // 3. Kiểm tra bảng design_shares

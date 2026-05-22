@@ -59,25 +59,77 @@ export const paymentController = {
   },
 
   // ----------------------------------------------------------------------
-  // 4. Lịch sử thanh toán
+  // 4. Lịch sử thanh toán (bao gồm cả Pending để user tự kiểm tra)
   // ----------------------------------------------------------------------
   getBillingHistory: async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id;
-      // Tránh việc import db trực tiếp vào controller nếu architecture là service-based
-      // Nhưng để nhanh theo SQL Draft, ta có thể dùng db config ở đây hoặc tạo db query
       const db = require('../config/db').default;
+      // Lấy cả pending để user thấy và bấm "Kiểm tra lại"
       const result = await db.query(`
-        SELECT p.id, p.amount, p.status, p.created_at, p.transaction_id, p.metadata 
-        FROM payments p 
-        WHERE p.user_id = $1 AND p.status != 'pending'
+        SELECT p.id, p.amount, p.status, p.created_at, p.transaction_id, p.metadata,
+               us.current_period_start, us.current_period_end
+        FROM payments p
+        LEFT JOIN user_subscriptions us ON us.id = p.subscription_id
+        WHERE p.user_id = $1
         ORDER BY p.created_at DESC
       `, [userId]);
-      
       res.json({ history: result.rows });
     } catch (error) {
       console.error('Lỗi lấy lịch sử thanh toán:', error);
       res.status(500).json({ error: 'Lỗi server khi lấy lịch sử thanh toán' });
     }
-  }
+  },
+
+  // ----------------------------------------------------------------------
+  // 5. User tự kiểm tra giao dịch đang Pending với PayOS
+  //    GET /api/payments/verify-order?orderCode=xxx
+  // ----------------------------------------------------------------------
+  verifyByOrderCode: async (req: Request, res: Response) => {
+    try {
+      const { orderCode } = req.query;
+      if (!orderCode || typeof orderCode !== 'string') {
+        return res.status(400).json({ success: false, error: 'Thiếu orderCode' });
+      }
+      const result = await paymentService.verifyByOrderCode(orderCode);
+      res.json(result);
+    } catch (error: any) {
+      console.error('Lỗi verifyByOrderCode:', error);
+      res.status(500).json({ success: false, error: error?.message || 'Lỗi kiểm tra giao dịch' });
+    }
+  },
+
+  // ----------------------------------------------------------------------
+  // 6. Preview cấn trừ trước khi mua gói mới
+  //    GET /api/payments/preview-upgrade?planId=xxx
+  // ----------------------------------------------------------------------
+  previewUpgrade: async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id;
+      const { planId } = req.query;
+      if (!planId || typeof planId !== 'string') {
+        return res.status(400).json({ error: 'Thiếu planId' });
+      }
+      const preview = await paymentService.previewUpgrade(userId, planId);
+      res.json(preview);
+    } catch (error: any) {
+      console.error('Lỗi previewUpgrade:', error);
+      res.status(500).json({ error: error?.message || 'Lỗi tính toán cấn trừ' });
+    }
+  },
+
+  // ----------------------------------------------------------------------
+  // 7. User hủy gia hạn tự động
+  //    POST /api/payments/cancel-renewal
+  // ----------------------------------------------------------------------
+  cancelAutoRenewal: async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id;
+      const result = await paymentService.cancelAutoRenewal(userId);
+      res.json(result);
+    } catch (error: any) {
+      console.error('Lỗi cancelAutoRenewal:', error);
+      res.status(500).json({ error: error?.message || 'Lỗi hủy gia hạn' });
+    }
+  },
 };
