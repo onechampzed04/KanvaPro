@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useEffect } from 'react';
 import {
   LayoutDashboard, Users, Images, LayoutTemplate,
-  LogOut, Shield, ChevronRight, Zap, CreditCard
+  LogOut, Shield, ChevronRight, Zap, CreditCard, ArrowLeft
 } from 'lucide-react';
 import './admin.css';
 
@@ -63,6 +63,12 @@ export default function AdminLayout() {
               <ChevronRight size={14} className="admin-nav-arrow" />
             </NavLink>
           ))}
+          <div style={{ marginTop: 'auto' }}></div>
+          <p className="admin-nav-section">APP</p>
+          <button className="admin-nav-item" onClick={() => navigate('/')} style={{ width: '100%' }}>
+            <ArrowLeft size={18} />
+            <span>Về Kanva Web</span>
+          </button>
         </nav>
 
         <div className="admin-sidebar-footer">

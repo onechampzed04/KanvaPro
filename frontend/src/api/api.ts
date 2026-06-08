@@ -13,6 +13,18 @@ const getHeaders = () => {
   };
 };
 
+// ─── [WORKSPACE] Helper tự động đính kèm X-Workspace-Id ─────────────────────
+// Mọi API gọi trong ngữ cảnh Workspace phải dùng hàm này thay vì getHeaders()
+export const getWorkspaceHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem('token');
+  const workspaceId = localStorage.getItem('kanva_current_workspace_id');
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+    ...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
+  };
+};
+
 // ==========================================
 // HÀM MỚI: UPLOAD ẢNH LÊN SERVER (thay thế Base64)
 // ==========================================
@@ -20,35 +32,47 @@ const getHeaders = () => {
  * Upload file ảnh lên server, nhận về URL tĩnh để gán vào element.src.
  * Sử dụng thay cho FileReader.readAsDataURL() để tránh lưu Base64 trong DB.
  */
-export const uploadImageFile = async (file: File): Promise<{ url: string; width?: number; height?: number }> => {
+export const uploadImageFile = async (file: File): Promise<{ url: string; assetId?: string; width?: number; height?: number }> => {
   const token = localStorage.getItem('token');
+  const workspaceId = localStorage.getItem('kanva_current_workspace_id');
   const formData = new FormData();
   formData.append('image', file);
 
   const response = await fetch('/api/assets/upload-image', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}` },
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      // ─── [WORKSPACE] Đính kèm Workspace hiện tại để Backend biết trừ quota đúng chỗ
+      ...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
+    },
     body: formData,
   });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to upload image');
+    throw new Error(err.message || err.error || 'Failed to upload image');
   }
-  return response.json();
+  return response.json(); // Trả về { url, assetId, name, width, height }
 };
+
 
 /**
  * Upload blob thumbnail (từ stage.toBlob()) lên server cho 1 page.
  * Gọi âm thầm sau mỗi lần chuyển trang - không nhồi vào payload JSON lưu design.
  */
 export const uploadPageThumbnail = async (blob: Blob, pageId: string): Promise<string> => {
+  const token = localStorage.getItem('token');
   const formData = new FormData();
   formData.append('thumbnail', blob, `thumb_${pageId}.png`);
   formData.append('pageId', pageId);
 
   const response = await fetch('/api/assets/upload-thumbnail', {
     method: 'POST',
+    headers: {
+      // [FIX] Thêm Authorization header — endpoint yêu cầu authenticate middleware
+      // Thiếu header này dẫn đến 401 Unauthorized, upload luôn fail silently
+      'Authorization': `Bearer ${token}`,
+    },
     body: formData,
   });
 
@@ -98,7 +122,7 @@ export const saveDesign = async (designId: string, payload: any) => {
   return response.json();
 };
 
-export const updateDesignFull = async (designId: string, data: { title: string, pages: any[], version?: string | null, thumbnail_url?: string }) => {
+export const updateDesignFull = async (designId: string, data: { title: string, pages: any[], version?: string | number | null, thumbnail_url?: string }) => {
   const token = localStorage.getItem('token');
   const response = await fetch(`/api/designs/${designId}`, {
     method: 'PUT',
@@ -240,13 +264,14 @@ export const fetchActiveSubscriptions = async () => {
   return res.json();
 };
 
-// Gọi Backend tạo link thanh toán PayOS
-export const createCheckoutSession = async (data: { planId: string, amount: number, planName: string }) => {
+// [FIX Vấn đề 3] Bỏ `amount` khỏi request — backend tự tính 100% từ DB.
+// Không gửi giá từ client để tránh price tampering.
+export const createCheckoutSession = async (data: { planId: string, planName: string, membersCount?: number }) => {
   const res = await fetch('/api/payments/create-checkout', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${localStorage.getItem('token')}` // Bắt buộc truyền token để biết user nào mua
+      'Authorization': `Bearer ${localStorage.getItem('token')}`
     },
     body: JSON.stringify(data)
   });
@@ -293,8 +318,10 @@ export const verifyOrderByCode = async (orderCode: string) => {
 
 // [MỚI] Preview cấn trừ (tạm tính) trước khi xác nhận mua gói mới
 // Dùng để hiện Modal Checkout Preview trước khi redirect PayOS
-export const previewUpgrade = async (planId: string) => {
-  const res = await fetch(`/api/payments/preview-upgrade?planId=${planId}`, {
+export const previewUpgrade = async (planId: string, membersCount?: number) => {
+  let url = `/api/payments/preview-upgrade?planId=${planId}`;
+  if (membersCount) url += `&membersCount=${membersCount}`;
+  const res = await fetch(url, {
     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
   });
   const data = await res.json().catch(() => ({}));
@@ -302,16 +329,6 @@ export const previewUpgrade = async (planId: string) => {
   return data;
 };
 
-// [MỚI] User hủy gia hạn tự động (vẫn dùng nốt đến cuối kỳ)
-export const cancelAutoRenewal = async () => {
-  const res = await fetch('/api/payments/cancel-renewal', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Lỗi hủy gia hạn');
-  return data;
-};
 
 
 // ==========================================
@@ -449,6 +466,34 @@ export const fetchTeamById = async (teamId: string) => {
   return res.json();
 };
 
+export const updateTeam = async (teamId: string, name: string) => {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Cập nhật nhóm thất bại');
+  return data;
+};
+
+export const updateTeamAvatar = async (teamId: string, file: File) => {
+  const token = localStorage.getItem('token');
+  const formData = new FormData();
+  formData.append('avatar', file);
+
+  const res = await fetch(`${BASE_URL}/teams/${teamId}/update-avatar`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+    body: formData,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Cập nhật ảnh nhóm thất bại');
+  return data;
+};
+
 export const inviteTeamMember = async (teamId: string, email: string, role: string = 'member') => {
   const res = await fetch(`${BASE_URL}/teams/${teamId}/members`, {
     method: 'POST',
@@ -469,3 +514,102 @@ export const removeTeamMember = async (teamId: string, memberId: string) => {
   if (!res.ok) throw new Error(data.error || 'Xóa thành viên thất bại');
   return data;
 };
+
+export const updateTeamMemberRole = async (teamId: string, memberId: string, role: string) => {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}/members/${memberId}/role`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify({ role }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Thay đổi vai trò thất bại');
+  return data;
+};
+
+export const previewTransferOwnership = async (teamId: string, newOwnerId: string) => {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}/preview-transfer?newOwnerId=${newOwnerId}`, {
+    headers: getHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Lỗi preview chuyển nhượng');
+  return data;
+};
+
+export const transferTeamOwnership = async (teamId: string, newOwnerId: string) => {
+  const res = await fetch(`${BASE_URL}/teams/${teamId}/transfer-ownership`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ newOwnerId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Chuyển nhượng thất bại');
+  return data;
+};
+
+// ─── ASSET VIRTUAL REFERENCING APIs ──────────────────────────────────────────
+
+/**
+ * Tạo Bản ghi B (clone) khi user kéo ảnh từ Uploads Sidebar vào Canvas.
+ * Ảnh trên Canvas sẽ tồn tại độc lập với ảnh trong thư viện Upload.
+ */
+export const cloneAssetForDesign = async (assetId: string, designId: string) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch('/api/assets/clone-for-design', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ assetId, designId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Không thể nhân bản asset');
+  return data; // { clonedAssetId, url }
+};
+
+/**
+ * Xóa Bản ghi A (ảnh khỏi thư viện Uploads).
+ * Ảnh đã kéo vào design (Bản ghi B) vẫn tồn tại — Canvas không mất ảnh.
+ */
+export const deleteUserAsset = async (assetId: string) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`/api/assets/${assetId}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Không thể xóa tài nguyên');
+  return data;
+};
+
+// ─── TEAM PLAN APIs ───────────────────────────────────────────────────────────
+
+/**
+ * Lấy thông tin gói pro_team từ Database.
+ * Dùng để hiển thị giá real-time trong màn hình Team Onboarding.
+ */
+export const fetchTeamPlan = async () => {
+  const res = await fetch('/api/subscriptions');
+  const data = await res.json();
+  if (!res.ok) throw new Error('Không thể lấy thông tin gói Team');
+  // Tìm gói có slug = 'pro_team'
+  const plans: any[] = data.plans || data.subscriptions || data || [];
+  return plans.find((p: any) => p.slug === 'pro_team') || null;
+};
+
+// [FIX Vấn đề 3] Bỏ `amount` — backend tự tính giá × số thành viên từ DB.
+export const createTeamCheckout = async (data: {
+  planId: string;
+  planName: string;
+  inviteEmails: string[];
+  membersCount: number;
+}) => {
+  const res = await fetch('/api/payments/create-checkout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${localStorage.getItem('token')}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Lỗi khởi tạo thanh toán Team');
+  return res.json();
+};
+

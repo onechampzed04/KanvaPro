@@ -1,6 +1,6 @@
 // src/components/ElementToolbar.tsx
 import React from 'react';
-import { Bold, Italic, Underline, ArrowUp, ArrowDown, Trash2, Layers, Zap, Eraser, Brush } from 'lucide-react';
+import { Bold, Italic, Underline, ArrowUp, ArrowDown, Trash2, Layers, Zap, Eraser, Brush, Scissors } from 'lucide-react';
 
 interface ElementToolbarProps {
   element: any;
@@ -12,11 +12,12 @@ interface ElementToolbarProps {
   onToggleAnimate: () => void;
   onRemoveBackground?: (element: any) => void;
   onBrushErase?: (element: any) => void;  // Mới: mở BrushEraserModal
+  onCrop?: (element: any) => void;         // Mới: mở CropOverlay
 }
 
 export default function ElementToolbar({
   element, onUpdate, onDelete, onMove, fontList,
-  onTogglePosition, onToggleAnimate, onRemoveBackground, onBrushErase,
+  onTogglePosition, onToggleAnimate, onRemoveBackground, onBrushErase, onCrop,
 }: ElementToolbarProps) {
   const handleChange = (key: string, value: any) => {
     onUpdate({ ...element, [key]: value });
@@ -55,6 +56,14 @@ export default function ElementToolbar({
       {/* 2. CÔNG CỤ CHO IMAGE / STICKER */}
       {(element.type === 'image' || element.type === 'sticker') && (
         <div className="flex items-center border-r border-slate-200 pr-4 gap-2 shrink-0">
+          {/* ── Crop (non-destructive) ── */}
+          <button
+            onClick={() => onCrop?.(element)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-teal-100 to-cyan-100 text-teal-700 hover:from-teal-200 hover:to-cyan-200 rounded-xl transition text-xs font-extrabold shadow-sm"
+            title="Cắt ảnh (non-destructive — có thể reset)"
+          >
+            <Scissors size={14} strokeWidth={2.5} /> Crop
+          </button>
           {/* Xóa nền tự động bằng AI */}
           <button
             onClick={() => onRemoveBackground?.(element)}

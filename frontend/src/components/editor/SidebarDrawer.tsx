@@ -1,8 +1,15 @@
 // src/components/editor/SidebarDrawer.tsx
-import React, { useState } from 'react';
-import { Search, Sparkles } from 'lucide-react';
+// [FIX Vấn đề 5] Asset Grid Virtualization:
+// - uploadedImages grid: dùng useVirtualizer để chỉ render ảnh trong viewport.
+// - searchResults grid:  tương tự, tránh render hàng trăm sticker cùng lúc.
+// Layout lưới 2 cột → "row" = 1 cặp item → estimateSize = chiều cao 1 row.
+import React, { useState, useRef } from 'react';
+import { Search, Sparkles, Crown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import LayerPanel from './LayerPanel';
+import ProUpgradeModal from './ProUpgradeModal';
+import { isSubscriptionActive, type User } from '../../context/AuthContext';
 
 const PPTX_ANIMATIONS = [
   { id: 'none', label: 'None' },
@@ -35,13 +42,14 @@ interface SidebarDrawerProps {
   searchResults: any[];
   // Elements / Stickers
   addRectangle: () => void;
-  addImage: (src: string) => void;
+  addImage: (src: string, flags?: { isPro?: boolean; createdByAi?: boolean }) => void;
   recentStickers: any[];
   // Uploads
   uploadedImages: any[];
   uploadProgress: { visible: boolean; percent: number };
   handleImageUpload: (file: File) => void;
-  addImageOriginal: (src: string, w: number, h: number) => void;
+  addImageOriginal: (src: string, w: number, h: number, flags?: { createdByAi?: boolean; isPro?: boolean }) => void;
+  addUploadedImageToCanvas: (imgItem: { id: string; url: string; width?: number; height?: number }) => void;
   // Text
   addText: () => void;
   customFonts: string[];
@@ -64,22 +72,63 @@ interface SidebarDrawerProps {
   showLayerPanel?: boolean;
   onLayerReorder?: (newEls: any[]) => void;
   onLayerUpdateElement?: (el: any) => void;
+  // Pro
+  user?: User | null;
 }
 
 export default function SidebarDrawer({
   activeTab, setActiveTab, showPositionBox, setShowPositionBox, showAnimateBox, setShowAnimateBox,
   searchQuery, setSearchQuery, handleSearch, searchResults,
   addRectangle, addImage, recentStickers,
-  uploadedImages, uploadProgress, handleImageUpload, addImageOriginal,
+  uploadedImages, uploadProgress, handleImageUpload, addImageOriginal, addUploadedImageToCanvas,
   addText, customFonts, handleFontUpload,
   elements, selectedIds, setSelectedIds,
   draggedLayerIdx, dragOverIdx,
   handleLayerDragStart, handleLayerDragOver, handleLayerDragLeave, handleLayerDrop, handleLayerDragEnd,
   selectedElement, updateElement, updateElements,
-  showLayerPanel, onLayerReorder, onLayerUpdateElement
+  showLayerPanel, onLayerReorder, onLayerUpdateElement,
+  user,
 }: SidebarDrawerProps) {
   const isOpen = !!(activeTab || showPositionBox || showAnimateBox || showLayerPanel);
   const [animTab, setAnimTab] = useState<'in' | 'out'>('in');
+  const isPro = isSubscriptionActive(user ?? null);
+
+  // Pro gate modal
+  const [proModal, setProModal] = useState<{ feature: string; desc?: string } | null>(null);
+  const requirePro = (feature: string, desc?: string, onAllow?: () => void) => {
+    if (isPro) { onAllow?.(); return true; }
+    setProModal({ feature, desc });
+    return false;
+  };
+
+  // ── [FIX Vấn đề 5] Virtualized 2-column grid cho uploadedImages ──────────
+  // Kỹ thuật: Chia mảng thành các "row" chứa COLS item → virtualizer đo theo row.
+  const GRID_COLS = 2;
+  const GRID_ROW_HEIGHT = 140; // px — chiều cao 1 hàng (kể cả gap)
+  const uploadScrollRef = useRef<HTMLDivElement | null>(null);
+  const uploadRows = [];
+  for (let i = 0; i < uploadedImages.length; i += GRID_COLS) {
+    uploadRows.push(uploadedImages.slice(i, i + GRID_COLS));
+  }
+  const uploadVirtualizer = useVirtualizer({
+    count: uploadRows.length,
+    getScrollElement: () => uploadScrollRef.current,
+    estimateSize: () => GRID_ROW_HEIGHT,
+    overscan: 2,
+  });
+
+  // ── [FIX Vấn đề 5] Virtualized 2-column grid cho searchResults ───────────
+  const searchScrollRef = useRef<HTMLDivElement | null>(null);
+  const searchRows = [];
+  for (let i = 0; i < searchResults.length; i += GRID_COLS) {
+    searchRows.push(searchResults.slice(i, i + GRID_COLS));
+  }
+  const searchVirtualizer = useVirtualizer({
+    count: searchRows.length,
+    getScrollElement: () => searchScrollRef.current,
+    estimateSize: () => GRID_ROW_HEIGHT,
+    overscan: 2,
+  });
 
   // AI Image State
   const [aiPrompt, setAiPrompt] = useState('');
@@ -87,6 +136,8 @@ export default function SidebarDrawer({
 
   const handleGenerateAiImage = async () => {
     if (!aiPrompt.trim()) return;
+    // ── PRO GATE ──
+    if (!requirePro('AI Image Generator', 'Tạo ảnh bằng AI chỉ dành cho tài khoản Pro. Nâng cấp để mở khóa!')) return;
     setIsGeneratingAi(true);
     try {
       const response = await fetch('http://localhost:5000/generate-image', {
@@ -100,7 +151,7 @@ export default function SidebarDrawer({
       }
       const data = await response.json();
       if (data.url) {
-        addImageOriginal(data.url, 1024, 1024);
+        addImageOriginal(data.url, 1024, 1024, { createdByAi: true });
         setAiPrompt('');
       }
     } catch (error: any) {
@@ -115,6 +166,7 @@ export default function SidebarDrawer({
   const activeElement = selectedElements[0] || {};
 
   return (
+    <>
     <AnimatePresence>
       {isOpen && (
         <motion.div
@@ -215,16 +267,53 @@ export default function SidebarDrawer({
                   )}
                 </AnimatePresence>
 
-                <div className="grid grid-cols-2 gap-3 mt-2">
-                  {uploadedImages.map(img => (
-                    <button key={img.id} onClick={() => addImageOriginal(img.url, img.width, img.height)} className="relative aspect-square bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-400 overflow-hidden transition group shadow-sm hover:shadow-md">
-                      <img src={img.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="uploaded" />
-                      <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[8px] font-bold px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                        {img.width}x{img.height}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                {/* [FIX Vấn đề 5] Virtual grid — chỉ render rows trong viewport */}
+                {uploadedImages.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 text-center py-4">Chưa có ảnh nào được tải lên</p>
+                ) : (
+                  <div
+                    ref={uploadScrollRef}
+                    className="mt-2 overflow-y-auto"
+                    style={{ height: Math.min(uploadRows.length * GRID_ROW_HEIGHT, 420), scrollbarWidth: 'thin' }}
+                  >
+                    <div style={{ height: `${uploadVirtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+                      {uploadVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const rowItems = uploadRows[virtualRow.index];
+                        return (
+                          <div
+                            key={virtualRow.index}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: `${virtualRow.size}px`,
+                              transform: `translateY(${virtualRow.start}px)`,
+                              display: 'grid',
+                              gridTemplateColumns: `repeat(${GRID_COLS}, 1fr)`,
+                              gap: '12px',
+                              padding: '0 0 12px 0',
+                              boxSizing: 'border-box',
+                            }}
+                          >
+                            {rowItems.map((img: any) => (
+                              <button
+                                key={img.id}
+                                onClick={() => addUploadedImageToCanvas(img)}
+                                className="relative aspect-square bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-400 overflow-hidden transition group shadow-sm hover:shadow-md"
+                              >
+                                <img src={img.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="uploaded" />
+                                <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[8px] font-bold px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                                  {img.width}x{img.height}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -235,13 +324,91 @@ export default function SidebarDrawer({
                   <button onClick={() => setActiveTab('elements')} className="text-xs font-bold text-slate-500 hover:text-indigo-600 flex items-center gap-1 transition">← Back</button>
                   <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Results</h4>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {searchResults.map((asset: any) => (
-                    <button key={asset.id} onClick={() => addImage(asset.url)} className="aspect-square bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-400 transition overflow-hidden group shadow-sm hover:shadow-md">
-                      <img src={asset.thumbnail_url || asset.url} className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-300" alt="result" />
-                    </button>
-                  ))}
-                </div>
+                {searchResults.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 px-4 text-center space-y-3">
+                    <span className="text-3xl">📭</span>
+                    <p className="text-xs font-bold text-slate-500">Không tìm thấy sticker phù hợp với từ khóa của bạn.</p>
+                  </div>
+                ) : (
+                  // [FIX Vấn đề 5] Virtual grid cho search results
+                  <div
+                    ref={searchScrollRef}
+                    className="overflow-y-auto"
+                    style={{ height: Math.min(searchRows.length * GRID_ROW_HEIGHT, 400), scrollbarWidth: 'thin' }}
+                  >
+                    <div style={{ height: `${searchVirtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+                      {searchVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const rowItems = searchRows[virtualRow.index];
+                        return (
+                          <div
+                            key={virtualRow.index}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: `${virtualRow.size}px`,
+                              transform: `translateY(${virtualRow.start}px)`,
+                              display: 'grid',
+                              gridTemplateColumns: `repeat(${GRID_COLS}, 1fr)`,
+                              gap: '12px',
+                              padding: '0 0 12px 0',
+                              boxSizing: 'border-box',
+                            }}
+                          >
+                            {rowItems.map((asset: any) => {
+                              const isProAsset = !!(asset.is_premium);
+                              return (
+                                <button
+                                  key={asset.id}
+                                  onClick={() => {
+                                    // Allow all users to add Pro stickers — watermark will appear
+                                    // on canvas for Free users; export gate handles the rest.
+                                    addImage(asset.url, { isPro: isProAsset });
+                                  }}
+                                  title={isProAsset && !isPro ? 'Sticker Pro — sẽ có watermark khi xuất file. Nâng cấp Pro để xuất sạch!' : undefined}
+                                  className="relative aspect-square bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-400 transition overflow-hidden group shadow-sm hover:shadow-md"
+                                >
+                                  <img src={asset.thumbnail_url || asset.url} className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-300" alt="result" />
+                                  {/* Crown badge cho Pro sticker */}
+                                  {isProAsset && (
+                                    <div style={{
+                                      position: 'absolute', top: 4, right: 4,
+                                      background: 'linear-gradient(135deg,#f59e0b,#f97316)',
+                                      borderRadius: 6, padding: '2px 5px',
+                                      display: 'flex', alignItems: 'center', gap: 3,
+                                      boxShadow: '0 2px 8px rgba(245,158,11,0.4)',
+                                    }}>
+                                      <Crown size={9} color="white" strokeWidth={2.5} />
+                                      <span style={{ color: 'white', fontSize: 8, fontWeight: 800 }}>PRO</span>
+                                    </div>
+                                  )}
+                                  {/* "Try" hint for Free users — replaced hard block with preview mode */}
+                                  {isProAsset && !isPro && (
+                                    <div style={{
+                                      position: 'absolute', bottom: 0, left: 0, right: 0,
+                                      background: 'linear-gradient(0deg,rgba(0,0,0,0.55),transparent)',
+                                      padding: '10px 4px 3px',
+                                      display: 'flex', justifyContent: 'center',
+                                      opacity: 0,
+                                      transition: 'opacity 0.2s',
+                                      pointerEvents: 'none',
+                                    }}
+                                    className="group-hover:!opacity-100"
+                                    >
+                                      <span style={{ color: 'white', fontSize: 8, fontWeight: 700, textAlign: 'center', lineHeight: 1.2 }}>Xem trước</span>
+                                    </div>
+                                  )}
+
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -558,5 +725,14 @@ export default function SidebarDrawer({
         </motion.div>
       )}
     </AnimatePresence>
-  );
+
+    {/* Pro Upgrade Modal */}
+    {proModal && (
+      <ProUpgradeModal
+        featureName={proModal.feature}
+        featureDescription={proModal.desc}
+        onClose={() => setProModal(null)}
+      />
+    )}
+  </>);
 }

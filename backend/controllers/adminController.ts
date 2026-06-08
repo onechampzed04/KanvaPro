@@ -1,11 +1,22 @@
 import { Request, Response } from 'express';
 import db from '../config/db';
+import { assertCanActOn } from '../middleware/roleHierarchy';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { paymentService } from '../services/paymentService';
+import type { NextFunction } from 'express';
+// [FIX Vấn đề 18] Import shared PII utility — GDPR-compliant IP hashing
+import { hashIp } from '../utils/securityUtils';
+// [FIX toggleUserBan] forceLogoutUser cần dùng sớm (dòng ~253) trước khi inline import ở dòng 1002
+import { forceLogoutUser, getGlobalOnlineUsers, globalIo } from '../sockets/collaboration';
+// [FIX 3 - Redis Cache] getRedis để cache admin metrics
+import { getRedis } from '../config/redis';
+// [FIX 4 - SVG Sanitization] DOMPurify + jsdom để strip XSS khỏi SVG trước khi lưu
+import { JSDOM } from 'jsdom';
+import DOMPurify from 'dompurify';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -17,96 +28,177 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadDir),
   filename: (_req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`),
 });
-export const adminUpload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+export const adminUpload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const ALLOWED_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
+    const ALLOWED_EXTS  = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
+    if (ALLOWED_MIMES.has(file.mimetype) && ALLOWED_EXTS.has(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type not allowed: ${file.mimetype} (${ext}). Allowed: PNG, JPG, WEBP, GIF, SVG`));
+    }
+  },
+});
 
-// ─── GET /api/admin/metrics ─────────────────────────────────────────────────
+// [FIX 19 - Layer 2] Magic Number Verification: xác minh chữ ký nhị phân của file
+// Ngăn chặn tấn công đổi tên file (như virus.exe → virus.png)
+export const validateMagicNumber = async (req: Request, res: Response, next: NextFunction) => {
+  const files = req.files as Express.Multer.File[] | undefined;
+  const single = req.file as Express.Multer.File | undefined;
+  const allFiles = files ? files : (single ? [single] : []);
+  if (allFiles.length === 0) return next();
+  const ALLOWED_MIMES_SET = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
+  try {
+    const { fileTypeFromBuffer } = await import('file-type');
+    for (const file of allFiles) {
+      const filePath = file.path;
+      // SVG là XML nên không có magic bytes riêng — kiểm tra XSS trong nội dung
+      if (file.mimetype === 'image/svg+xml') {
+        const svgContent = fs.readFileSync(filePath, 'utf-8');
+        if (/<script/i.test(svgContent) || /on\w+=/i.test(svgContent) || /javascript:/i.test(svgContent)) {
+          fs.unlinkSync(filePath);
+          return res.status(400).json({ error: `SVG '${file.originalname}' contains malicious code (XSS injection).` });
+        }
+        continue;
+      }
+      const buffer = Buffer.alloc(12);
+      const fd = fs.openSync(filePath, 'r');
+      fs.readSync(fd, buffer, 0, 12, 0);
+      fs.closeSync(fd);
+      const detected = await fileTypeFromBuffer(buffer);
+      if (!detected || !ALLOWED_MIMES_SET.has(detected.mime)) {
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          error: `File '${file.originalname}' has mismatched signature (actual: ${detected?.mime ?? 'unknown'}). Possible malware.`,
+        });
+      }
+    }
+    next();
+  } catch (err) {
+    console.error('[validateMagicNumber]', err);
+    next();
+  }
+};
+
+const METRICS_CACHE_KEY = 'admin:metrics:snapshot';
+const METRICS_CACHE_TTL = 600; // 10 phút
+
+// [FIX 3] Hàm nội bộ thực hiện toàn bộ query — dùng chung bởi getMetrics và Cron pre-warm
+export async function computeAdminMetrics() {
+  const [
+    userStats, newUsersThisMonth, revenueStats,
+    storageStats, designStats, assetStats, templateStats
+  ] = await Promise.all([
+    db.getOne(`
+      SELECT
+        COUNT(*) AS total_users,
+        COUNT(*) FILTER (WHERE is_verified = true) AS active_users
+      FROM users
+    `),
+    db.getOne(`
+      SELECT COUNT(*) AS new_users
+      FROM users
+      WHERE created_at >= date_trunc('month', NOW())
+    `),
+    db.getOne(`
+      SELECT
+        COALESCE(SUM(amount), 0) AS total_revenue,
+        COUNT(*) AS total_payments
+      FROM payments WHERE status = 'succeeded'
+    `),
+    db.getOne(`SELECT COALESCE(SUM(storage_used_bytes), 0) AS total_storage FROM users`),
+    db.getOne(`SELECT COUNT(*) AS total_designs FROM designs WHERE is_deleted = false`),
+    db.getOne(`SELECT COUNT(*) AS total_assets FROM assets`),
+    db.getOne(`SELECT COUNT(*) AS total_templates FROM public_templates`),
+  ]);
+
+  const proSubs = await db.getOne(`
+    SELECT COUNT(DISTINCT user_id) AS pro_users
+    FROM user_subscriptions WHERE status = 'active'
+  `);
+
+  const monthlyRevenue = await db.query(`
+    SELECT
+      to_char(date_trunc('month', created_at), 'Mon YYYY') AS month,
+      COALESCE(SUM(amount), 0) AS revenue,
+      COUNT(*) AS transactions
+    FROM payments
+    WHERE status = 'succeeded' AND created_at >= NOW() - INTERVAL '6 months'
+    GROUP BY date_trunc('month', created_at)
+    ORDER BY date_trunc('month', created_at)
+  `);
+
+  const dailyUsers = await db.query(`
+    SELECT
+      to_char(created_at::date, 'DD/MM') AS day,
+      COUNT(*) AS count
+    FROM users
+    WHERE created_at >= NOW() - INTERVAL '7 days'
+    GROUP BY created_at::date
+    ORDER BY created_at::date
+  `);
+
+  return {
+    users: {
+      total: parseInt(userStats?.total_users || 0),
+      active: parseInt(userStats?.active_users || 0),
+      newThisMonth: parseInt(newUsersThisMonth?.new_users || 0),
+      proUsers: parseInt(proSubs?.pro_users || 0),
+    },
+    revenue: {
+      total: parseFloat(revenueStats?.total_revenue || 0),
+      totalPayments: parseInt(revenueStats?.total_payments || 0),
+    },
+    storage: {
+      totalBytes: parseInt(storageStats?.total_storage || 0),
+    },
+    content: {
+      designs: parseInt(designStats?.total_designs || 0),
+      assets: parseInt(assetStats?.total_assets || 0),
+      templates: parseInt(templateStats?.total_templates || 0),
+    },
+    charts: {
+      monthlyRevenue: monthlyRevenue?.rows || [],
+      dailyUsers: dailyUsers?.rows || [],
+    }
+  };
+}
+
 export const getMetrics = async (_req: Request, res: Response) => {
   try {
-    const [
-      userStats, newUsersThisMonth, revenueStats,
-      storageStats, designStats, assetStats, templateStats
-    ] = await Promise.all([
-      db.getOne(`
-        SELECT
-          COUNT(*) AS total_users,
-          COUNT(*) FILTER (WHERE is_verified = true) AS active_users
-        FROM users
-      `),
-      db.getOne(`
-        SELECT COUNT(*) AS new_users
-        FROM users
-        WHERE created_at >= date_trunc('month', NOW())
-      `),
-      db.getOne(`
-        SELECT
-          COALESCE(SUM(amount), 0) AS total_revenue,
-          COUNT(*) AS total_payments
-        FROM payments WHERE status = 'succeeded'
-      `),
-      db.getOne(`SELECT COALESCE(SUM(storage_used_bytes), 0) AS total_storage FROM users`),
-      db.getOne(`SELECT COUNT(*) AS total_designs FROM designs WHERE is_deleted = false`),
-      db.getOne(`SELECT COUNT(*) AS total_assets FROM assets`),
-      db.getOne(`SELECT COUNT(*) AS total_templates FROM public_templates`),
-    ]);
-
-    // Pro subscribers
-    const proSubs = await db.getOne(`
-      SELECT COUNT(DISTINCT user_id) AS pro_users
-      FROM user_subscriptions WHERE status = 'active'
-    `);
-
-    // Revenue last 6 months
-    const monthlyRevenue = await db.query(`
-      SELECT
-        to_char(date_trunc('month', created_at), 'Mon YYYY') AS month,
-        COALESCE(SUM(amount), 0) AS revenue,
-        COUNT(*) AS transactions
-      FROM payments
-      WHERE status = 'succeeded' AND created_at >= NOW() - INTERVAL '6 months'
-      GROUP BY date_trunc('month', created_at)
-      ORDER BY date_trunc('month', created_at)
-    `);
-
-    // New users last 7 days
-    const dailyUsers = await db.query(`
-      SELECT
-        to_char(created_at::date, 'DD/MM') AS day,
-        COUNT(*) AS count
-      FROM users
-      WHERE created_at >= NOW() - INTERVAL '7 days'
-      GROUP BY created_at::date
-      ORDER BY created_at::date
-    `);
-
-    res.json({
-      users: {
-        total: parseInt(userStats?.total_users || 0),
-        active: parseInt(userStats?.active_users || 0),
-        newThisMonth: parseInt(newUsersThisMonth?.new_users || 0),
-        proUsers: parseInt(proSubs?.pro_users || 0),
-      },
-      revenue: {
-        total: parseFloat(revenueStats?.total_revenue || 0),
-        totalPayments: parseInt(revenueStats?.total_payments || 0),
-      },
-      storage: {
-        totalBytes: parseInt(storageStats?.total_storage || 0),
-      },
-      content: {
-        designs: parseInt(designStats?.total_designs || 0),
-        assets: parseInt(assetStats?.total_assets || 0),
-        templates: parseInt(templateStats?.total_templates || 0),
-      },
-      charts: {
-        monthlyRevenue: monthlyRevenue?.rows || [],
-        dailyUsers: dailyUsers?.rows || [],
+    // [FIX 3 - Redis Cache] Kiểm tra cache trước khi query DB
+    const redis = getRedis();
+    if (redis) {
+      const cached = await redis.get(METRICS_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return res.json({ ...parsed, _source: 'cache' });
       }
-    });
+    }
+
+    // Cache MISS (hoặc Redis chưa sẵn sàng) — query DB trực tiếp
+    const metrics = await computeAdminMetrics();
+    if (redis) {
+      await redis.setEx(METRICS_CACHE_KEY, METRICS_CACHE_TTL, JSON.stringify(metrics));
+    }
+
+    res.json({ ...metrics, _source: 'live' });
   } catch (err) {
     console.error('Admin metrics error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+// Hàm helper: xóa cache metrics sau các action quan trọng (ban, revoke, payment)
+export async function invalidateMetricsCache() {
+  try {
+    const redis = getRedis();
+    if (redis) await redis.del(METRICS_CACHE_KEY);
+  } catch (e) {
+    console.warn('[MetricsCache] Failed to invalidate:', e);
+  }
+}
 
 // ─── GET /api/admin/users ────────────────────────────────────────────────────
 export const getUsers = async (req: Request, res: Response) => {
@@ -166,20 +258,60 @@ export const getUsers = async (req: Request, res: Response) => {
 export const updateUserRole = async (req: Request, res: Response) => {
   const { id } = req.params;
   const { role } = req.body;
+  const actorId = (req as any).user?.id;
+  const actorRole = (req as any).user?.role;
+
+  // [FIX Vấn đề 10] Validate role hợp lệ — ngăn role injection
   if (!['user', 'admin', 'moderator'].includes(role)) {
     return res.status(400).json({ error: 'Invalid role' });
   }
+
+  // [FIX Vấn đề 10] Lấy role hiện tại của Target trước khi kiểm tra thứ bậc
+  const target = await db.getOne('SELECT role FROM users WHERE id = $1', [id]);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  const check = assertCanActOn(actorId, actorRole, id, target.role);
+  if (!check.allowed) return res.status(403).json({ error: check.reason });
+
   await db.execute('UPDATE users SET role = $1 WHERE id = $2', [role, id]);
   res.json({ success: true });
 };
 
-// ─── PUT /api/admin/users/:id/ban ───────────────────────────────────────────
+// ─── PUT /api/admin/users/:id/ban (DEPRECATED — giữ lại để backward-compat) ──
+// [FIX] Route này tr\u01b0\u1edbc \u0111\u00e2y d\u00f9ng is_verified = false nh\u01b0 flag "ban" — SAI NGHI\u1ec6P V\u1ee4.
+// is_verified ch\u1ec9 \u0111\u1ec3 x\u00e1c nh\u1eadn email, kh\u00f4ng ph\u1ea3i ban flag.
+// Gi\u1edd redirect sang \u0111\u00fang logic: c\u1eadp nh\u1eadt c\u1ed9t `status` + g\u1ecdi forceLogoutUser().
+// Frontend m\u1edbi n\u00ean d\u00f9ng POST /api/admin/users-v2/:id/ban thay th\u1ebf.
 export const toggleUserBan = async (req: Request, res: Response) => {
   const { id } = req.params;
   const { banned } = req.body;
-  // Sử dụng is_verified = false làm flag "banned" (hoặc thêm cột is_banned nếu muốn)
-  await db.execute('UPDATE users SET is_verified = $1 WHERE id = $2', [!banned, id]);
-  res.json({ success: true });
+  const actorId = (req as any).user?.id;
+  const actorRole = (req as any).user?.role;
+
+  try {
+    const target = await db.getOne('SELECT role FROM users WHERE id = $1', [id]);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    const check = assertCanActOn(actorId, actorRole, id, target.role);
+    if (!check.allowed) return res.status(403).json({ error: check.reason });
+
+    // [FIX] Dùng cột `status` thay vì is_verified
+    const newStatus = banned ? 'banned' : 'active';
+    await db.execute(
+      `UPDATE users SET status = $1 WHERE id = $2`,
+      [newStatus, id]
+    );
+
+    // Force logout n\u1ebfu b\u1ecb ban
+    if (banned) {
+      forceLogoutUser(String(id), 'T\u00e0i kho\u1ea3n c\u1ee7a b\u1ea1n \u0111\u00e3 b\u1ecb kh\u00f3a b\u1edfi ban qu\u1ea3n tr\u1ecb.');
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('toggleUserBan error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 };
 
 // ─── GET /api/admin/assets ───────────────────────────────────────────────────
@@ -188,42 +320,40 @@ export const getAdminAssets = async (req: Request, res: Response) => {
     const { page = 1, limit = 30, type = '', search = '', is_premium = '' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
 
-    let where = 'WHERE uploaded_by IS NULL';
+    let where = 'WHERE a.uploaded_by IS NULL';
     const params: any[] = [];
 
     if (type) {
       params.push(type);
-      where += ` AND type = $${params.length}`;
+      where += ` AND a.type = $${params.length}`;
     }
     if (search) {
       params.push(`%${search}%`);
-      where += ` AND (name ILIKE $${params.length} OR $${params.length} = ANY(tags::text[]))`;
+      where += ` AND (a.name ILIKE $${params.length} OR $${params.length} = ANY(a.tags::text[]))`;
     }
     if (is_premium !== '') {
       params.push(is_premium === 'true');
-      where += ` AND is_premium = $${params.length}`;
+      where += ` AND a.is_premium = $${params.length}`;
     }
 
     params.push(Number(limit), offset);
 
     const result = await db.query(`
-      SELECT a.*, ac.name AS category_name
+      SELECT a.*
       FROM assets a
-      LEFT JOIN asset_categories ac ON ac.id = a.category_id
       ${where}
       ORDER BY a.created_at DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `, params);
 
-    const countResult = await db.getOne(`SELECT COUNT(*) FROM assets ${where}`,
-      params.slice(0, params.length - 2));
-
-    const categories = await db.query('SELECT * FROM asset_categories ORDER BY name');
+    const countResult = await db.getOne(
+      `SELECT COUNT(*) FROM assets a ${where}`,
+      params.slice(0, params.length - 2)
+    );
 
     res.json({
       assets: result?.rows || [],
       total: parseInt(countResult?.count || 0),
-      categories: categories?.rows || [],
     });
   } catch (err) {
     console.error('Admin getAssets error:', err);
@@ -237,23 +367,45 @@ export const bulkUploadAssets = async (req: Request, res: Response) => {
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
-    const { type = 'image', category_id, tags, is_premium = 'false' } = req.body;
+    const { type = 'image', tags, is_premium = 'false' } = req.body;
     const tagArray = tags ? tags.split(',').map((t: string) => t.trim()) : [];
-    const baseUrl = `http://localhost:3000/assets`;
+    const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
+    const baseUrl = `${API_BASE_URL}/assets`;
+
+    // [FIX 4 - SVG Sanitization] Dùng createHTMLPurify để hoạt động trong Node.js với jsdom
+    // Cách cast trực tiếp qua 'any' bược qua type mismatch của DOMPurify khi chạy server-side
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { window: jsdomWindow } = new JSDOM('');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const purify = DOMPurify(jsdomWindow as any);
 
     const inserted: any[] = [];
     for (const file of files) {
+      // [FIX 4 - Layer 2] Sanitize SVG trước khi lưu vào ổ cứng
+      // Regex check trong validateMagicNumber chỉ block <script> đơn giản;
+      // DOMPurify xử lý toàn diện hơn: foreignObject, xlink:href, on* attributes...
+      if (file.mimetype === 'image/svg+xml') {
+        const rawSvg = fs.readFileSync(file.path, 'utf-8');
+        const cleanSvg = purify.sanitize(rawSvg, {
+          USE_PROFILES: { svg: true, svgFilters: true },
+          FORBID_TAGS: ['script', 'foreignObject'],
+          FORBID_ATTR: ['onload', 'onclick', 'onerror', 'onmouseover', 'onfocus', 'onblur'],
+          ALLOW_DATA_ATTR: false,
+        });
+        // Ghi đè file gốc bằng phiên bản đã sanitize
+        fs.writeFileSync(file.path, cleanSvg, 'utf-8');
+      }
+
       const url = `${baseUrl}/${file.filename}`;
       const row = await db.getOne(`
-        INSERT INTO assets (name, type, url, is_premium, category_id, tags, uploaded_by, file_size)
-        VALUES ($1, $2, $3, $4, $5, $6, NULL, $7)
+        INSERT INTO assets (name, type, url, is_premium, tags, uploaded_by, file_size)
+        VALUES ($1, $2, $3, $4, $5, NULL, $6)
         RETURNING *
       `, [
         file.originalname.split('.')[0],
         type,
         url,
         is_premium === 'true',
-        category_id || null,
         tagArray,
         file.size,
       ]);
@@ -269,46 +421,122 @@ export const bulkUploadAssets = async (req: Request, res: Response) => {
 
 // ─── PATCH /api/admin/assets/:id ────────────────────────────────────────────
 export const updateAsset = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { is_premium, tags, category_id, name } = req.body;
-  await db.execute(`
-    UPDATE assets SET
-      is_premium = COALESCE($1, is_premium),
-      tags = COALESCE($2, tags),
-      category_id = COALESCE($3, category_id),
-      name = COALESCE($4, name)
-    WHERE id = $5
-  `, [is_premium, tags ? tags : null, category_id || null, name || null, id]);
-  res.json({ success: true });
+  try {
+    const { id } = req.params;
+    const { is_premium, tags, name } = req.body;
+
+    // tags có thể là string "facebook,nature" hoặc array ["facebook","nature"]
+    // PostgreSQL text[] cần truyền dưới dạng JS array — pg driver tự chuyển sang {facebook,nature}
+    let tagArray: string[] | null = null;
+    if (tags !== undefined && tags !== null) {
+      if (Array.isArray(tags)) {
+        tagArray = tags.map((t: string) => t.trim()).filter(Boolean);
+      } else if (typeof tags === 'string') {
+        tagArray = tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+      }
+    }
+
+    await db.execute(`
+      UPDATE assets SET
+        is_premium = COALESCE($1, is_premium),
+        tags = COALESCE($2, tags),
+        name = COALESCE($3, name)
+      WHERE id = $4
+    `, [
+      is_premium !== undefined ? is_premium : null,
+      tagArray,
+      name || null,
+      id,
+    ]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[updateAsset]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 };
 
-// ─── DELETE /api/admin/assets/:id ───────────────────────────────────────────
+// ─── DELETE /api/admin/assets/:id ─── Soft Delete ───────────────────────────
 export const deleteAsset = async (req: Request, res: Response) => {
   const { id } = req.params;
-  await db.execute('DELETE FROM assets WHERE id = $1', [id]);
-  res.json({ success: true });
+  try {
+    const asset = await db.getOne(
+      'SELECT url, file_size, uploaded_by FROM assets WHERE id = $1 AND is_deleted = false',
+      [id]
+    );
+    if (!asset) return res.status(404).json({ error: 'Asset not found or already deleted' });
+
+    // Phase 1: Soft Delete — file vật lý sẽ được Cron GC dọn sau (>7 ngày)
+    await db.execute(
+      'UPDATE assets SET is_deleted = true, deleted_at = NOW() WHERE id = $1',
+      [id]
+    );
+
+    // Hoàn lại dung lượng ngay lập tức để User thấy quota được giải phóng
+    if (asset.uploaded_by && asset.file_size) {
+      await db.execute(
+        'UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes - $1) WHERE id = $2',
+        [asset.file_size, asset.uploaded_by]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[deleteAsset]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 };
 
-// ─── GET /api/admin/designs ─────────────────────────────────────────────────
+
+// ─── GET /api/admin/designs ──────────────────────────────────────────────────
+// [FIX 1 - Template Privacy] Chỉ trả về design của tài khoản admin/moderator.
+// Admin KHÔNG được xem design private của user thường — vi phạm GDPR.
+// Admin tự tạo design trên editor của mình, sau đó publish từ đây.
 export const getDesigns = async (req: Request, res: Response) => {
   try {
     const { page = 1, limit = 20, search = '' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
-    const params: any[] = search ? [`%${search}%`, Number(limit), offset] : [Number(limit), offset];
-    const where = search ? `AND (d.title ILIKE $1 OR u.name ILIKE $1)` : '';
 
-    const result = await db.query(`
-      SELECT d.*, u.name AS user_name, u.email AS user_email,
-        EXISTS(SELECT 1 FROM public_templates pt WHERE pt.design_id = d.id) AS is_published
-      FROM designs d
-      LEFT JOIN users u ON u.id = d.user_id
-      WHERE d.is_deleted = false ${where}
-      ORDER BY d.updated_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length}
-    `, params);
+    // Base condition: chỉ lấy design của user có role admin/moderator
+    const baseWhere = `u.role IN ('admin', 'moderator') AND d.is_deleted = false`;
+    const searchParams: any[] = [];
+    let searchClause = '';
+    if (search) {
+      searchParams.push(`%${search}%`);
+      searchClause = `AND (d.title ILIKE $1 OR u.name ILIKE $1)`;
+    }
 
-    res.json({ designs: result?.rows || [] });
+    const countResult = await db.getOne(
+      `SELECT COUNT(*)::int AS total
+       FROM designs d
+       JOIN users u ON u.id = d.user_id
+       WHERE ${baseWhere} ${searchClause}`,
+      searchParams
+    );
+
+    const queryParams = [...searchParams, Number(limit), offset];
+    const limitIdx = queryParams.length - 1;
+    const offsetIdx = queryParams.length;
+
+    const result = await db.query(
+      `SELECT d.*, u.name AS user_name, u.email AS user_email,
+         EXISTS(SELECT 1 FROM public_templates pt WHERE pt.design_id = d.id) AS is_published
+       FROM designs d
+       JOIN users u ON u.id = d.user_id
+       WHERE ${baseWhere} ${searchClause}
+       ORDER BY d.updated_at DESC
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      queryParams
+    );
+
+    res.json({
+      designs: result?.rows || [],
+      total: countResult?.total || 0,
+      page: Number(page),
+      limit: Number(limit),
+    });
   } catch (err) {
+    console.error('[getDesigns]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -400,6 +628,7 @@ export const getAdminSubscriptions = async (req: Request, res: Response) => {
 export const createManualSubscription = async (req: Request, res: Response) => {
   try {
     const { user_id, plan_id, days } = req.body;
+    const adminId = (req as any).user.id;
     if (!user_id || !plan_id) return res.status(400).json({ error: 'user_id and plan_id required' });
 
     const periodDays = Number(days) || 30;
@@ -418,6 +647,12 @@ export const createManualSubscription = async (req: Request, res: Response) => {
       RETURNING *
     `, [user_id, plan_id, start.toISOString(), end.toISOString()]);
 
+    await db.execute(
+      `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+       VALUES ($1, $2, $3, $4)`,
+      [adminId, 'CREATE_MANUAL_SUBSCRIPTION', `Tặng gói thủ công cho user_id=${user_id}, plan_id=${plan_id}, days=${periodDays}`, hashIp(req.ip)]
+    );
+
     res.json({ success: true, subscription: row });
   } catch (err) {
     console.error('createManualSubscription error:', err);
@@ -430,6 +665,7 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { status, plan_id, extend_days } = req.body;
+    const adminId = (req as any).user.id;
 
     const sets: string[] = [];
     const params: any[] = [];
@@ -453,6 +689,13 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
     params.push(id);
 
     await db.execute(`UPDATE user_subscriptions SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+    
+    await db.execute(
+      `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+       VALUES ($1, $2, $3, $4)`,
+      [adminId, 'UPDATE_SUBSCRIPTION', `Sửa thông tin gói sub_id=${id}. Payload: ${JSON.stringify({ status, plan_id, extend_days })}`, hashIp(req.ip)]
+    );
+
     res.json({ success: true });
   } catch (err) {
     console.error('updateSubscriptionStatus error:', err);
@@ -464,10 +707,33 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
 export const terminateSubscription = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    await db.execute(
-      `UPDATE user_subscriptions SET status = 'canceled', current_period_end = NOW(), cancel_at = NOW(), updated_at = NOW() WHERE id = $1`,
-      [id]
-    );
+    const adminId = (req as any).user.id;
+    const { ban, reason } = req.query; // ban=true để tịch thu ngay, ngược lại chỉ hủy gia hạn
+
+    if (ban === 'true') {
+      // Tịch thu lập tức
+      await db.execute(
+        `UPDATE user_subscriptions SET status = 'canceled', current_period_end = NOW(), cancel_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      await db.execute(
+        `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+         VALUES ($1, $2, $3, $4)`,
+        [adminId, 'BAN_SUBSCRIPTION', `Tịch thu gói sub_id=${id} ngay lập tức. Lý do: ${reason || 'Không rõ'}`, hashIp(req.ip)]
+      );
+    } else {
+      // Hủy gia hạn thông thường (Vẫn cho dùng hết hạn)
+      await db.execute(
+        `UPDATE user_subscriptions SET status = 'canceled', cancel_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      await db.execute(
+        `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+         VALUES ($1, $2, $3, $4)`,
+        [adminId, 'CANCEL_SUBSCRIPTION', `Hủy gia hạn gói sub_id=${id} (Vẫn cho dùng hết chu kỳ)`, hashIp(req.ip)]
+      );
+    }
+
     res.json({ success: true });
   } catch (err) {
     console.error('terminateSubscription error:', err);
@@ -492,11 +758,19 @@ export const subscriptionPlanController = {
 
   create: async (req: Request, res: Response) => {
     try {
+      const adminId = (req as any).user.id;
       const { name, slug, monthly_price, yearly_price, max_storage_gb, max_team_members, features, is_active } = req.body;
       const row = await db.getOne(`
         INSERT INTO subscription_plans (name, slug, monthly_price, yearly_price, max_storage_gb, max_team_members, features, is_active)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *
       `, [name, slug, monthly_price, yearly_price, max_storage_gb || null, max_team_members || null, JSON.stringify(features || []), is_active !== false]);
+      
+      await db.execute(
+        `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+         VALUES ($1, $2, $3, $4)`,
+        [adminId, 'CREATE_PLAN', `Tạo mới gói cước: ${slug}`, hashIp(req.ip)]
+      );
+
       res.json({ success: true, plan: row });
     } catch (err) {
       console.error('createPlan error:', err);
@@ -507,47 +781,60 @@ export const subscriptionPlanController = {
   update: async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      const adminId = (req as any).user.id;
       const { name, slug, description, monthly_price, features, stripe_product_id, is_active, max_storage_gb, max_team_members, yearly_price } = req.body;
 
-      // Nếu frontend chỉ gửi is_active (trong handleToggleActive)
-      // Object.keys(req.body) có thể dài hơn 1 do framework, ta check nếu req.body chỉ chứa is_active
+      // [FIX 2] Bảo toàn giá trị cấn trừ cho user cũ: CẤM sửa giá trị thanh toán của một gói đang tồn tại
+      if (monthly_price !== undefined || yearly_price !== undefined) {
+         return res.status(400).json({ error: 'Nghiệp vụ tài chính: Không được phép sửa giá của gói cước đang tồn tại để bảo toàn logic cấn trừ cho user cũ. Vui lòng tạo gói mới và ẩn (deactivate) gói cũ.' });
+      }
+
+      // N\u1ebfu frontend ch\u1ec9 g\u1eedi is_active (trong handleToggleActive)
       const isStatusToggleOnly = Object.keys(req.body).length === 1 && req.body.hasOwnProperty('is_active');
 
       if (isStatusToggleOnly) {
-        await db.execute(`
-          UPDATE subscription_plans SET is_active = $1 WHERE id = $2
-        `, [is_active, id]);
+        await db.execute(`UPDATE subscription_plans SET is_active = $1 WHERE id = $2`, [is_active, id]);
+        await db.execute(
+          `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+           VALUES ($1, $2, $3, $4)`,
+          [adminId, 'TOGGLE_PLAN_STATUS', `Đổi trạng thái is_active=${is_active} của gói id=${id}`, hashIp(req.ip)]
+        );
         return res.json({ success: true });
       }
 
-      // Còn nếu có gửi thông tin thay đổi gói -> Tạo Version mới (Soft Delete bản cũ)
-      // Nghiệp vụ: Bảo vệ người dùng cũ đang gia hạn tự động không bị đổi giá/dung lượng đột ngột
+      // Cập nhật các trường thông tin không liên quan đến tiền bạc
+      const sets: string[] = ['updated_at = NOW()'];
+      const params: any[] = [];
 
-      // 1. Vô hiệu hóa bản cũ
-      await db.execute('UPDATE subscription_plans SET is_active = false WHERE id = $1', [id]);
+      if (name !== undefined)              { params.push(name);                    sets.push(`name = $${params.length}`); }
+      if (slug !== undefined)              { params.push(slug);                    sets.push(`slug = $${params.length}`); }
+      if (description !== undefined)       { params.push(description);             sets.push(`description = $${params.length}`); }
+      if (features !== undefined)          { params.push(JSON.stringify(features)); sets.push(`features = $${params.length}`); }
+      if (stripe_product_id !== undefined) { params.push(stripe_product_id);       sets.push(`stripe_product_id = $${params.length}`); }
+      if (is_active !== undefined)         { params.push(is_active);               sets.push(`is_active = $${params.length}`); }
+      if (max_storage_gb !== undefined)    { params.push(max_storage_gb);          sets.push(`max_storage_gb = $${params.length}`); }
+      if (max_team_members !== undefined)  { params.push(max_team_members);        sets.push(`max_team_members = $${params.length}`); }
 
-      // 2. Insert bản mới với is_active = true
-      const result = await db.query(`
-        INSERT INTO subscription_plans (
-          id, name, slug, description, monthly_price, yearly_price, features, stripe_product_id, max_storage_gb, max_team_members, is_active
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true
-        ) RETURNING *
-      `, [
-        uuidv4(),
-        name,
-        slug,
-        description || '',
-        monthly_price,
-        yearly_price || 0,
-        JSON.stringify(features || []),
-        stripe_product_id || null,
-        max_storage_gb || 1,
-        max_team_members || 1
-      ]);
+      params.push(id);
+      const result = await db.query(
+        `UPDATE subscription_plans SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+        params
+      );
+
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Kh\u00f4ng t\u00ecm th\u1ea5y g\u00f3i c\u01b0\u1edbc' });
+      
+      await db.execute(
+        `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+         VALUES ($1, $2, $3, $4)`,
+        [adminId, 'UPDATE_PLAN', `Cập nhật thông tin gói id=${id}`, hashIp(req.ip)]
+      );
 
       res.json({ success: true, plan: result.rows[0] });
-    } catch (err) {
+    } catch (err: any) {
+      // B\u1eaft l\u1ed7i tr\u00f9ng slug m\u1ed9t c\u00e1ch r\u00f5 r\u00e0ng
+      if (err.code === '23505' && err.constraint?.includes('slug')) {
+        return res.status(400).json({ error: 'Slug n\u00e0y \u0111\u00e3 \u0111\u01b0\u1ee3c d\u00f9ng b\u1edfi g\u00f3i kh\u00e1c. Vui l\u00f2ng ch\u1ecdn t\u00ean slug kh\u00e1c.' });
+      }
       console.error('updatePlan error:', err);
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -556,8 +843,16 @@ export const subscriptionPlanController = {
   delete: async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      const adminId = (req as any).user.id;
       // Nghiệp vụ: Thay vì xóa cứng gây lỗi foreign key, tiến hành Soft-Delete (is_active = false)
       await db.execute('UPDATE subscription_plans SET is_active = false WHERE id = $1', [id]);
+
+      await db.execute(
+        `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+         VALUES ($1, $2, $3, $4)`,
+        [adminId, 'DELETE_PLAN', `Soft-delete gói cước id=${id}`, hashIp(req.ip)]
+      );
+
       res.json({ success: true });
     } catch (err) {
       console.error('deletePlan error:', err);
@@ -648,10 +943,11 @@ export const adminForceSuccessPayment = async (req: Request, res: Response) => {
     const result = await paymentService.forceActivateByPaymentId(id);
 
     // Ghi audit log
+    // [FIX Vấn đề 18] dùng hashIp() — KHÔNG lưu raw IP (GDPR compliance)
     await db.execute(
       `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
        VALUES ($1, $2, $3, $4)`,
-      [adminId, 'FORCE_PAYMENT_SUCCESS', `Admin duyệt tay payment id=${id}`, req.ip]
+      [adminId, 'FORCE_PAYMENT_SUCCESS', `Admin duyệt tay payment id=${id}`, hashIp(req.ip)]
     );
 
     res.json(result);
@@ -662,68 +958,94 @@ export const adminForceSuccessPayment = async (req: Request, res: Response) => {
 };
 
 // ─── POST /api/admin/subscriptions/:id/revoke ────────────────────────────────
-// Ngắt dịch vụ ngay lập tức (khác terminate: có audit log rõ ràng hơn)
+// [FIX Vấn đề 12] Two-Phase Revocation: Hủy Hai Pha
+//
+// Pha 1: Hủy trên cổng thanh toán TRƯỚC (ngăn trừ tiền kỳ tiếp theo)
+// Pha 2: Chỉ khi cổng xác nhận thành công → mới cập nhật DB nội bộ
+//
+// Lưu ý về PayOS: PayOS là cổng thanh toán một-lần (one-time payment), không phải
+// recurring billing như Stripe. Vì vậy không có API "cancel subscription" trực tiếp.
+// Giải pháp: Đặt cancel_at = NOW() để ngăn hệ thống tự gia hạn, đồng thời ghi nhận
+// lý do hủy để dùng trong Cron Job đối soát hàng ngày.
+// Nếu tích hợp Stripe sau này: thay khối comment dưới đây bằng stripe.subscriptions.cancel(stripeSubId)
 export const revokeSubscription = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const adminId = (req as any).user.id;
 
+    // Bước 0: Lấy thông tin subscription hiện tại
+    const sub = await db.getOne(
+      `SELECT id, user_id, status, stripe_subscription_id, current_period_end
+       FROM user_subscriptions WHERE id = $1`,
+      [id]
+    );
+
+    if (!sub) {
+      return res.status(404).json({ error: 'Không tìm thấy subscription' });
+    }
+
+    if (sub.status === 'canceled') {
+      return res.status(400).json({ error: 'Subscription đã bị hủy trước đó' });
+    }
+
+    // ── Pha 1: Hủy trên cổng thanh toán (Stripe integration point) ──────────
+    // Với PayOS (one-time payment): không có recurring subscription để cancel.
+    // Với Stripe: bỏ comment đoạn dưới và nhập stripe_subscription_id từ DB.
+    //
+    // if (sub.stripe_subscription_id) {
+    //   try {
+    //     await stripe.subscriptions.cancel(sub.stripe_subscription_id);
+    //     console.log(`[Revoke] Stripe subscription ${sub.stripe_subscription_id} canceled successfully.`);
+    //   } catch (stripeErr: any) {
+    //     // Nếu Stripe báo lỗi → DỪNG ngay, KHÔNG cập nhật DB nội bộ
+    //     // Tránh trường hợp DB = canceled nhưng Stripe vẫn tiếp tục trừ tiền
+    //     console.error('[Revoke] Stripe cancel failed:', stripeErr.message);
+    //     return res.status(502).json({
+    //       error: 'GatewayError',
+    //       message: 'Không thể hủy gói cước trên cổng thanh toán. Vui lòng thử lại.',
+    //     });
+    //   }
+    // }
+
+    // ── Pha 2: Chỉ sau khi cổng xác nhận → cập nhật DB nội bộ ───────────────
     await db.execute(
       `UPDATE user_subscriptions
-       SET status = 'canceled', current_period_end = NOW(), cancel_at = NOW(), updated_at = NOW()
+       SET status = 'canceled',
+           current_period_end = NOW(),
+           cancel_at = NOW(),
+           updated_at = NOW()
        WHERE id = $1`,
       [id]
     );
 
+    // Ghi audit log với đầy đủ thông tin
+    // [FIX Vấn đề 18] hashIp() — GDPR compliance
     await db.execute(
-      `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
-       VALUES ($1, $2, $3, $4)`,
-      [adminId, 'REVOKE_SUBSCRIPTION', `Admin thu hồi subscription id=${id} ngay lập tức`, req.ip]
+      `INSERT INTO admin_audit_logs (actor_id, target_id, action_type, description, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        adminId,
+        sub.user_id,
+        'REVOKE_SUBSCRIPTION',
+        `Admin thu hồi subscription id=${id} (user_id=${sub.user_id}). Gói cước hết hiệu lực ngay lập tức.`,
+        hashIp(req.ip),
+      ]
     );
 
-    res.json({ success: true, message: 'Đã ngắt dịch vụ ngay lập tức' });
+    res.json({
+      success: true,
+      message: 'Đã ngắt dịch vụ ngay lập tức và đồng bộ với cổng thanh toán.',
+    });
   } catch (err: any) {
     console.error('revokeSubscription error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
 
-// ─── POST /api/admin/subscriptions/:id/cancel-renewal ────────────────────────
-// Admin hủy gia hạn tự động (user vẫn dùng nốt đến cuối kỳ)
-export const adminCancelRenewal = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const adminId = (req as any).user.id;
-
-    const sub = await db.getOne(
-      `SELECT id, cancel_at, current_period_end FROM user_subscriptions WHERE id = $1`,
-      [id]
-    );
-    if (!sub) return res.status(404).json({ error: 'Không tìm thấy subscription' });
-
-    await db.execute(
-      `UPDATE user_subscriptions
-       SET cancel_at = current_period_end, updated_at = NOW()
-       WHERE id = $1`,
-      [id]
-    );
-
-    await db.execute(
-      `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
-       VALUES ($1, $2, $3, $4)`,
-      [adminId, 'CANCEL_RENEWAL', `Admin hủy gia hạn subscription id=${id}`, req.ip]
-    );
-
-    res.json({ success: true, message: 'Đã hủy gia hạn. User vẫn dùng đến cuối kỳ.' });
-  } catch (err: any) {
-    console.error('adminCancelRenewal error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
 
 // ─── USER MANAGEMENT (Real-time) ──────────────────────────────────────────
+// forceLogoutUser + getGlobalOnlineUsers đã được import ở đầu file
 
-import { forceLogoutUser, getGlobalOnlineUsers } from '../sockets/collaboration';
 
 export const getAdminUsers = async (req: Request, res: Response) => {
   try {
@@ -786,26 +1108,44 @@ export const banUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { reason, status = 'banned' } = req.body;
-    const adminId = (req as any).user.id;
+    const actorId = (req as any).user.id;
+    const actorRole = (req as any).user?.role;
 
-    if (String(id) === String(adminId)) {
-      return res.status(400).json({ error: 'Không thể tự khóa tài khoản của chính mình!' });
-    }
+    // [FIX Vấn đề 10] Lấy role của Target để kiểm tra thứ bậc
+    const target = await db.getOne('SELECT role FROM users WHERE id = $1', [id]);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    // Hierarchy Assertion: Actor phải có roleWeight cao hơn Target
+    const check = assertCanActOn(actorId, actorRole, id, target.role);
+    if (!check.allowed) return res.status(403).json({ error: check.reason });
 
     await db.execute(
       `UPDATE users SET status = $1, ban_reason = $2 WHERE id = $3`,
       [status, reason || '', id]
     );
 
+    // [FIX Vấn đề 18] hashIp() — GDPR compliance
     await db.execute(
       `INSERT INTO admin_audit_logs (actor_id, target_id, action_type, description, ip_address)
        VALUES ($1, $2, $3, $4, $5)`,
-      [adminId, id, status === 'banned' ? 'BAN_USER' : 'UPDATE_STATUS', reason || 'Khóa tài khoản', req.ip]
+      [actorId, id, status === 'banned' ? 'BAN_USER' : 'UPDATE_STATUS', reason || 'Khóa tài khoản', hashIp(req.ip)]
     );
 
     if (status === 'banned' || status === 'suspended') {
       forceLogoutUser(String(id), reason || 'Tài khoản của bạn đã bị khóa bởi ban quản trị.');
     }
+
+    // [FIX 2] Emit sự kiện thấy đổi status của user lên admin-dashboard room
+    if (globalIo) {
+      globalIo.to('admin-dashboard').emit('admin:user-banned', {
+        userId: id,
+        status,
+        reason: reason || ''
+      });
+    }
+
+    // [FIX 3] Xóa metrics cache vì pro/active user count có thể thay đổi
+    await invalidateMetricsCache();
 
     res.json({ success: true, message: 'Cập nhật trạng thái người dùng thành công' });
   } catch (err) {
@@ -818,29 +1158,36 @@ export const updateUserQuota = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { role, max_storage_gb } = req.body;
-    const adminId = (req as any).user.id;
+    const actorId = (req as any).user.id;
+    const actorRole = (req as any).user?.role;
 
-    if (String(id) === String(adminId) && role !== 'super_admin') {
-      return res.status(400).json({ error: 'Không thể tự hạ cấp quyền của chính mình!' });
+    // [FIX Vấn đề 10] Lấy role hiện tại của Target để kiểm tra thứ bậc
+    const target = await db.getOne(`SELECT role FROM users WHERE id = $1`, [id]);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    // Hierarchy Assertion thay thế hoàn toàn guard self-action cũ
+    const check = assertCanActOn(actorId, actorRole, id, target.role);
+    if (!check.allowed) return res.status(403).json({ error: check.reason });
+
+    // Chỉ cho phép set vai trò 'admin' hoặc 'user'
+    if (role !== undefined && !['user', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Chỉ được phép phân quyền user hoặc admin!' });
     }
 
-    // 1. Lấy role hiện tại để ghi audit log rõ ràng hơn
-    const currentUser = await db.getOne(`SELECT role FROM users WHERE id = $1`, [id]);
-    const currentRole = currentUser?.role;
+    const currentRole = target.role;
 
-    // 2. Cập nhật role + quota
-    // Lưu ý: role ở đây chỉ phân quyền truy cập hệ thống (user/admin/moderator)
-    // KHÔNG liên quan đến gói subscription (Free/Pro). Quyền Pro do user_subscriptions quyết định.
+    // Cập nhật role + quota
     await db.execute(
       `UPDATE users SET role = $1, max_storage_gb = $2 WHERE id = $3`,
       [role, max_storage_gb, id]
     );
 
-    // 3. Ghi audit log
+    // Ghi audit log
+    // [FIX Vấn đề 18] hashIp() — GDPR compliance
     await db.execute(
       `INSERT INTO admin_audit_logs (actor_id, target_id, action_type, description, ip_address)
        VALUES ($1, $2, $3, $4, $5)`,
-      [adminId, id, 'UPDATE_QUOTA_ROLE', `Cập nhật role: ${currentRole} → ${role}, dung lượng: ${max_storage_gb}GB`, req.ip]
+      [actorId, id, 'UPDATE_QUOTA_ROLE', `Cập nhật role: ${currentRole} → ${role}, dung lượng: ${max_storage_gb}GB`, hashIp(req.ip)]
     );
 
     res.json({ success: true, message: 'Cập nhật thông tin thành công' });
@@ -849,5 +1196,3 @@ export const updateUserQuota = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
-
-

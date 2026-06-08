@@ -1,18 +1,45 @@
 // backend/middleware/checkStorageQuota.ts
-// Middleware chặn Upload / Tạo mới khi user đã vượt hạn mức dung lượng
-// Áp dụng "Read-Only Mode": GET vẫn chạy bình thường, chỉ chặn POST/PUT tạo mới
+// Middleware chặn Upload / Tạo mới khi Workspace đã vượt hạn mức dung lượng.
+// ─── [WORKSPACE] v2: Đếm dung lượng theo Workspace, không theo User cá nhân ──
+// Áp dụng "Read-Only Mode": GET vẫn chạy bình thường, chỉ chặn POST/PUT tạo mới.
+// YÊU CẦU: Phải đặt sau middleware resolveWorkspace để có req.workspace.
 
 import { Request, Response, NextFunction } from 'express';
 import db from '../config/db';
 
-const FREE_PLAN_STORAGE_GB = 1; // GB mặc định khi không có gói active
+const FREE_PLAN_STORAGE_GB = 5; // 5GB mặc định cho Workspace Free
 
 export const checkStorageQuota = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = (req as any).user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    // 1. Lấy dung lượng đang dùng của user
+    const workspace = (req as any).workspace;
+
+    // ── Nếu có workspace (route đã qua resolveWorkspace), dùng quota của workspace
+    if (workspace?.id) {
+      const usedBytes = Number(workspace.usedStorageBytes ?? 0);
+      const maxBytes = (workspace.maxStorageGb ?? FREE_PLAN_STORAGE_GB) * 1024 * 1024 * 1024;
+
+      const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+
+      if (usedBytes + contentLength > maxBytes) {
+        const usedGB = (usedBytes / (1024 ** 3)).toFixed(2);
+        return res.status(403).json({
+          error: 'QuotaExceeded',
+          message: `Không gian làm việc đã hết dung lượng (${usedGB}GB / ${workspace.maxStorageGb}GB). Vui lòng nâng cấp gói hoặc xóa bớt tài nguyên.`,
+          used_bytes: usedBytes,
+          max_bytes: maxBytes,
+          max_storage_gb: workspace.maxStorageGb,
+          workspace_id: workspace.id,
+        });
+      }
+
+      (req as any).quotaInfo = { usedBytes, maxBytes, maxStorageGb: workspace.maxStorageGb };
+      return next();
+    }
+
+    // ── Fallback: Không có workspace context (backward-compat), dùng quota cá nhân
     const userRes = await db.getOne(
       `SELECT storage_used_bytes FROM users WHERE id = $1`,
       [userId]
@@ -21,8 +48,6 @@ export const checkStorageQuota = async (req: Request, res: Response, next: NextF
 
     const usedBytes: number = Number(userRes.storage_used_bytes) || 0;
 
-    // 2. Lấy quota từ gói subscription đang active
-    //    Nếu không có gói active → fallback về gói Free mặc định
     const subRes = await db.getOne(
       `SELECT sp.max_storage_gb
        FROM user_subscriptions us
@@ -34,14 +59,12 @@ export const checkStorageQuota = async (req: Request, res: Response, next: NextF
       [userId]
     );
 
-    const maxStorageGb: number = subRes
-      ? Number(subRes.max_storage_gb)
-      : FREE_PLAN_STORAGE_GB;
+    const maxStorageGb: number = subRes ? Number(subRes.max_storage_gb) : FREE_PLAN_STORAGE_GB;
+    const maxBytes = maxStorageGb * 1024 * 1024 * 1024;
 
-    const maxBytes = maxStorageGb * 1024 * 1024 * 1024; // Chuyển GB sang Bytes
+    const contentLength = parseInt(req.headers['content-length'] || '0', 10);
 
-    // 3. So sánh — nếu đã vượt hạn mức thì chặn
-    if (usedBytes >= maxBytes) {
+    if (usedBytes + contentLength > maxBytes) {
       const usedGB = (usedBytes / (1024 ** 3)).toFixed(2);
       return res.status(403).json({
         error: 'QuotaExceeded',
@@ -52,7 +75,6 @@ export const checkStorageQuota = async (req: Request, res: Response, next: NextF
       });
     }
 
-    // 4. Đính kèm thông tin quota vào request để controller dùng nếu cần
     (req as any).quotaInfo = { usedBytes, maxBytes, maxStorageGb };
     next();
   } catch (err) {
@@ -61,18 +83,56 @@ export const checkStorageQuota = async (req: Request, res: Response, next: NextF
   }
 };
 
-// ─── Helper: Cộng dung lượng sau khi upload thành công ────────────────────
-export const incrementStorageUsage = async (userId: string, fileSizeBytes: number) => {
-  await db.execute(
-    `UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes + $1) WHERE id = $2`,
-    [fileSizeBytes, userId]
-  );
+// ─── Helper: Cộng dung lượng vào Workspace sau khi upload thành công ──────────
+// [FIX Vấn đề 21] Wrap cả 2 UPDATE vào 1 transaction để tránh desync.
+// TRƯỚC: 2 UPDATE độc lập → nếu UPDATE thứ 2 fail, 2 counter lệch nhau.
+// SAU:   Atomic transaction → cả 2 thành công hoặc cả 2 rollback.
+export const incrementStorageUsage = async (userId: string, fileSizeBytes: number, workspaceId?: string) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    if (workspaceId) {
+      await client.query(
+        `UPDATE teams SET used_storage_bytes = GREATEST(0, used_storage_bytes + $1) WHERE id = $2`,
+        [fileSizeBytes, workspaceId]
+      );
+    }
+    await client.query(
+      `UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes + $1) WHERE id = $2`,
+      [fileSizeBytes, userId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[Storage] incrementStorageUsage rollback:', err);
+    throw err;
+  } finally {
+    client.release();
+  }
 };
 
-// ─── Helper: Trừ dung lượng khi xóa file vĩnh viễn ───────────────────────
-export const decrementStorageUsage = async (userId: string, fileSizeBytes: number) => {
-  await db.execute(
-    `UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes - $1) WHERE id = $2`,
-    [fileSizeBytes, userId]
-  );
+// ─── Helper: Trừ dung lượng khi xóa file ─────────────────────────────────────
+// [FIX Vấn đề 21] Tương tự — atomic transaction để không lệch counter.
+export const decrementStorageUsage = async (userId: string, fileSizeBytes: number, workspaceId?: string) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    if (workspaceId) {
+      await client.query(
+        `UPDATE teams SET used_storage_bytes = GREATEST(0, used_storage_bytes - $1) WHERE id = $2`,
+        [fileSizeBytes, workspaceId]
+      );
+    }
+    await client.query(
+      `UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes - $1) WHERE id = $2`,
+      [fileSizeBytes, userId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[Storage] decrementStorageUsage rollback:', err);
+    throw err;
+  } finally {
+    client.release();
+  }
 };

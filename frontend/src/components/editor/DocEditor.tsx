@@ -59,10 +59,14 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
   { pages, currentPageId, onChange, onInsertPage }, ref
 ) {
   // ── Refs ──
-  const editorRef   = useRef<HTMLDivElement>(null);
-  const saveTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const initializedRef = useRef(false);
-  const savedRangeRef = useRef<Range | null>(null);
+  const editorRef        = useRef<HTMLDivElement>(null);
+  const saveTimer         = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initializedRef    = useRef(false);
+  const savedRangeRef     = useRef<Range | null>(null);
+  const colorApplyTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Refs tới hidden input[type=color] để programmatically mở picker
+  const foreColorInputRef  = useRef<HTMLInputElement>(null);
+  const hiliteColorInputRef = useRef<HTMLInputElement>(null);
 
   // ── State ──
   const [fontFamily, setFontFamily]   = useState('Calibri');
@@ -112,11 +116,67 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
     setWordCount(text.trim().split(/\s+/).filter(Boolean).length);
   }, []);
 
-  // ── Tính số trang dựa trên chiều cao nội dung ──
+  // ── Tính và cập nhật số trang ──────────────────────────────────────────────
+  // scrollHeight / PAGE_H cho số trang thực tế dựa trên nội dung
   const updatePageCount = useCallback(() => {
     if (!editorRef.current) return;
     const contentH = editorRef.current.scrollHeight;
     setPageCount(Math.max(1, Math.ceil(contentH / PAGE_H)));
+  }, []);
+
+  // ── Auto-page: thêm trang mới khi nội dung vượt ranh giới trang ──────────
+  // Dùng ResizeObserver để theo dõi chiều cao thực tế của editor.
+  // Mỗi khi height vượt qua bội số của PAGE_H → gọi onInsertPage.
+  const autoPageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPageCountRef = useRef(1);
+
+  // Ref tới pages để ResizeObserver luôn đọc giá trị mới nhất
+  const pagesRef = useRef(pages);
+  useEffect(() => { pagesRef.current = pages; }, [pages]);
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(() => {
+      const contentH = el.scrollHeight;
+      const newCount = Math.max(1, Math.ceil(contentH / PAGE_H));
+      setPageCount(newCount);
+
+      if (newCount > lastPageCountRef.current) {
+        // Debounce 300ms: đợi user ngừng gõ trước khi thêm trang
+        if (autoPageTimerRef.current) clearTimeout(autoPageTimerRef.current);
+        autoPageTimerRef.current = setTimeout(() => {
+          // Kiểm tra lại sau debounce để tránh thêm trang khi user xóa luôn
+          const confirmedH = el.scrollHeight;
+          const confirmedCount = Math.max(1, Math.ceil(confirmedH / PAGE_H));
+          if (confirmedCount <= lastPageCountRef.current) return;
+
+          const toAdd = confirmedCount - lastPageCountRef.current;
+          // Lấy trang doc cuối cùng để insert AFTER (không phải luôn trang đầu)
+          const docPages = pagesRef.current.filter(p => p.type === 'doc' || !p.type);
+          const lastDocPage = docPages[docPages.length - 1] ?? pagesRef.current[0];
+
+          if (lastDocPage) {
+            for (let i = 0; i < toAdd; i++) {
+              onInsertPage(lastDocPage.id);
+            }
+          }
+          lastPageCountRef.current = confirmedCount;
+        }, 300);
+
+      } else if (newCount < lastPageCountRef.current) {
+        // Nội dung co lại: cập nhật counter (không xóa trang tự động)
+        lastPageCountRef.current = newCount;
+      }
+    });
+
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      if (autoPageTimerRef.current) clearTimeout(autoPageTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Flush content → trả về Map pageId → html ──
@@ -155,53 +215,75 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
     }, 400);
   }, [firstDocPage, onChange, updateWordCount, updatePageCount]);
 
-  // ── Lưu vùng chọn mỗi khi người dùng tương tác trong editor ──
+  // ── Lưu vùng chọn bằng cloneRange() ──
   const saveSelection = useCallback(() => {
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0 && editorRef.current) {
       const range = sel.getRangeAt(0);
-      // Chỉ lưu nếu vùng chọn nằm bên trong editor
       if (editorRef.current.contains(range.commonAncestorContainer)) {
-        // Clone boundaries thành plain object (sống sót qua focus change)
-        savedRangeRef.current = {
-          startContainer: range.startContainer,
-          startOffset: range.startOffset,
-          endContainer: range.endContainer,
-          endOffset: range.endOffset,
-        } as any;
+        savedRangeRef.current = range.cloneRange();
       }
     }
   }, []);
 
-  // ── Khôi phục vùng chọn đã lưu ──
+  // ── Khôi phục vùng chọn đã lưu (giữ highlight sau khi đổi màu) ──
   const restoreSelection = useCallback(() => {
-    const saved = savedRangeRef.current as any;
+    const saved = savedRangeRef.current;
     if (!saved) return false;
     try {
-      // Focus lại editor trước
       editorRef.current?.focus();
-      const range = document.createRange();
-      range.setStart(saved.startContainer, saved.startOffset);
-      range.setEnd(saved.endContainer, saved.endOffset);
       const sel = window.getSelection();
       if (!sel) return false;
       sel.removeAllRanges();
-      sel.addRange(range);
+      sel.addRange(saved as Range);
       return true;
     } catch {
       return false;
     }
   }, []);
 
+  // ── Apply màu SAU KHI native color picker đóng ──────────────────────────────
+  // Native color picker (input[type=color]) steal focus khi mở → browser clear selection.
+  // setTimeout(10ms) + rAF đợi picker đóng hẳn trước khi restore + apply.
+  const applyPendingColor = useCallback((command: 'foreColor' | 'hiliteColor', color: string) => {
+    if (colorApplyTimer.current) clearTimeout(colorApplyTimer.current);
+    colorApplyTimer.current = setTimeout(() => {
+      requestAnimationFrame(() => {
+        // Restore selection đã lưu trước khi picker mở
+        const saved = savedRangeRef.current;
+        if (!saved) return;
+        try {
+          editorRef.current?.focus({ preventScroll: true });
+          const sel = window.getSelection();
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(saved);
+            // Apply màu
+            document.execCommand(command, false, color);
+            // Lưu lại range sau khi apply để highlight tiếp tục hiện
+            if (sel.rangeCount > 0) {
+              savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+            }
+            handleInput();
+          }
+        } catch { /* ignore */ }
+      });
+    }, 50); // 50ms đủ để native picker close event xử lý xong
+  }, [handleInput]);
+
   // ── execCommand helpers ──
-  const cmd     = (command: string, value?: string) => document.execCommand(command, false, value);
+  const cmd = (command: string, value?: string) => document.execCommand(command, false, value);
   const cmdWithRestore = useCallback((command: string, value?: string) => {
-    // Khôi phục vùng chọn trước khi áp dụng lệnh (dành cho color picker)
     restoreSelection();
     document.execCommand(command, false, value);
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
     handleInput();
-  }, [restoreSelection]);
+  }, [restoreSelection, handleInput]);
   const isActive = (c: string) => { try { return document.queryCommandState(c); } catch { return false; } };
+
 
   const applyFontSize = useCallback((size: number) => {
     setFontSize(size);
@@ -217,9 +299,26 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
     setIsExporting(true);
     try {
       const html = editorRef.current?.innerHTML || firstDocPage?.content || '';
+      const textOnly = (editorRef.current?.innerText || '').trim();
+      if (!textOnly) {
+        alert('Tài liệu trống, không có gì để xuất!');
+        setIsExporting(false);
+        return;
+      }
+
+      // Helper: rgb(r,g,b) → 6-digit hex (docx chỉ nhận hex)
+      const rgbToHex = (color: string): string | undefined => {
+        if (!color) return undefined;
+        if (color.startsWith('#')) return color.replace('#', '');
+        const m = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        if (!m) return undefined;
+        return [m[1], m[2], m[3]]
+          .map(n => parseInt(n).toString(16).padStart(2, '0'))
+          .join('');
+      };
+
       const tmp = document.createElement('div');
       tmp.innerHTML = html;
-
       const allParagraphs: Paragraph[] = [];
 
       const buildRuns = (node: HTMLElement): TextRun[] => {
@@ -230,13 +329,16 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
           } else if (child.nodeType === Node.ELEMENT_NODE) {
             const c = child as HTMLElement;
             const tag = c.tagName.toUpperCase();
+            if (tag === 'BR') { runs.push(new TextRun({ text: '', break: 1 })); return; }
             const bold      = tag === 'B' || tag === 'STRONG' || c.style.fontWeight === 'bold';
             const italics   = tag === 'I' || tag === 'EM' || c.style.fontStyle === 'italic';
             const underline = (tag === 'U' || c.style.textDecoration?.includes('underline'))
               ? { type: UnderlineType.SINGLE } : undefined;
-            const color = c.style.color?.replace('#', '') || undefined;
-            const size  = c.style.fontSize ? parseInt(c.style.fontSize) * 2 : undefined;
-            const font  = c.style.fontFamily?.replace(/['"]/g, '') || undefined;
+            const color = rgbToHex(c.style.color);
+            const size  = c.style.fontSize ? Math.round(parseFloat(c.style.fontSize) * 2) : undefined;
+            const font  = c.style.fontFamily
+              ? c.style.fontFamily.replace(/['"]/g, '').split(',')[0].trim()
+              : undefined;
             const inner = buildRuns(c);
             if (inner.length > 0) {
               inner.forEach(r => runs.push(new TextRun({
@@ -244,8 +346,9 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
                 bold: (r as any).bold || bold,
                 italics: (r as any).italics || italics,
               })));
-            } else if (c.innerText) {
-              runs.push(new TextRun({ text: c.innerText, bold, italics, underline, color, size, font }));
+            } else {
+              const text = c.innerText || c.textContent || '';
+              if (text) runs.push(new TextRun({ text, bold, italics, underline, color, size, font }));
             }
           }
         });
@@ -275,7 +378,6 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
       });
 
       if (allParagraphs.length === 0) allParagraphs.push(new Paragraph({ children: [new TextRun('')] }));
-
       const doc  = new Document({ sections: [{ properties: {}, children: allParagraphs }] });
       const blob = await Packer.toBlob(doc);
       saveAs(blob, 'Document.docx');
@@ -288,6 +390,7 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
   }, [firstDocPage]);
 
   useImperativeHandle(ref, () => ({ exportDocx, flushAll }), [exportDocx, flushAll]);
+
 
   // ── CSS: vẽ đường phân trang bằng background-image ──
   // Cứ mỗi PAGE_H px vẽ 1 đường ngang màu xanh dương nhạt (giống Google Docs)
@@ -406,25 +509,47 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
         </ToolBtn>
         <Sep />
 
-        {/* Text Color / Highlight */}
-        <label
-          className="w-7 h-7 flex flex-col items-center justify-center rounded cursor-pointer hover:bg-slate-100 transition gap-0.5"
-          title="Text Color"
-          onMouseDown={saveSelection}
-        >
-          <span className="text-xs font-black text-slate-700 leading-none">A</span>
-          <input type="color" className="absolute opacity-0 w-0 h-0" onChange={e => cmdWithRestore('foreColor', e.target.value)} />
-          <div className="w-4 h-1 rounded-full bg-red-500" />
-        </label>
-        <label
-          className="w-7 h-7 flex flex-col items-center justify-center rounded cursor-pointer hover:bg-slate-100 transition gap-0.5"
-          title="Highlight"
-          onMouseDown={saveSelection}
-        >
-          <span className="text-xs font-black text-slate-700 leading-none" style={{ background: '#ffe066', padding: '0 2px' }}>A</span>
-          <input type="color" className="absolute opacity-0 w-0 h-0" onChange={e => cmdWithRestore('hiliteColor', e.target.value)} />
-          <div className="w-4 h-1 rounded-full bg-yellow-300" />
-        </label>
+        {/* Text Color / Highlight — dùng button + hidden input riêng */}
+        {/* Bước 1: onMouseDown preventDefault để editor giữ focus và lưu selection */}
+        {/* Bước 2: onClick gọi ref.click() để programmatically mở native picker */}
+        <div className="relative">
+          <button
+            type="button"
+            title="Text Color"
+            className="w-7 h-7 flex flex-col items-center justify-center rounded cursor-pointer hover:bg-slate-100 transition gap-0.5"
+            onMouseDown={e => { e.preventDefault(); saveSelection(); }}
+            onClick={() => foreColorInputRef.current?.click()}
+          >
+            <span className="text-xs font-black text-slate-700 leading-none">A</span>
+            <div className="w-4 h-1 rounded-full bg-red-500" />
+          </button>
+          <input
+            ref={foreColorInputRef}
+            type="color"
+            className="absolute opacity-0 w-0 h-0 pointer-events-none"
+            tabIndex={-1}
+            onChange={e => applyPendingColor('foreColor', e.target.value)}
+          />
+        </div>
+        <div className="relative">
+          <button
+            type="button"
+            title="Highlight"
+            className="w-7 h-7 flex flex-col items-center justify-center rounded cursor-pointer hover:bg-slate-100 transition gap-0.5"
+            onMouseDown={e => { e.preventDefault(); saveSelection(); }}
+            onClick={() => hiliteColorInputRef.current?.click()}
+          >
+            <span className="text-xs font-black text-slate-700 leading-none" style={{ background: '#ffe066', padding: '0 2px' }}>A</span>
+            <div className="w-4 h-1 rounded-full bg-yellow-300" />
+          </button>
+          <input
+            ref={hiliteColorInputRef}
+            type="color"
+            className="absolute opacity-0 w-0 h-0 pointer-events-none"
+            tabIndex={-1}
+            onChange={e => applyPendingColor('hiliteColor', e.target.value)}
+          />
+        </div>
         <Sep />
 
         {/* Undo / Redo / Clear */}
@@ -449,24 +574,24 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
       <div className="flex-1 overflow-y-auto" style={{ background: '#e8eaed' }}>
         <div className="flex justify-center py-8 pb-20">
 
-          {/* Wrapper tạo bóng đổ + nền trắng A4 */}
+          {/* Wrapper tạo bóng đổ + nền trắng A4 — Fix: minHeight tăng theo số trang */}
           <div
             style={{
               width: PAGE_W,
-              minHeight: PAGE_H,
+              minHeight: pageCount * PAGE_H + PAD_Y,
               background: '#ffffff',
               boxShadow: '0 2px 24px rgba(0,0,0,0.15)',
               position: 'relative',
             }}
           >
-            {/* Đường kẻ phân trang ảo (CSS pseudo-lines) */}
+            {/* Đường kẻ phân trang ảo — Fix: pointerEvents none + zIndex thấp hơn editor */}
             <div
               aria-hidden
               style={{
                 position: 'absolute',
                 inset: 0,
                 pointerEvents: 'none',
-                zIndex: 1,
+                zIndex: 0,
                 ...pageLineStyle,
               }}
             />
@@ -484,7 +609,7 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
                   color: '#94a3b8',
                   fontWeight: 600,
                   pointerEvents: 'none',
-                  zIndex: 2,
+                  zIndex: 0,
                   letterSpacing: '0.05em',
                   userSelect: 'none',
                 }}
@@ -501,12 +626,13 @@ const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function DocEditor
               onInput={handleInput}
               onMouseUp={saveSelection}
               onKeyUp={saveSelection}
+              onSelect={saveSelection}
               spellCheck
-              className="outline-none text-slate-800 prose max-w-none"
+              className="doc-editor-content outline-none text-slate-800"
               style={{
                 position: 'relative',
-                zIndex: 3,
-                minHeight: PAGE_H,
+                zIndex: 1,
+                minHeight: pageCount * PAGE_H + PAD_Y,
                 padding: `${PAD_Y}px ${PAD_X}px`,
                 fontFamily: fontFamily,
                 fontSize: `${fontSize}pt`,

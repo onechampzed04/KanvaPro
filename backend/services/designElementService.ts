@@ -3,10 +3,12 @@ import db from '../config/db';
 import { v4 as uuidv4 } from 'uuid';
 
 export const designElementService = {
-    // Lấy danh sách elements theo pageId
+    // Lấy danh sách elements theo pageId - chỉ lấy chưa bị soft-delete
     getElementsByPageId: async (pageId: string) => {
         const result = await db.query(
-            `SELECT * FROM design_elements WHERE page_id = $1 ORDER BY z_index ASC`, 
+            `SELECT * FROM design_elements 
+             WHERE page_id = $1 AND is_deleted = false 
+             ORDER BY z_index ASC`, 
             [pageId]
         );
         return result.rows.map((el: any) => {
@@ -15,26 +17,44 @@ export const designElementService = {
         });
     },
 
-    // ─── BULK UPSERT với UNNEST: 1 câu SQL duy nhất thay vì vòng lặp for ──────
-    // Fix: dùng $5::text[] thay vì $5::jsonb[] vì pg driver không auto-cast
-    // JSON strings → jsonb[]. Thay vào đó cast t.properties::jsonb trong SELECT.
+    // ─── BULK UPSERT với UNNEST: 1 câu SQL duy nhất thay vì vòng lặp for ─────
+    // Soft Delete: không dùng DELETE vật lý — đánh dấu is_deleted = true
     syncElementsForPage: async (client: any, pageId: string, elements: any[]) => {
         if (!elements || !Array.isArray(elements)) return;
 
         const incomingIds = elements.map(el => el.id).filter(Boolean);
 
-        // 1. Xóa các element không còn tồn tại trên UI
+        // 1. SOFT DELETE: đánh dấu các element không còn tồn tại trên UI
         if (incomingIds.length > 0) {
             await client.query(
-                `DELETE FROM design_elements WHERE page_id = $1 AND id != ALL($2::uuid[])`,
+                `UPDATE design_elements 
+                 SET is_deleted = true, deleted_at = NOW() 
+                 WHERE page_id = $1 
+                   AND NOT (id = ANY($2::uuid[]))
+                   AND is_deleted = false`,
                 [pageId, incomingIds]
             );
         } else {
-            await client.query(`DELETE FROM design_elements WHERE page_id = $1`, [pageId]);
+            await client.query(
+                `UPDATE design_elements 
+                 SET is_deleted = true, deleted_at = NOW() 
+                 WHERE page_id = $1 AND is_deleted = false`,
+                [pageId]
+            );
             return; // Không có element nào để upsert
         }
 
         // 2. Chuẩn bị dữ liệu dưới dạng các mảng song song
+        // [FIX]: Deduplicate theo ID trước khi xây dựng mảng UNNEST.
+        // Khi Undo + OT cùng khôi phục một element → mảng có thể có ID trùng lặp.
+        // PostgreSQL ON CONFLICT DO UPDATE không thể xử lý cùng 1 row 2 lần trong 1 câu lệnh.
+        // Giữ lại phần tử CUỐI CÙNG (index cao nhất) nếu trùng ID.
+        const seenIds = new Map<string, any>();
+        for (const el of elements) {
+            if (el.id) seenIds.set(el.id, el);
+        }
+        const deduplicatedElements = Array.from(seenIds.values());
+
         const ids: string[]       = [];
         const pageIds: string[]   = [];
         const elemTypes: string[] = [];
@@ -43,8 +63,8 @@ export const designElementService = {
         const lockedList: boolean[]  = [];
         const visibleList: boolean[] = [];
 
-        for (let i = 0; i < elements.length; i++) {
-            const el = elements[i];
+        for (let i = 0; i < deduplicatedElements.length; i++) {
+            const el = deduplicatedElements[i];
             ids.push(el.id || uuidv4());
             pageIds.push(pageId);
             elemTypes.push(el.element_type || el.type || 'shape');
@@ -62,22 +82,22 @@ export const designElementService = {
 
         // 3. BULK INSERT/UPSERT với 1 câu SQL duy nhất
         // - $3::text[]          : element_type nhận dưới dạng text
-        // - t.element_type::element_type : cast TEXT → PostgreSQL ENUM 'element_type'
         // - $5::text[], t.properties::jsonb : cast TEXT → jsonb
         await client.query(`
-            INSERT INTO design_elements (id, page_id, element_type, z_index, properties, locked, visible)
+            INSERT INTO design_elements (id, page_id, element_type, z_index, properties, locked, visible, is_deleted)
             SELECT
                 t.id,
                 t.page_id,
-                t.elem_type,
+                t.elem_type::element_type,
                 t.z_index,
                 t.properties::jsonb,
                 t.locked,
-                t.visible
+                t.visible,
+                false  -- is_deleted = false khi upsert
             FROM UNNEST(
                 $1::uuid[],
                 $2::uuid[],
-                $3::element_type[],
+                $3::text[],
                 $4::int[],
                 $5::text[],
                 $6::boolean[],
@@ -88,6 +108,8 @@ export const designElementService = {
                 properties = EXCLUDED.properties,
                 locked     = EXCLUDED.locked,
                 visible    = EXCLUDED.visible,
+                is_deleted = false,
+                deleted_at = NULL,
                 updated_at = NOW()
         `, [ids, pageIds, elemTypes, zIndices, propsList, lockedList, visibleList]);
     }

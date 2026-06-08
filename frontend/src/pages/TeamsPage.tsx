@@ -1,10 +1,12 @@
 // src/pages/TeamsPage.tsx
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Plus, ChevronLeft, Crown, Shield, Eye, Trash2, Mail, Layout, FileText, X, Check, Image as ImageIcon, Video, Monitor, Table } from 'lucide-react';
-import { fetchMyTeams, createTeam, fetchTeamById, inviteTeamMember, removeTeamMember, createDesign } from '../api/api';
-import { useAuth } from '../context/AuthContext';
+import { io } from 'socket.io-client';
+import { Users, Plus, ChevronLeft, Crown, Shield, Eye, Trash2, Mail, Layout, FileText, X, Check, Video, Lock, AlertTriangle, Copy, ArrowRight, LogOut, RefreshCw, Settings, Upload, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { fetchMyTeams, createTeam, fetchTeamById, inviteTeamMember, removeTeamMember, updateTeamMemberRole, createDesign, previewTransferOwnership, transferTeamOwnership, updateTeam, updateTeamAvatar } from '../api/api';
+import { useAuth, isSubscriptionActive } from '../context/AuthContext';
+import TeamOnboarding from '../components/dashboard/TeamOnboarding';
 
 const ROLE_CONFIG: Record<string, { label: string; color: string; bg: string; icon: any }> = {
   owner: { label: 'Owner', color: 'text-amber-600', bg: 'bg-amber-50', icon: Crown },
@@ -12,6 +14,239 @@ const ROLE_CONFIG: Record<string, { label: string; color: string; bg: string; ic
   member: { label: 'Member', color: 'text-sky-600', bg: 'bg-sky-50', icon: Users },
   viewer: { label: 'Viewer', color: 'text-slate-500', bg: 'bg-slate-100', icon: Eye },
 };
+
+// ─── Constants for Crop ─────────────────────────────────────────────────────────
+const CROP_SIZE     = 280;          // px – hiển thị crop circle
+const OUTPUT_SIZE   = 512;          // px – ảnh output lên server
+
+// ─── Crop Modal ─────────────────────────────────────────────────────────────────
+interface CropModalProps {
+  src: string;
+  onConfirm: (blob: Blob) => void;
+  onCancel: () => void;
+}
+
+function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
+  const canvasRef   = React.useRef<HTMLCanvasElement>(null);
+  const imageRef    = React.useRef<HTMLImageElement | null>(null);
+  const isDragging  = React.useRef(false);
+  const lastPos     = React.useRef({ x: 0, y: 0 });
+
+  const [zoom,   setZoom]   = useState(1);          // 1 = fit
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [imgNaturalSize, setImgNaturalSize] = useState({ w: 1, h: 1 });
+  const [minZoom, setMinZoom] = useState(1);
+
+  // ── Load image & compute initial fit zoom ──────────────────────────────────
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      imageRef.current = img;
+      const fz = Math.max(CROP_SIZE / img.naturalWidth, CROP_SIZE / img.naturalHeight);
+      setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+      setMinZoom(fz);
+      setZoom(fz);
+      setOffset({ x: 0, y: 0 });
+    };
+    img.src = src;
+  }, [src]);
+
+  // ── Clamp offset so image always covers crop circle ────────────────────────
+  const clamp = React.useCallback(
+    (ox: number, oy: number, z: number) => {
+      const scaledW = imgNaturalSize.w * z;
+      const scaledH = imgNaturalSize.h * z;
+      const halfCrop = CROP_SIZE / 2;
+      const maxX = Math.max(0, (scaledW - CROP_SIZE) / 2);
+      const maxY = Math.max(0, (scaledH - CROP_SIZE) / 2);
+      return {
+        x: Math.max(-maxX, Math.min(maxX, ox)),
+        y: Math.max(-maxY, Math.min(maxY, oy)),
+      };
+    },
+    [imgNaturalSize],
+  );
+
+  // ── Draw canvas ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const img    = imageRef.current;
+    if (!canvas || !img) return;
+
+    const ctx = canvas.getContext('2d')!;
+    canvas.width  = CROP_SIZE;
+    canvas.height = CROP_SIZE;
+
+    ctx.clearRect(0, 0, CROP_SIZE, CROP_SIZE);
+
+    const scaledW = imgNaturalSize.w * zoom;
+    const scaledH = imgNaturalSize.h * zoom;
+    const cx = CROP_SIZE / 2 + offset.x - scaledW / 2;
+    const cy = CROP_SIZE / 2 + offset.y - scaledH / 2;
+
+    // 1. Vẽ ảnh
+    ctx.drawImage(img, cx, cy, scaledW, scaledH);
+
+    // 2. Lớp tối bên NGOÀI vòng tròn (evenodd = đục lỗ ở giữa)
+    ctx.save();
+    ctx.beginPath();
+    // Hình chữ nhật bao toàn bộ canvas
+    ctx.rect(0, 0, CROP_SIZE, CROP_SIZE);
+    // Vòng tròn cắt ra (counterclockwise = tạo lỗ)
+    ctx.arc(CROP_SIZE / 2, CROP_SIZE / 2, CROP_SIZE / 2 - 1, 0, Math.PI * 2, true);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+    ctx.fill('evenodd');
+    ctx.restore();
+
+    // 3. Viền tròn trắng
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(CROP_SIZE / 2, CROP_SIZE / 2, CROP_SIZE / 2 - 1, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }, [zoom, offset, imgNaturalSize]);
+
+  // ── Pointer events ─────────────────────────────────────────────────────────
+  const onPointerDown = (e: React.PointerEvent) => {
+    isDragging.current = true;
+    lastPos.current    = { x: e.clientX, y: e.clientY };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!isDragging.current) return;
+    const dx = e.clientX - lastPos.current.x;
+    const dy = e.clientY - lastPos.current.y;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    setOffset(prev => clamp(prev.x + dx, prev.y + dy, zoom));
+  };
+  const onPointerUp = () => { isDragging.current = false; };
+
+  const onWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.001;
+    setZoom(prev => {
+      const next = Math.max(minZoom, Math.min(prev + delta * prev, minZoom * 8));
+      setOffset(o => clamp(o.x, o.y, next));
+      return next;
+    });
+  };
+
+  const changeZoom = (dir: 1 | -1) => {
+    setZoom(prev => {
+      const next = Math.max(minZoom, Math.min(prev + dir * 0.15 * prev, minZoom * 8));
+      setOffset(o => clamp(o.x, o.y, next));
+      return next;
+    });
+  };
+
+  const reset = () => {
+    setZoom(minZoom);
+    setOffset({ x: 0, y: 0 });
+  };
+
+  // ── Export circular crop → blob ────────────────────────────────────────────
+  const handleConfirm = () => {
+    const img = imageRef.current;
+    if (!img) return;
+
+    const out  = document.createElement('canvas');
+    out.width  = OUTPUT_SIZE;
+    out.height = OUTPUT_SIZE;
+    const ctx  = out.getContext('2d')!;
+
+    // Scale factor from CROP_SIZE → OUTPUT_SIZE
+    const scale     = OUTPUT_SIZE / CROP_SIZE;
+    const scaledW   = imgNaturalSize.w * zoom * scale;
+    const scaledH   = imgNaturalSize.h * zoom * scale;
+    const cx        = OUTPUT_SIZE / 2 + offset.x * scale - scaledW / 2;
+    const cy        = OUTPUT_SIZE / 2 + offset.y * scale - scaledH / 2;
+
+    // Clip to circle
+    ctx.beginPath();
+    ctx.arc(OUTPUT_SIZE / 2, OUTPUT_SIZE / 2, OUTPUT_SIZE / 2, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(img, cx, cy, scaledW, scaledH);
+
+    out.toBlob(blob => { if (blob) onConfirm(blob); }, 'image/jpeg', 0.92);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onCancel}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-white rounded-[28px] shadow-2xl p-7 flex flex-col items-center gap-5 w-full max-w-sm"
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-extrabold text-slate-800 self-start">Căn chỉnh ảnh đại diện</h3>
+        <p className="text-xs text-slate-400 font-medium self-start -mt-3">Kéo để di chuyển · Cuộn / nút để zoom</p>
+
+        {/* Canvas crop area — container VUÔNG để vùng tối bên ngoài vòng tròn hiển thị */}
+        <div
+          className="cursor-grab active:cursor-grabbing select-none rounded-2xl overflow-hidden shadow-xl"
+          style={{ width: CROP_SIZE, height: CROP_SIZE }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+          onWheel={onWheel}
+        >
+          <canvas ref={canvasRef} style={{ display: 'block', width: CROP_SIZE, height: CROP_SIZE }} />
+        </div>
+
+        {/* Zoom controls */}
+        <div className="flex items-center gap-3 w-full">
+          <button onClick={() => changeZoom(-1)} className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition">
+            <ZoomOut size={18} />
+          </button>
+          <input
+            type="range"
+            min={minZoom * 100}
+            max={minZoom * 800}
+            value={zoom * 100}
+            onChange={e => {
+              const z = Number(e.target.value) / 100;
+              setZoom(z);
+              setOffset(o => clamp(o.x, o.y, z));
+            }}
+            className="flex-1 accent-sky-500 h-1.5 rounded-full cursor-pointer"
+          />
+          <button onClick={() => changeZoom(1)} className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition">
+            <ZoomIn size={18} />
+          </button>
+          <button onClick={reset} title="Đặt lại" className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 transition">
+            <RotateCcw size={16} />
+          </button>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-3 w-full mt-1">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-3 rounded-2xl bg-slate-100 text-slate-700 font-bold text-sm hover:bg-slate-200 transition"
+          >
+            Hủy
+          </button>
+          <button
+            onClick={handleConfirm}
+            className="flex-1 py-3 rounded-2xl bg-sky-500 hover:bg-sky-600 text-white font-bold text-sm shadow-lg shadow-sky-500/25 transition"
+          >
+            Xác nhận
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
 
 export default function TeamsPage() {
   const { user } = useAuth();
@@ -23,12 +258,25 @@ export default function TeamsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showCreateDesignMenu, setShowCreateDesignMenu] = useState(false);
+
+  // ─── [HARD CAP] Modal nâng cấp gói khi vượt giới hạn thành viên ──────────
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showUpgradeSeatsModal, setShowUpgradeSeatsModal] = useState(false);
+  const [showBuyTeamModal, setShowBuyTeamModal] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
-  const [newTeamMax, setNewTeamMax] = useState(10);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('member');
   const [actionLoading, setActionLoading] = useState(false);
+  const [showTransferPreview, setShowTransferPreview] = useState<any>(null);
+  const [transferTargetId, setTransferTargetId] = useState('');
   const [toast, setToast] = useState('');
+
+  // ─── Team Settings (Tên & Avatar) ──────────────────────────────────────────
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsName, setSettingsName] = useState('');
+  const [settingsAvatarFile, setSettingsAvatarFile] = useState<File | null>(null);
+  const [settingsAvatarPreview, setSettingsAvatarPreview] = useState<string | null>(null);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -38,7 +286,9 @@ export default function TeamsPage() {
   const loadTeams = async () => {
     try {
       const data = await fetchMyTeams();
-      setTeams(data.teams || []);
+      // [NEW] Lọc bỏ Personal Team (max_members=1) — mô hình mới không dùng personal team
+      const realTeams = (data.teams || []).filter((t: any) => !t.is_personal && t.max_members !== 1);
+      setTeams(realTeams);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -54,11 +304,56 @@ export default function TeamsPage() {
 
   useEffect(() => { loadTeams(); }, []);
 
+  // ─── [REALTIME] Socket.IO Listeners ────────────────────────────────────────
+  useEffect(() => {
+    if (!activeTeam?.id || !user) return;
+
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const socketUrl = isDev ? 'http://localhost:3000' : '';
+    const socket = io(socketUrl, {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+    });
+
+    socket.on('connect', () => {
+      socket.emit('join-team', { teamId: activeTeam.id, token });
+    });
+
+    socket.on('team:members_changed', (data: { teamId: string }) => {
+      if (data.teamId === activeTeam.id) {
+        loadTeam(activeTeam.id);
+        loadTeams();
+      }
+    });
+
+    socket.on('team:you_were_removed', (data: { teamId: string, message: string }) => {
+      if (data.teamId === activeTeam.id) {
+        setActiveTeam(null);
+        loadTeams();
+      }
+    });
+
+    socket.on('team:you_are_now_owner', (data: { teamId: string, message: string }) => {
+      if (data.teamId === activeTeam.id) {
+        // Data sẽ tự động được reload nhờ team:members_changed
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [activeTeam?.id, user?.id]);
+
   const handleCreateTeam = async () => {
     if (!newTeamName.trim()) return;
     setActionLoading(true);
     try {
-      await createTeam({ name: newTeamName.trim(), max_members: newTeamMax });
+      // ─── [HARD CAP] Không truyền max_members — Backend tự quyết theo gói ──
+      await createTeam({ name: newTeamName.trim() });
       await loadTeams();
       setShowCreateModal(false);
       setNewTeamName('');
@@ -76,17 +371,148 @@ export default function TeamsPage() {
       setShowInviteModal(false);
       setInviteEmail('');
       showToast('✅ Đã mời thành viên!');
-    } catch (e: any) { showToast(`❌ ${e.message}`); }
+    } catch (e: any) {
+      // ─── [HARD CAP] Backend trả MemberQuotaExceeded → Hiện modal nâng cấp ─
+      if (e.message?.includes('đạt số lượng thành viên tối đa')) {
+        showToast(`❌ ${e.message}`);
+        setShowInviteModal(false);
+        setShowUpgradeModal(true);
+      } else {
+        showToast(`❌ ${e.message}`);
+      }
+    }
     finally { setActionLoading(false); }
+  };
+
+  // ─── [DESIGN RBAC] Clone bản vẽ Team về Personal Workspace ────────────────
+  const handleCloneToPersonal = async (designId: string, title: string) => {
+    if (!confirm(`Nhân bản "${title}" về không gian cá nhân của bạn?`)) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/teams/designs/${designId}/clone-to-personal`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      showToast('✅ Đã nhân bản về không gian cá nhân!');
+      if (data.designId) navigate(`/design/${data.designId}`);
+    } catch (e: any) { showToast(`❌ ${e.message}`); }
   };
 
   const handleRemoveMember = async (memberId: string, memberName: string) => {
     if (!activeTeam || !confirm(`Xóa "${memberName}" khỏi nhóm?`)) return;
     try {
       await removeTeamMember(activeTeam.id, memberId);
-      await loadTeam(activeTeam.id);
+      // Socket sẽ tự trigger reload data qua team:members_changed
       showToast('✅ Đã xóa thành viên');
     } catch (e: any) { showToast(`❌ ${e.message}`); }
+  };
+
+  const handleChangeRole = async (memberId: string, newRole: string) => {
+    if (!activeTeam) return;
+    try {
+      await updateTeamMemberRole(activeTeam.id, memberId, newRole);
+      // Socket sẽ trigger reload
+      showToast('✅ Đã cập nhật vai trò');
+    } catch (e: any) { showToast(`❌ ${e.message}`); }
+  };
+
+  const handleLeaveTeam = async () => {
+    if (!activeTeam || !confirm(activeTeam.members?.length === 1 ? 'Bạn là thành viên duy nhất. Rời nhóm sẽ giải tán nhóm. Tiếp tục?' : 'Bạn có chắc chắn muốn rời nhóm này?')) return;
+    try {
+      await removeTeamMember(activeTeam.id, user!.id);
+      showToast('✅ Đã rời nhóm');
+      setActiveTeam(null);
+      await loadTeams();
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    }
+  };
+
+  const handlePreviewTransfer = async (targetUserId: string) => {
+    if (!activeTeam) return;
+    try {
+      const data = await previewTransferOwnership(activeTeam.id, targetUserId);
+      setTransferTargetId(targetUserId);
+      setShowTransferPreview(data);
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    }
+  };
+
+  const handleConfirmTransfer = async () => {
+    if (!activeTeam || !transferTargetId) return;
+    setActionLoading(true);
+    try {
+      await transferTeamOwnership(activeTeam.id, transferTargetId);
+      showToast('✅ Chuyển nhượng quyền Owner thành công');
+      setShowTransferPreview(null);
+      setTransferTargetId('');
+      // Socket sẽ trigger team:members_changed
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+
+  const openSettingsModal = () => {
+    if (!activeTeam) return;
+    setSettingsName(activeTeam.name);
+    setSettingsAvatarFile(null);
+    setSettingsAvatarPreview(activeTeam.avatar_url || null);
+    setShowSettingsModal(true);
+  };
+
+  const handleAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        showToast('❌ Vui lòng chọn file hình ảnh!');
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        showToast('❌ Ảnh không được vượt quá 5MB');
+        return;
+      }
+      setCropSrc(URL.createObjectURL(file));
+    }
+  };
+
+  const handleCropConfirm = (blob: Blob) => {
+    setCropSrc(null);
+    const file = new File([blob], 'team_avatar.jpg', { type: 'image/jpeg' });
+    setSettingsAvatarFile(file);
+    setSettingsAvatarPreview(URL.createObjectURL(blob));
+  };
+
+  const handleCropCancel = () => {
+    if (cropSrc) URL.revokeObjectURL(cropSrc);
+    setCropSrc(null);
+  };
+
+  const handleSaveSettings = async () => {
+    if (!activeTeam || !settingsName.trim()) return;
+    setActionLoading(true);
+    try {
+      if (settingsName.trim() !== activeTeam.name) {
+        await updateTeam(activeTeam.id, settingsName.trim());
+      }
+      if (settingsAvatarFile) {
+        await updateTeamAvatar(activeTeam.id, settingsAvatarFile);
+      }
+      await loadTeam(activeTeam.id);
+      await loadTeams();
+      setShowSettingsModal(false);
+      showToast('✅ Đã cập nhật thông tin nhóm');
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleCreateTeamDesign = async (type: string, pageType: string, w: number, h: number) => {
@@ -110,16 +536,51 @@ export default function TeamsPage() {
     }
   };
 
+  // ── [NEW] Nếu user chưa có team nào → Hiện màn hình Onboarding ──────────────
+  if (!loading && teams.length === 0) {
+    return <TeamOnboarding onTeamCreated={loadTeams} />;
+  }
+
+  // ── [NEW] Nếu user muốn mua thêm chỗ → Bật Onboarding chế độ Nâng cấp ──
+  if (showUpgradeSeatsModal && activeTeam) {
+    return (
+      <div className="relative">
+        <button 
+          onClick={() => setShowUpgradeSeatsModal(false)}
+          className="absolute top-4 left-4 z-50 bg-white p-2 rounded-full shadow-md text-slate-500 hover:text-indigo-600 transition"
+        >
+          <ChevronLeft size={24} />
+        </button>
+        <TeamOnboarding 
+          isUpgrade={true} 
+          currentMaxMembers={activeTeam.max_members} 
+        />
+      </div>
+    );
+  }
+
+  if (showBuyTeamModal) {
+    return (
+      <div className="relative">
+        <button 
+          onClick={() => setShowBuyTeamModal(false)}
+          className="absolute top-4 left-4 z-50 bg-white p-2 rounded-full shadow-md text-slate-500 hover:text-indigo-600 transition"
+        >
+          <ChevronLeft size={24} />
+        </button>
+        <TeamOnboarding onTeamCreated={() => {
+          setShowBuyTeamModal(false);
+          loadTeams();
+        }} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 font-sans flex flex-col">
       {/* Header */}
       <header className="bg-white/70 backdrop-blur-xl border-b border-slate-100 px-8 py-4 flex items-center justify-between sticky top-0 z-30 shadow-sm">
         <div className="flex items-center gap-4">
-          <Link to="/" className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition">
-            <ChevronLeft size={18} />
-            <span className="text-sm font-bold">Dashboard</span>
-          </Link>
-          <div className="w-px h-5 bg-slate-200" />
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center">
               <Users size={16} className="text-indigo-500" />
@@ -128,7 +589,13 @@ export default function TeamsPage() {
           </div>
         </div>
         <button
-          onClick={() => setShowCreateModal(true)}
+          onClick={() => {
+            if (!isSubscriptionActive(user)) {
+              setShowBuyTeamModal(true);
+            } else {
+              setShowCreateModal(true);
+            }
+          }}
           className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 text-white font-bold rounded-xl text-sm shadow-md transition-all hover:-translate-y-0.5"
         >
           <Plus size={15} /> Tạo nhóm mới
@@ -140,7 +607,7 @@ export default function TeamsPage() {
         {toast && (
           <motion.div
             initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-            className="fixed top-20 right-6 z-50 bg-slate-800 text-white px-5 py-3 rounded-2xl shadow-xl font-bold text-sm"
+            className="fixed top-20 right-6 z-[9999] bg-slate-800 text-white px-5 py-3 rounded-2xl shadow-xl font-bold text-sm"
           >
             {toast}
           </motion.div>
@@ -165,6 +632,12 @@ export default function TeamsPage() {
               </div>
             ) : teams.map((team) => {
               const RoleIcon = ROLE_CONFIG[team.my_role]?.icon || Users;
+              // ─── Plan Badge cho Sidebar ─────────────────────────────────────
+              const planBadge = team.is_personal
+                ? { label: 'Personal', cls: 'bg-violet-100 text-violet-600' }
+                : team.is_pro
+                  ? { label: team.plan_name || 'Pro', cls: 'bg-amber-100 text-amber-600' }
+                  : { label: 'Free', cls: 'bg-slate-100 text-slate-500' };
               return (
                 <button
                   key={team.id}
@@ -174,11 +647,20 @@ export default function TeamsPage() {
                     : 'hover:bg-slate-50 border border-transparent'
                     }`}
                 >
-                  <div className="w-10 h-10 bg-gradient-to-br from-indigo-400 to-violet-400 rounded-xl flex items-center justify-center text-white font-black text-lg shrink-0 shadow">
-                    {team.name[0]?.toUpperCase()}
+                  <div className="w-10 h-10 bg-gradient-to-br from-indigo-400 to-violet-400 rounded-xl flex items-center justify-center text-white font-black text-lg shrink-0 shadow overflow-hidden">
+                    {team.avatar_url ? (
+                      <img src={team.avatar_url} alt="Team" className="w-full h-full object-cover" />
+                    ) : (
+                      team.name[0]?.toUpperCase()
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-sm text-slate-800 truncate">{team.name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-bold text-sm text-slate-800 truncate">{team.name}</p>
+                      <span className={`shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wide ${planBadge.cls}`}>
+                        {planBadge.label}
+                      </span>
+                    </div>
                     <div className="flex items-center gap-1 mt-0.5">
                       <RoleIcon size={10} className={ROLE_CONFIG[team.my_role]?.color} />
                       <span className={`text-[10px] font-bold ${ROLE_CONFIG[team.my_role]?.color}`}>
@@ -208,15 +690,57 @@ export default function TeamsPage() {
             </div>
           ) : (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+              {/* ─── [DOWNGRADE] Banner Read-Only khi Over Quota ─────────── */}
+              {activeTeam.is_read_only && (
+                <div className="mb-6 flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl px-4 py-3">
+                  <AlertTriangle size={18} className="shrink-0" />
+                  <div className="flex-1">
+                    <p className="font-bold text-sm">Nhóm đang ở chế độ Chỉ xem (Read-Only)</p>
+                    <p className="text-xs mt-0.5">Gói cước đã hết hạn và nhóm đang vượt giới hạn thành viên. Hãy nâng cấp hoặc kick bớt thành viên để mở khóa.</p>
+                  </div>
+                  <Link to="/billing" className="flex items-center gap-1 text-xs font-bold bg-red-600 text-white px-3 py-1.5 rounded-xl hover:bg-red-700 transition">
+                    Nâng cấp <ArrowRight size={12} />
+                  </Link>
+                </div>
+              )}
               {/* Team header */}
               <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 bg-gradient-to-br from-indigo-400 to-violet-500 rounded-2xl flex items-center justify-center text-white font-black text-3xl shadow-lg">
-                    {activeTeam.name[0]?.toUpperCase()}
+                  <div className="w-16 h-16 bg-gradient-to-br from-indigo-400 to-violet-500 rounded-2xl flex items-center justify-center text-white font-black text-3xl shadow-lg overflow-hidden shrink-0">
+                    {activeTeam.avatar_url ? (
+                      <img src={activeTeam.avatar_url} alt="Team Avatar" className="w-full h-full object-cover" />
+                    ) : (
+                      activeTeam.name[0]?.toUpperCase()
+                    )}
                   </div>
                   <div>
-                    <h2 className="text-2xl font-extrabold text-slate-800">{activeTeam.name}</h2>
-                    <p className="text-sm text-slate-400 mt-0.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-2xl font-extrabold text-slate-800">{activeTeam.name}</h2>
+                      {activeTeam.my_role === 'owner' && (
+                        <button
+                          onClick={openSettingsModal}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                          title="Cài đặt nhóm"
+                        >
+                          <Settings size={16} />
+                        </button>
+                      )}
+                      {/* ─── Plan Badge ──────────────────────────────────────── */}
+                      {activeTeam.is_personal ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-violet-100 text-violet-700 text-xs font-black uppercase tracking-wide border border-violet-200">
+                          <span>✦</span> Personal
+                        </span>
+                      ) : activeTeam.is_pro ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-400 to-orange-400 text-white text-xs font-black uppercase tracking-wide shadow-sm">
+                          <Crown size={10} /> {activeTeam.plan_name || 'Pro'}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 text-xs font-black uppercase tracking-wide border border-slate-200">
+                          Free
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-400 mt-1">
                       {activeTeam.members?.length} / {activeTeam.max_members} thành viên
                       {activeTeam.my_role && (
                         <span className={`ml-2 font-bold ${ROLE_CONFIG[activeTeam.my_role]?.color}`}>
@@ -226,14 +750,41 @@ export default function TeamsPage() {
                     </p>
                   </div>
                 </div>
-                {['owner', 'admin'].includes(activeTeam.my_role) && (
-                  <button
-                    onClick={() => setShowInviteModal(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 font-bold rounded-xl text-sm transition"
-                  >
-                    <Mail size={14} /> Mời thành viên
-                  </button>
-                )}
+                {['owner', 'admin'].includes(activeTeam.my_role) && !activeTeam.is_personal && (() => {
+                  // ─── [HARD CAP] Tính giới hạn hiệu lực ────────────────────
+                  const effectiveMax = activeTeam.is_pro && activeTeam.plan_max_members
+                    ? activeTeam.plan_max_members
+                    : activeTeam.max_members;
+                  const isFull = (activeTeam.members?.length ?? 0) >= effectiveMax;
+                  return (
+                    <div className="flex items-center gap-2">
+                      {/* Nút Thêm chỗ cho chủ nhóm Pro */}
+                      {activeTeam.is_pro && activeTeam.my_role === 'owner' && (
+                        <button
+                          onClick={() => setShowUpgradeSeatsModal(true)}
+                          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white font-bold rounded-xl text-sm transition shadow-sm"
+                          title="Mua thêm số lượng thành viên cho nhóm"
+                        >
+                          <Crown size={14} /> Thêm chỗ
+                        </button>
+                      )}
+                      
+                      {/* Nút Mời thành viên */}
+                      <button
+                        onClick={() => isFull ? setShowUpgradeModal(true) : setShowInviteModal(true)}
+                        disabled={activeTeam.is_read_only}
+                        title={isFull ? `Đã đạt giới hạn ${effectiveMax} thành viên. Nâng cấp gói để mời thêm.` : 'Mời thành viên'}
+                        className={`flex items-center gap-2 px-4 py-2 border font-bold rounded-xl text-sm transition ${isFull
+                          ? 'bg-amber-50 text-amber-600 border-amber-200 cursor-not-allowed'
+                          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border-emerald-200'
+                          } disabled:opacity-50`}
+                      >
+                        {isFull ? <Lock size={14} /> : <Mail size={14} />}
+                        {isFull ? `Đã đầy (${activeTeam.members?.length}/${effectiveMax})` : 'Mời thành viên'}
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Members */}
@@ -246,7 +797,9 @@ export default function TeamsPage() {
                     const rc = ROLE_CONFIG[m.role] || ROLE_CONFIG.member;
                     const RoleIcon = rc.icon;
                     const isMe = m.id === user?.id;
-                    const canRemove = ['owner', 'admin'].includes(activeTeam.my_role) && m.role !== 'owner' && !isMe;
+                    const canRemove = ['owner', 'admin'].includes(activeTeam.my_role) && m.role !== 'owner' && !isMe && (activeTeam.my_role === 'owner' || m.role !== 'admin');
+                    const canChangeRole = !isMe && m.role !== 'owner' && (activeTeam.my_role === 'owner' || (activeTeam.my_role === 'admin' && m.role !== 'admin'));
+
                     return (
                       <div key={m.id}
                         className={`flex items-center gap-3 p-3 rounded-2xl border transition ${isMe ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-slate-100 hover:border-slate-200'}`}
@@ -264,14 +817,60 @@ export default function TeamsPage() {
                           </p>
                           <p className="text-[11px] text-slate-400 truncate">{m.email}</p>
                         </div>
-                        <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${rc.bg}`}>
-                          <RoleIcon size={10} className={rc.color} />
-                          <span className={`text-[10px] font-bold ${rc.color}`}>{rc.label}</span>
-                        </div>
+
+                        {canChangeRole ? (
+                          <div className="relative">
+                            <select
+                              value={m.role}
+                              onChange={(e) => handleChangeRole(m.id, e.target.value)}
+                              className={`appearance-none outline-none cursor-pointer flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold pr-6 ${rc.bg} ${rc.color}`}
+                            >
+                              {activeTeam.my_role === 'owner' && <option value="admin">Admin</option>}
+                              <option value="member">Member</option>
+                              <option value="viewer">Viewer</option>
+                            </select>
+                            <div className={`pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 ${rc.color}`}>
+                              <ChevronLeft size={10} className="-rotate-90" />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${rc.bg}`}>
+                            <RoleIcon size={10} className={rc.color} />
+                            <span className={`text-[10px] font-bold ${rc.color}`}>{rc.label}</span>
+                          </div>
+                        )}
+                        {isMe && activeTeam.my_role !== 'owner' && !activeTeam.is_personal && (
+                          <button
+                            onClick={handleLeaveTeam}
+                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                            title="Rời nhóm"
+                          >
+                            <LogOut size={13} />
+                          </button>
+                        )}
+                        {isMe && activeTeam.my_role === 'owner' && activeTeam.members?.length === 1 && !activeTeam.is_personal && (
+                          <button
+                            onClick={handleLeaveTeam}
+                            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                            title="Giải tán nhóm"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                        {activeTeam.my_role === 'owner' && !isMe && !activeTeam.is_personal && (
+                          <button
+                            onClick={() => handlePreviewTransfer(m.id)}
+                            className="p-1.5 text-slate-300 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition"
+                            title="Chuyển quyền Owner"
+                          >
+                            <RefreshCw size={13} />
+                          </button>
+                        )}
                         {canRemove && (
                           <button
                             onClick={() => handleRemoveMember(m.id, m.name)}
                             className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                            title="Xóa thành viên"
                           >
                             <Trash2 size={13} />
                           </button>
@@ -282,11 +881,11 @@ export default function TeamsPage() {
                 </div>
               </section>
 
-              {/* Designs */}
+              {/* Designs (Personal only, not shared) */}
               <section>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-extrabold text-slate-500 uppercase tracking-widest">
-                    Thiết kế của nhóm ({activeTeam.designs?.length || 0})
+                    Thiết kế của bạn ({activeTeam.designs?.filter((d: any) => d.user_id === user?.id).length || 0})
                   </h3>
                   {['owner', 'admin', 'member'].includes(activeTeam.my_role) && (
                     <div className="relative">
@@ -310,7 +909,7 @@ export default function TeamsPage() {
                               <button onClick={() => handleCreateTeamDesign('presentation', 'canvas', 1920, 1080)} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 rounded-lg text-left font-bold transition">
                                 <Layout size={16} /> Presentation
                               </button>
-                              <button onClick={() => handleCreateTeamDesign('document', 'doc', 800, null as any)} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 rounded-lg text-left font-bold transition">
+                              <button onClick={() => handleCreateTeamDesign('document', 'doc', 800, 1131)} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 rounded-lg text-left font-bold transition">
                                 <FileText size={16} /> Document
                               </button>
                               <button onClick={() => handleCreateTeamDesign('video', 'canvas', 1920, 1080)} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 rounded-lg text-left font-bold transition">
@@ -323,35 +922,36 @@ export default function TeamsPage() {
                     </div>
                   )}
                 </div>
-                {activeTeam.designs?.length === 0 ? (
+                {activeTeam.designs?.filter((d: any) => d.user_id === user?.id).length === 0 ? (
                   <div className="py-10 text-center text-slate-400 text-sm bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                     <Layout size={28} className="mx-auto mb-2 text-slate-300" />
-                    Chưa có thiết kế nào trong nhóm
+                    Chưa có thiết kế nào của bạn trong nhóm
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                    {activeTeam.designs?.map((d: any) => (
-                      <Link key={d.id} to={`/design/${d.id}`}
-                        className="bg-white rounded-2xl border border-slate-100 hover:shadow-lg hover:border-indigo-200 transition-all group overflow-hidden"
-                      >
-                        <div className="aspect-video bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden">
-                          {d.thumbnail_url ? (
-                            <img src={d.thumbnail_url} alt={d.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                          ) : (
-                            <div className="text-slate-200">
-                              {d.design_type === 'document' ? <FileText size={30} strokeWidth={1.5} /> : <Layout size={30} strokeWidth={1.5} />}
-                            </div>
-                          )}
-                        </div>
-                        <div className="p-3">
-                          <p className="font-bold text-sm text-slate-800 truncate group-hover:text-indigo-600 transition">{d.title}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{new Date(d.updated_at).toLocaleDateString('vi-VN')}</p>
-                        </div>
-                      </Link>
+                    {activeTeam.designs?.filter((d: any) => d.user_id === user?.id).map((d: any) => (
+                      <div key={d.id} className="bg-white rounded-2xl border border-slate-100 hover:shadow-lg hover:border-indigo-200 transition-all group overflow-hidden relative">
+                        <Link to={`/design/${d.id}`} className="block">
+                          <div className="aspect-video bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden">
+                            {d.thumbnail_url ? (
+                              <img src={d.thumbnail_url} alt={d.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                            ) : (
+                              <div className="text-slate-200">
+                                {d.design_type === 'document' ? <FileText size={30} strokeWidth={1.5} /> : <Layout size={30} strokeWidth={1.5} />}
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-3">
+                            <p className="font-bold text-sm text-slate-800 truncate group-hover:text-indigo-600 transition">{d.title}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{new Date(d.updated_at).toLocaleDateString('vi-VN')}</p>
+                          </div>
+                        </Link>
+                      </div>
                     ))}
                   </div>
                 )}
               </section>
+
             </motion.div>
           )}
         </div>
@@ -391,16 +991,10 @@ export default function TeamsPage() {
                     className="mt-1.5 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 transition"
                   />
                 </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Số thành viên tối đa</label>
-                  <input
-                    type="number"
-                    value={newTeamMax}
-                    onChange={e => setNewTeamMax(Number(e.target.value))}
-                    min={2} max={100}
-                    className="mt-1.5 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 transition"
-                  />
-                </div>
+                {/* ─── [HARD CAP] Bỏ input max_members — Backend tự quyết ─── */}
+                <p className="text-xs text-slate-400 bg-slate-50 rounded-xl px-3 py-2">
+                  📋 Số thành viên tối đa được xác định bởi gói cước của nhóm. Nhóm mới mặc định là <strong>Free (5 người)</strong>.
+                </p>
               </div>
               <div className="flex gap-3 mt-6">
                 <button onClick={() => setShowCreateModal(false)}
@@ -468,6 +1062,202 @@ export default function TeamsPage() {
                   className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold hover:from-emerald-600 hover:to-teal-600 transition shadow-md disabled:opacity-60 text-sm flex items-center justify-center gap-2">
                   <Mail size={14} />
                   {actionLoading ? 'Đang mời...' : 'Gửi lời mời'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── Crop Modal ──────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {cropSrc && (
+          <CropModal
+            src={cropSrc}
+            onConfirm={handleCropConfirm}
+            onCancel={handleCropCancel}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Settings Modal */}
+      <AnimatePresence>
+        {showSettingsModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowSettingsModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-extrabold text-lg text-slate-800">Cài đặt nhóm</h3>
+                <button onClick={() => setShowSettingsModal(false)} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="space-y-6">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative w-24 h-24 bg-slate-100 rounded-full border-4 border-white shadow-lg overflow-hidden flex items-center justify-center group">
+                    {settingsAvatarPreview ? (
+                      <img src={settingsAvatarPreview} alt="Preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <Users size={32} className="text-slate-400" />
+                    )}
+                    <label className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center cursor-pointer">
+                      <Upload size={20} className="text-white" />
+                      <input type="file" className="hidden" accept="image/*" onChange={handleAvatarSelect} />
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-400">Click vào ảnh để tải lên</p>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Tên nhóm *</label>
+                  <input
+                    autoFocus type="text" value={settingsName}
+                    onChange={e => setSettingsName(e.target.value)}
+                    placeholder="Nhập tên nhóm..."
+                    className="mt-1.5 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 transition"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-8">
+                <button onClick={() => setShowSettingsModal(false)}
+                  className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition text-sm">
+                  Hủy
+                </button>
+                <button onClick={handleSaveSettings} disabled={!settingsName.trim() || actionLoading}
+                  className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-indigo-500 to-violet-500 text-white font-bold hover:from-indigo-600 hover:to-violet-600 transition shadow-md disabled:opacity-60 text-sm flex items-center justify-center gap-2">
+                  <Check size={14} />
+                  {actionLoading ? 'Đang lưu...' : 'Lưu cài đặt'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── [HARD CAP] Upgrade Modal ────────────────────────────────────── */}
+      <AnimatePresence>
+        {showUpgradeModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowUpgradeModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full text-center"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Lock size={28} className="text-amber-500" />
+              </div>
+              <h3 className="font-extrabold text-lg text-slate-800 mb-2">Nhóm đã đầy thành viên</h3>
+              <p className="text-sm text-slate-500 mb-6">
+                Nhóm của bạn đã đạt giới hạn thành viên của gói hiện tại. Nâng cấp lên gói cao hơn để mời thêm người.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowUpgradeModal(false)}
+                  className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition text-sm"
+                >
+                  Đóng
+                </button>
+                {activeTeam?.is_pro ? (
+                  <button
+                    onClick={() => { setShowUpgradeModal(false); setShowUpgradeSeatsModal(true); }}
+                    className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold hover:from-amber-500 hover:to-orange-600 transition shadow-md text-sm flex items-center justify-center gap-2"
+                  >
+                    <Crown size={14} /> Mua thêm chỗ
+                  </button>
+                ) : (
+                  <Link
+                    to="/pricing"
+                    className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold hover:from-amber-500 hover:to-orange-600 transition shadow-md text-sm flex items-center justify-center gap-2"
+                  >
+                    <Crown size={14} /> Xem gói cước
+                  </Link>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── [BILLING] Transfer Ownership Preview Modal ────────────────────── */}
+      <AnimatePresence>
+        {showTransferPreview && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowTransferPreview(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-extrabold text-lg text-slate-800">Chuyển nhượng quyền Chủ nhóm</h3>
+                <button onClick={() => setShowTransferPreview(null)} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="space-y-4 mb-6">
+                <p className="text-sm text-slate-600">
+                  Bạn đang chuyển quyền Chủ nhóm cho <strong>{showTransferPreview.new_owner?.name}</strong> ({showTransferPreview.new_owner?.email}).
+                </p>
+
+                {showTransferPreview.warning && (
+                  <div className={`p-4 rounded-xl border ${showTransferPreview.will_downgrade
+                    ? 'bg-red-50 border-red-200 text-red-700'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                    }`}>
+                    <div className="flex items-start gap-3">
+                      {showTransferPreview.will_downgrade ? <AlertTriangle size={20} className="shrink-0 mt-0.5" /> : <Crown size={20} className="shrink-0 mt-0.5" />}
+                      <div>
+                        <p className="font-bold text-sm mb-1">
+                          {showTransferPreview.will_downgrade ? 'Cảnh báo hạ cấp gói (Downgrade)' : 'Nâng cấp tự động'}
+                        </p>
+                        <p className="text-xs opacity-90">{showTransferPreview.warning}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <p className="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Trạng thái gói của Workspace</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Hiện tại: <strong>{showTransferPreview.current_plan?.name}</strong></span>
+                    <ArrowRight size={14} className="text-slate-400" />
+                    <span className="text-sm text-slate-600">Sau khi chuyển: <strong>{showTransferPreview.new_plan?.name}</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setShowTransferPreview(null)}
+                  className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition text-sm">
+                  Hủy
+                </button>
+                <button onClick={handleConfirmTransfer} disabled={actionLoading}
+                  className={`flex-1 py-3 rounded-2xl text-white font-bold transition shadow-md disabled:opacity-60 text-sm flex items-center justify-center gap-2 ${showTransferPreview.will_downgrade
+                    ? 'bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700'
+                    : 'bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600'
+                    }`}>
+                  <RefreshCw size={14} />
+                  {actionLoading ? 'Đang xử lý...' : 'Xác nhận chuyển quyền'}
                 </button>
               </div>
             </motion.div>

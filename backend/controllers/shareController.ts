@@ -49,7 +49,7 @@ export const shareDesign = async (req: Request, res: Response) => {
   const { email, role } = req.body;
 
   // Chỉ Owner mới được mời người khác
-  if (req.designRole !== 'owner') {
+  if ((req as any).designRole !== 'owner') {
     return res.status(403).json({ error: 'Chỉ chủ sở hữu mới có thể mời người dùng' });
   }
 
@@ -110,7 +110,7 @@ export const updateShareRole = async (req: Request, res: Response) => {
   const { id, userId } = req.params;
   const { role } = req.body;
 
-  if (req.designRole !== 'owner') {
+  if ((req as any).designRole !== 'owner') {
     return res.status(403).json({ error: 'Chỉ chủ sở hữu mới có thể thay đổi quyền' });
   }
 
@@ -143,7 +143,7 @@ export const updateShareRole = async (req: Request, res: Response) => {
 export const removeShare = async (req: Request, res: Response) => {
   const { id, userId } = req.params;
 
-  if (req.designRole !== 'owner') {
+  if ((req as any).designRole !== 'owner') {
     return res.status(403).json({ error: 'Chỉ chủ sở hữu mới có thể gỡ quyền' });
   }
 
@@ -167,7 +167,7 @@ export const togglePublicLink = async (req: Request, res: Response) => {
   const { id } = req.params;
   const { is_public } = req.body;
 
-  if (req.designRole !== 'owner') {
+  if ((req as any).designRole !== 'owner') {
     return res.status(403).json({ error: 'Chỉ chủ sở hữu mới có thể thay đổi cài đặt public' });
   }
 

@@ -8,18 +8,22 @@ import {
   getDesignMeta, getPageElements, // === FIX #4: Lazy Loading ===
   createVideoJob, getVideoJobStatus, // === FIX #5: Server-side Video ===
 } from '../controllers/designController';
+import { importPptx } from '../controllers/pptxController';
 import {
   getDesignShares, shareDesign, updateShareRole, removeShare,
   togglePublicLink, getShareLink
 } from '../controllers/shareController';
 import { authenticate } from '../middleware/authMiddleware';
-import { checkDesignAccess, requireRole } from '../middleware/checkDesignAccess';
+import { checkDesignAccess, requireRole, checkTrashedDesignAccess } from '../middleware/checkDesignAccess';
 import multer from 'multer';
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const router = Router();
 
 router.post('/export/video', upload.single('video'), exportVideo);
+
+// ── PPTX Import (no auth check — public endpoint with multer, auth in controller) ──
+router.post('/import/pptx', authenticate, upload.single('pptx'), importPptx);
 
 router.use(authenticate);
 
@@ -30,8 +34,10 @@ router.get('/recent-stickers', getRecentStickers);
 // ── TRASH BIN ──────────────────────────────────────────────────────────────
 router.get('/trash', getTrashDesigns);
 router.delete('/trash/empty', emptyTrash);
-router.put('/trash/:id/restore', restoreDesign);
-router.delete('/trash/:id/permanent', permanentlyDeleteDesign);
+// [FIX 4 - Trash RBAC] Dùng checkTrashedDesignAccess thay vì hard-code user_id
+// Đảm bảo chuẩn RBAC và hỗ trợ Transfer Ownership tương lai
+router.put('/trash/:id/restore', checkTrashedDesignAccess, requireRole('owner'), restoreDesign);
+router.delete('/trash/:id/permanent', checkTrashedDesignAccess, requireRole('owner'), permanentlyDeleteDesign);
 
 // Bulk actions
 router.post('/bulk-delete', bulkDeleteDesigns);

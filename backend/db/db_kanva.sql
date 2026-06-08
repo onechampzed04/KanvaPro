@@ -280,6 +280,7 @@ CREATE TABLE public.assets (
     tags text[],
     license text,
     uploaded_by uuid,
+    team_id uuid,
     metadata jsonb,
     created_at timestamp with time zone DEFAULT now()
 );
@@ -552,6 +553,8 @@ CREATE TABLE public.teams (
     avatar_url text,
     owner_id uuid,
     max_members integer DEFAULT 10,
+    used_storage_bytes bigint DEFAULT 0,
+    max_storage_gb numeric(5,2) DEFAULT 0.00,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now()
 );
@@ -581,6 +584,7 @@ ALTER TABLE public.template_categories OWNER TO postgres;
 CREATE TABLE public.user_subscriptions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid,
+    team_id uuid,
     plan_id uuid,
     status public.subscription_status NOT NULL,
     current_period_start timestamp with time zone NOT NULL,
@@ -970,6 +974,9 @@ ALTER TABLE ONLY public.assets
 ALTER TABLE ONLY public.assets
     ADD CONSTRAINT assets_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.users(id);
 
+ALTER TABLE ONLY public.assets
+    ADD CONSTRAINT assets_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
 
 --
 -- TOC entry 5180 (class 2606 OID 17292)
@@ -1221,6 +1228,9 @@ ALTER TABLE ONLY public.user_subscriptions
 
 ALTER TABLE ONLY public.user_subscriptions
     ADD CONSTRAINT user_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.user_subscriptions
+    ADD CONSTRAINT user_subscriptions_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
 
 
 -- Completed on 2026-05-07 23:28:45

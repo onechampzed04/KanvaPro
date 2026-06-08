@@ -8,18 +8,22 @@ export const paymentController = {
   // ----------------------------------------------------------------------
   createCheckout: async (req: Request, res: Response) => {
     try {
-      const { planId, amount, planName } = req.body;
+      // [FIX Vấn đề 3] Bỏ `amount` khỏi body — backend tự tính giá từ DB.
+      // Không bao giờ tin giá tiền do client gửi lên (tránh price tampering).
+      const { planId, planName, membersCount, inviteEmails } = req.body;
       const userId = (req as any).user.id;
 
-      if (!planId || !amount || !planName) {
-        return res.status(400).json({ error: 'Thiếu thông tin gói (planId, amount, planName)' });
+      if (!planId || !planName) {
+        return res.status(400).json({ error: 'Thiếu thông tin gói (planId, planName)' });
       }
 
-      const checkoutUrl = await paymentService.createPaymentLink(userId, planId, amount, planName);
+      const checkoutUrl = await paymentService.createPaymentLink(
+        userId, planId, planName, membersCount, inviteEmails
+      );
       res.json({ checkoutUrl });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Lỗi ở paymentController.createCheckout:', error);
-      res.status(500).json({ error: 'Lỗi server khi khởi tạo thanh toán' });
+      res.status(500).json({ error: error?.message || 'Lỗi server khi khởi tạo thanh toán' });
     }
   },
 
@@ -106,30 +110,18 @@ export const paymentController = {
   previewUpgrade: async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id;
-      const { planId } = req.query;
+      const { planId, membersCount } = req.query;
       if (!planId || typeof planId !== 'string') {
         return res.status(400).json({ error: 'Thiếu planId' });
       }
-      const preview = await paymentService.previewUpgrade(userId, planId);
+      const count = membersCount ? parseInt(membersCount as string, 10) : undefined;
+      const preview = await paymentService.previewUpgrade(userId, planId, count);
       res.json(preview);
     } catch (error: any) {
       console.error('Lỗi previewUpgrade:', error);
-      res.status(500).json({ error: error?.message || 'Lỗi tính toán cấn trừ' });
+      const isClientError = error?.message?.includes('không tồn tại') || error?.message?.includes('Không thể hạ cấp');
+      res.status(isClientError ? 400 : 500).json({ error: error?.message || 'Lỗi tính toán cấn trừ' });
     }
   },
 
-  // ----------------------------------------------------------------------
-  // 7. User hủy gia hạn tự động
-  //    POST /api/payments/cancel-renewal
-  // ----------------------------------------------------------------------
-  cancelAutoRenewal: async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const result = await paymentService.cancelAutoRenewal(userId);
-      res.json(result);
-    } catch (error: any) {
-      console.error('Lỗi cancelAutoRenewal:', error);
-      res.status(500).json({ error: error?.message || 'Lỗi hủy gia hạn' });
-    }
-  },
 };

@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { WorkspaceProvider } from './context/WorkspaceContext';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
@@ -16,6 +17,7 @@ import AdminUsers from './pages/admin/AdminUsers';
 import AdminAssets from './pages/admin/AdminAssets';
 import AdminTemplates from './pages/admin/AdminTemplates';
 import AdminSubscriptions from './pages/admin/AdminSubscriptions';
+import StoragePage from './pages/StoragePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -30,7 +32,8 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
+        <WorkspaceProvider>
+          <Routes>
           {/* ── Public ── */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
@@ -44,6 +47,7 @@ export default function App() {
           <Route path="/design/:id" element={<ProtectedRoute><EditorPage /></ProtectedRoute>} />
           <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="/teams" element={<ProtectedRoute><TeamsPage /></ProtectedRoute>} />
+          <Route path="/storage" element={<ProtectedRoute><StoragePage /></ProtectedRoute>} />
 
           {/* ── Admin Panel ── */}
           <Route path="/admin" element={<AdminLayout />}>
@@ -53,7 +57,8 @@ export default function App() {
             <Route path="templates" element={<AdminTemplates />} />
             <Route path="subscriptions" element={<AdminSubscriptions />} />
           </Route>
-        </Routes>
+          </Routes>
+        </WorkspaceProvider>
       </AuthProvider>
     </BrowserRouter>
   );

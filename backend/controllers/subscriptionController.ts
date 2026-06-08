@@ -5,7 +5,7 @@ import { subscriptionService } from '../services/subscriptionService';
 export const subscriptionController = {
   getAll: async (req: Request, res: Response) => {
     try {
-      const plans = await subscriptionService.getAllPlans();
+      const plans = await subscriptionService.getActivePlans();
       res.json({ plans });
     } catch (error) {
       res.status(500).json({ error: 'Lỗi khi lấy danh sách gói cước' });

@@ -15,10 +15,28 @@ import os from 'os';
 
 export const createDesign = async (req: Request, res: Response) => {
     // Thêm page_type vào req.body
-    const { title, width, height, design_type, page_type } = req.body;
+    const { title, width, height, design_type, page_type, team_id } = req.body;
     const userId = (req as any).user?.id;
 
     try {
+        // [SECURITY FIX - Missing Validation]
+        // Nếu có team_id, phải xác nhận userId thực sự là thành viên của team đó.
+        // Ngăn tài khoản bất kỳ tạo design "ké" vào team Pro của người khác.
+        if (team_id) {
+            const memberCheck = await db.query(
+                `SELECT 1 FROM team_members tm
+                 JOIN teams t ON t.id = tm.team_id
+                 WHERE tm.team_id = $1 AND tm.user_id = $2 AND t.is_deleted = false`,
+                [team_id, userId]
+            );
+            if (memberCheck.rows.length === 0) {
+                return res.status(403).json({
+                    error: 'Forbidden',
+                    message: 'Bạn không phải thành viên của nhóm này và không thể tạo thiết kế trong nhóm.'
+                });
+            }
+        }
+
         const id = uuidv4();
         await designService.createDesign({
             id,
@@ -27,7 +45,8 @@ export const createDesign = async (req: Request, res: Response) => {
             width: width || 1920,
             height: height || 1080,
             design_type: design_type || 'presentation',
-            page_type: page_type || 'canvas' // Mặc định là canvas kéo thả
+            page_type: page_type || 'canvas',
+            team_id: team_id || null
         });
 
         res.status(201).json({ id, message: 'Design created successfully' });
@@ -45,6 +64,15 @@ export const getUserDesigns = async (req: Request, res: Response) => {
         let result;
         if (tab === 'shared') {
             result = await designService.getSharedDesigns(userId);
+        } else if (tab === 'all') {
+            const myDesigns = await designService.getUserDesigns(userId);
+            const sharedDesigns = await designService.getSharedDesigns(userId);
+            const map = new Map();
+            myDesigns.forEach(d => map.set(d.id, d));
+            sharedDesigns.forEach(d => {
+                if (!map.has(d.id)) map.set(d.id, d);
+            });
+            result = Array.from(map.values()).sort((a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
         } else {
             result = await designService.getUserDesigns(userId);
         }
@@ -118,7 +146,14 @@ export const updateDesign = async (req: Request, res: Response) => {
 export const deleteDesign = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
-        await db.execute('UPDATE designs SET is_deleted = true WHERE id = $1', [id]);
+        // [FIX - Cron Cleanup Bug] Phải cập nhật CÙNG LÚC is_deleted + deleted_at.
+        // Cron Job xóa design sau 30 ngày dựa vào:
+        //   WHERE is_deleted = true AND deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days'
+        // Nếu deleted_at = NULL → Cron KHÔNG BAO GIỜ nhận ra design này để dọn!
+        await db.execute(
+            'UPDATE designs SET is_deleted = true, deleted_at = NOW() WHERE id = $1',
+            [id]
+        );
         res.json({ message: 'Design moved to trash' });
     } catch (error) {
         res.status(500).json({ error: 'Delete failed' });
@@ -134,30 +169,31 @@ export const saveFullDesign = async (req: Request, res: Response) => {
         return res.status(401).json({ error: "Unauthorized: Missing User ID" });
     }
 
+    // version từ client là integer (Strict OCC) hoặc timestamp string (backward compat)
+    // Nếu là số nguyên → dùng Strict OCC. Nếu là string → bỏ qua (cũ)
+    const clientVersion = typeof version === 'number' ? version : undefined;
+
     try {
-        // === OCC: Chỉ conflict khi người dùng KHÁC lưu (không phải autosave của chính mình) ===
-        if (version) {
-            const current = await db.getOne(
-                `SELECT updated_at, last_modified_by FROM designs WHERE id = $1`,
-                [id]
-            );
-            if (current && current.last_modified_by && current.last_modified_by !== userId) {
-                const dbTimestamp = new Date(current.updated_at).getTime();
-                const clientTimestamp = new Date(version).getTime();
-                if (dbTimestamp > clientTimestamp + 5000) {
-                    return res.status(409).json({
-                        error: 'Conflict: Design was modified by another user',
-                        server_version: current.updated_at,
-                    });
-                }
-            }
+        const result = await designService.saveFullDesign(
+            id, userId, { title, thumbnail_url }, pages, clientVersion
+        );
+
+        const updated = await db.getOne(`SELECT updated_at, version FROM designs WHERE id = $1`, [id]);
+        res.json({
+            success: true,
+            message: "Design saved successfully!",
+            updated_at: updated?.updated_at,
+            version: updated?.version,   // ← Trả version mới về cho frontend cập nhật
+        });
+    } catch (error: any) {
+        // ─── VERSION_CONFLICT: Người khác đã lưu trước ───────────────
+        if (error.code === 'VERSION_CONFLICT') {
+            return res.status(409).json({
+                error: 'VERSION_CONFLICT',
+                message: 'Bản thiết kế đã được cập nhật bởi người khác.',
+                serverVersion: error.serverVersion,
+            });
         }
-
-        await designService.saveFullDesign(id, userId, { title, thumbnail_url }, pages);
-
-        const updated = await db.getOne(`SELECT updated_at FROM designs WHERE id = $1`, [id]);
-        res.json({ success: true, message: "Design saved successfully!", updated_at: updated?.updated_at });
-    } catch (error) {
         console.error("Save Design Error:", error);
         res.status(500).json({ error: "Internal Server Error" });
     }
@@ -390,8 +426,25 @@ export const restoreDesignVersion = async (req: Request, res: Response) => {
 export const getTrashDesigns = async (req: Request, res: Response) => {
     const userId = (req as any).user?.id;
     try {
+        // [FIX - Transfer Ownership Compatibility]
+        // Sau Transfer Ownership, designs.user_id = Team Owner mới.
+        // Người tạo gốc sẽ không thấy design của mình trong Trash nếu chỉ lọc theo user_id.
+        //
+        // Giải pháp: Thêm điều kiện OR với bảng design_history (nếu có) hoặc
+        // dùng trường last_modified_by để track người tạo gốc.
+        //
+        // Hiện tại (trước Transfer Ownership): lọc theo user_id là đúng.
+        // Sau Transfer Ownership: user_id đã đổi → dùng them OR last_modified_by
+        // để đảm bảo người tạo gốc vẫn thấy design trong Trash của mình.
         const result = await db.query(
-            `SELECT * FROM designs WHERE user_id = $1 AND is_deleted = true ORDER BY deleted_at DESC`,
+            `SELECT d.*,
+                    u.name AS owner_name,
+                    u.email AS owner_email
+             FROM designs d
+             LEFT JOIN users u ON u.id = d.user_id
+             WHERE (d.user_id = $1 OR d.last_modified_by = $1)
+               AND d.is_deleted = true
+             ORDER BY d.deleted_at DESC NULLS LAST`,
             [userId]
         );
         res.json({ designs: result.rows });
@@ -401,18 +454,75 @@ export const getTrashDesigns = async (req: Request, res: Response) => {
 export const emptyTrash = async (req: Request, res: Response) => {
     const userId = (req as any).user?.id;
     try {
-        await db.execute('DELETE FROM designs WHERE user_id = $1 AND is_deleted = true', [userId]);
+        // [FIX - Immediate Quota Release]
+        // Trước khi xóa cả lô, tính tổng dung lượng các assets clone gắn với
+        // những design sắp bị xóa để hoàn trả quota ngay cho user.
+        // GC sẽ tự dọn file vật lý lúc 2AM, nhưng quota được giải phóng ngay lập tức.
+
+        // Bước 1: Lấy danh sách design_id trong Trash của user
+        const trashDesigns = await db.query(
+            `SELECT id FROM designs WHERE user_id = $1 AND is_deleted = true`,
+            [userId]
+        );
+
+        if (trashDesigns.rows.length > 0) {
+            const designIds = trashDesigns.rows.map((d: any) => d.id);
+
+            // Bước 2: Tìm các asset clone thuộc các design này (Bản ghi B),
+            // có file_size > 0 và là điều kiện cuối cùng trỏ tới file đó
+            const orphanAssets = await db.query(
+                `SELECT a.id, a.url, a.file_size, a.uploaded_by, a.team_id
+                 FROM assets a
+                 WHERE a.metadata->>'design_id' = ANY($1::text[])
+                   AND a.metadata->>'design_clone' = 'true'
+                   AND a.file_size > 0
+                   AND NOT EXISTS (
+                     SELECT 1 FROM assets a2
+                     WHERE a2.url = a.url AND a2.id != a.id
+                   )`,
+                [designIds]
+            );
+
+            // Bước 3: Xóa các design trong trash
+            await db.execute(
+                'DELETE FROM designs WHERE user_id = $1 AND is_deleted = true',
+                [userId]
+            );
+
+            // Bước 4: Với mỗi asset cuối cùng trỏ tới file đó → trừ quota ngay
+            const { decrementStorageUsage } = await import('../middleware/checkStorageQuota.js');
+            for (const asset of orphanAssets.rows) {
+                try {
+                    await decrementStorageUsage(
+                        asset.uploaded_by,
+                        Number(asset.file_size),
+                        asset.team_id ?? undefined
+                    );
+                } catch (e) {
+                    // Không chặn response nếu 1 asset fail — GC sẽ bù sau
+                    console.warn(`[EmptyTrash] decrementStorageUsage fail for asset ${asset.id}:`, e);
+                }
+            }
+        } else {
+            // Trash đã trống sẵn
+            await db.execute(
+                'DELETE FROM designs WHERE user_id = $1 AND is_deleted = true',
+                [userId]
+            );
+        }
+
         res.json({ message: 'Trash emptied' });
     } catch { res.status(500).json({ error: 'Failed to empty trash' }); }
 };
 
 export const restoreDesign = async (req: Request, res: Response) => {
     const { id } = req.params;
-    const userId = (req as any).user?.id;
+    // [FIX 4 - Trash RBAC] Authorization đã được checkTrashedDesignAccess + requireRole('owner') xử lý.
+    // Không cần hard-code WHERE user_id = $2 nữa — tương thích với Transfer Ownership tương lai.
     try {
         await db.execute(
-            'UPDATE designs SET is_deleted = false, deleted_at = NULL WHERE id = $1 AND user_id = $2',
-            [id, userId]
+            'UPDATE designs SET is_deleted = false, deleted_at = NULL WHERE id = $1',
+            [id]
         );
         res.json({ message: 'Design restored' });
     } catch { res.status(500).json({ error: 'Restore failed' }); }
@@ -420,11 +530,12 @@ export const restoreDesign = async (req: Request, res: Response) => {
 
 export const permanentlyDeleteDesign = async (req: Request, res: Response) => {
     const { id } = req.params;
-    const userId = (req as any).user?.id;
+    // [FIX 4 - Trash RBAC] Authorization đã được checkTrashedDesignAccess + requireRole('owner') xử lý.
+    // Không cần hard-code WHERE user_id = $2 nữa — tương thích với Transfer Ownership tương lai.
     try {
         await db.execute(
-            'DELETE FROM designs WHERE id = $1 AND user_id = $2 AND is_deleted = true',
-            [id, userId]
+            'DELETE FROM designs WHERE id = $1 AND is_deleted = true',
+            [id]
         );
         res.json({ message: 'Permanently deleted' });
     } catch { res.status(500).json({ error: 'Permanent delete failed' }); }

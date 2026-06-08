@@ -11,7 +11,7 @@ function formatVND(n: number) {
 
 export default function PricingPage() {
   const { user } = useAuth();
-  const { isPro, planSlug } = useSubscription();
+  const { isPro: isUserPro, planSlug } = useSubscription();
   const navigate = useNavigate();
 
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
@@ -31,7 +31,7 @@ export default function PricingPage() {
       try {
         const data = await fetchActiveSubscriptions();
         let plansData = data.subscriptions || data.plans || data || [];
-        plansData = plansData.filter((plan: any) => Number(plan.monthly_price) > 0);
+        // Không filter gói Free để hiển thị đủ các gói
         setSubscriptions(plansData);
       } catch (error) {
         console.error('Lỗi tải gói cước:', error);
@@ -52,7 +52,7 @@ export default function PricingPage() {
       return;
     }
 
-    if (isPro && planSlug === sub.slug) {
+    if (isUserPro && planSlug === sub.slug) {
       alert('Bạn đang sử dụng gói này! Gói sẽ tự động gia hạn khi hết thời hạn.');
       return;
     }
@@ -79,9 +79,9 @@ export default function PricingPage() {
     if (!sub) return;
     setIsCheckingOut(sub.id);
     try {
+      // [FIX Vấn đề 3] Không gửi amount — backend tự tính từ DB
       const response = await createCheckoutSession({
         planId: sub.id,
-        amount: Number(sub.monthly_price),
         planName: sub.name,
       });
       if (response.checkoutUrl) window.location.href = response.checkoutUrl;
@@ -190,7 +190,7 @@ export default function PricingPage() {
         </p>
 
         {/* Badge trạng thái gói hiện tại — [ĐÃ SỬA] Bỏ mô tả mơ hồ, thêm link Billing */}
-        {isPro && (
+        {isUserPro && (
           <div className="mt-4 flex flex-col items-center gap-2">
             <div className="inline-flex items-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm font-semibold px-5 py-2 rounded-full">
               <Sparkles className="w-4 h-4" />
@@ -215,8 +215,7 @@ export default function PricingPage() {
         {subscriptions.map((sub) => {
           const isFree = Number(sub.monthly_price) === 0;
           const isPro = sub.slug?.toLowerCase().includes('pro'); // Tự động Highlight gói Pro
-          const isCurrentPlan = user?.subscription?.plan_id === sub.id && 
-                                 user?.subscription?.status === 'active';
+          const isCurrentPlan = isUserPro ? user?.subscription?.plan_id === sub.id : isFree;
 
           // Parse JSONB features từ DB an toàn
           let featuresList: string[] = [];

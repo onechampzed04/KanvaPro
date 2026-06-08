@@ -1,25 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import AdminSelect from './AdminSelect';
 import {
   fetchAdminAssets, bulkUploadAssets, updateAsset, deleteAsset
 } from '../../api/adminApi';
 import {
   Search, Upload, Crown, Trash2, Edit3, X,
-  Image, Type, Sticker, CheckCircle
+  Image, Type, Sticker, CheckCircle, CheckSquare, Square
 } from 'lucide-react';
 
 type Asset = {
   id: string; name: string; type: string; url: string;
-  is_premium: boolean; tags: string[]; category_id: string;
-  category_name: string; file_size: number; created_at: string;
+  is_premium: boolean; tags: string[];
+  file_size: number; created_at: string;
 };
-type Category = { id: string; name: string };
 type Toast = { msg: string; type: 'success' | 'error' } | null;
 
 const TYPE_ICONS: Record<string, any> = { image: Image, font: Type, sticker: Sticker };
 
 export default function AdminAssets() {
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -28,13 +27,21 @@ export default function AdminAssets() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<Toast>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [editAsset, setEditAsset] = useState<Asset | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', tags: '', is_premium: false, category_id: '' });
+  const [editForm, setEditForm] = useState({ name: '', tags: '', is_premium: false });
+
+  // ── Multi-select state ──────────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+  // Drag-select refs
+  const isDragging = useRef(false);
+  const dragSelectMode = useRef<'add' | 'remove'>('add');
+  const lastDragRow = useRef<string | null>(null);
+
   // Upload form
   const [uploadForm, setUploadForm] = useState({
-    type: 'image', tags: '', is_premium: false, category_id: ''
+    type: 'image', tags: '', is_premium: false
   });
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -51,13 +58,12 @@ export default function AdminAssets() {
       const data = await fetchAdminAssets({ page, limit: LIMIT, type: typeFilter, search, is_premium: premiumFilter });
       setAssets(data.assets || []);
       setTotal(data.total || 0);
-      setCategories(data.categories || []);
     } catch { showToast('Failed to load assets', 'error'); }
     finally { setLoading(false); }
   }, [page, search, typeFilter, premiumFilter]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [search, typeFilter, premiumFilter]);
+  useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [search, typeFilter, premiumFilter]);
 
   /* ── Upload ── */
   const handleFiles = (files: FileList | null) => {
@@ -68,21 +74,18 @@ export default function AdminAssets() {
   const handleUpload = async () => {
     if (!pendingFiles.length) return;
     setUploading(true);
-    setUploadProgress(0);
     try {
       const fd = new FormData();
       pendingFiles.forEach(f => fd.append('files', f));
       fd.append('type', uploadForm.type);
       fd.append('tags', uploadForm.tags);
       fd.append('is_premium', String(uploadForm.is_premium));
-      if (uploadForm.category_id) fd.append('category_id', uploadForm.category_id);
-
       const result = await bulkUploadAssets(fd);
       showToast(`✅ Uploaded ${result.inserted} assets!`);
       setPendingFiles([]);
       load();
     } catch { showToast('Upload failed', 'error'); }
-    finally { setUploading(false); setUploadProgress(100); }
+    finally { setUploading(false); }
   };
 
   /* ── Edit ── */
@@ -90,7 +93,7 @@ export default function AdminAssets() {
     setEditAsset(a);
     setEditForm({
       name: a.name, tags: (a.tags || []).join(', '),
-      is_premium: a.is_premium, category_id: a.category_id || ''
+      is_premium: a.is_premium
     });
   };
 
@@ -101,7 +104,6 @@ export default function AdminAssets() {
         name: editForm.name,
         tags: editForm.tags,
         is_premium: editForm.is_premium,
-        category_id: editForm.category_id || undefined,
       });
       showToast('Asset updated!');
       setEditAsset(null);
@@ -114,8 +116,85 @@ export default function AdminAssets() {
     try {
       await deleteAsset(id);
       showToast('Asset deleted');
+      setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
       load();
     } catch { showToast('Delete failed', 'error'); }
+  };
+
+  /* ── Multi-select helpers ── */
+  const allIds = assets.map(a => a.id);
+  const allSelected = allIds.length > 0 && allIds.every(id => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0;
+
+  const toggleOne = (id: string) => {
+    setSelectedIds(prev => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return s;
+    });
+  };
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allIds));
+    }
+  };
+
+  // ── Drag-select handlers ──────────────────────────────────────────────────
+  const handleCheckboxMouseDown = (e: React.MouseEvent, id: string) => {
+    e.preventDefault(); // prevent text selection while dragging
+    isDragging.current = true;
+    lastDragRow.current = id;
+    // Determine mode: if already selected → drag to remove; else → drag to add
+    dragSelectMode.current = selectedIds.has(id) ? 'remove' : 'add';
+    toggleOne(id);
+  };
+
+  const handleRowMouseEnter = (id: string) => {
+    if (!isDragging.current || lastDragRow.current === id) return;
+    lastDragRow.current = id;
+    setSelectedIds(prev => {
+      const s = new Set(prev);
+      if (dragSelectMode.current === 'add') s.add(id);
+      else s.delete(id);
+      return s;
+    });
+  };
+
+  useEffect(() => {
+    const stop = () => { isDragging.current = false; lastDragRow.current = null; };
+    window.addEventListener('mouseup', stop);
+    return () => window.removeEventListener('mouseup', stop);
+  }, []);
+
+  /* ── Bulk actions ── */
+  const bulkSetPremium = async (value: boolean) => {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map(id => updateAsset(id, { is_premium: value }))
+      );
+      showToast(`✅ Set ${selectedIds.size} asset(s) to ${value ? 'Pro' : 'Free'}`);
+      setSelectedIds(new Set());
+      load();
+    } catch { showToast('Bulk update failed', 'error'); }
+    finally { setBulkLoading(false); }
+  };
+
+  const bulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} selected asset(s)? This cannot be undone.`)) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(Array.from(selectedIds).map(id => deleteAsset(id)));
+      showToast(`🗑️ Deleted ${selectedIds.size} asset(s)`);
+      setSelectedIds(new Set());
+      load();
+    } catch { showToast('Bulk delete failed', 'error'); }
+    finally { setBulkLoading(false); }
   };
 
   const totalPages = Math.ceil(total / LIMIT);
@@ -140,31 +219,24 @@ export default function AdminAssets() {
             </button>
           )}
         </div>
-
-        {/* Upload config */}
         <div style={{ display: 'flex', gap: 12, padding: '0 20px 16px', flexWrap: 'wrap' }}>
           <div style={{ flex: '0 0 160px' }}>
             <label className="admin-label">Asset Type</label>
-            <select className="admin-form-select" value={uploadForm.type}
-              onChange={e => setUploadForm(f => ({ ...f, type: e.target.value }))}>
-              <option value="image">🖼 Image</option>
-              <option value="sticker">🎨 Sticker</option>
-              <option value="font">🔤 Font</option>
-            </select>
+            <AdminSelect
+              value={uploadForm.type}
+              onChange={v => setUploadForm(f => ({ ...f, type: v }))}
+              options={[
+                { value: 'image', label: '🖼 Image' },
+                { value: 'sticker', label: '🎨 Sticker' },
+                { value: 'font', label: '🔤 Font' },
+              ]}
+            />
           </div>
           <div style={{ flex: '0 0 200px' }}>
             <label className="admin-label">Tags (comma separated)</label>
             <input className="admin-input" placeholder="nature, summer, blue…"
               value={uploadForm.tags}
               onChange={e => setUploadForm(f => ({ ...f, tags: e.target.value }))} />
-          </div>
-          <div style={{ flex: '0 0 180px' }}>
-            <label className="admin-label">Category</label>
-            <select className="admin-form-select" value={uploadForm.category_id}
-              onChange={e => setUploadForm(f => ({ ...f, category_id: e.target.value }))}>
-              <option value="">No Category</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
             <label className="admin-toggle">
@@ -178,8 +250,6 @@ export default function AdminAssets() {
             </label>
           </div>
         </div>
-
-        {/* Drop zone */}
         <div
           className={`admin-upload-zone ${dragOver ? 'dragover' : ''}`}
           onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -193,7 +263,6 @@ export default function AdminAssets() {
           <input ref={fileInputRef} type="file" multiple accept="image/*,.ttf,.otf,.woff"
             style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
         </div>
-
         {pendingFiles.length > 0 && (
           <div style={{ padding: '12px 20px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {pendingFiles.map((f, i) => (
@@ -222,27 +291,115 @@ export default function AdminAssets() {
             <Search size={14} color="var(--text-muted)" />
             <input placeholder="Search assets…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <select className="admin-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
-            <option value="">All Types</option>
-            <option value="image">Image</option>
-            <option value="sticker">Sticker</option>
-            <option value="font">Font</option>
-          </select>
-          <select className="admin-select" value={premiumFilter} onChange={e => setPremiumFilter(e.target.value)}>
-            <option value="">All Tiers</option>
-            <option value="true">Pro Only</option>
-            <option value="false">Free</option>
-          </select>
+          <AdminSelect
+            value={typeFilter}
+            onChange={setTypeFilter}
+            options={[
+              { value: '', label: 'All Types' },
+              { value: 'image', label: 'Image' },
+              { value: 'sticker', label: 'Sticker' },
+              { value: 'font', label: 'Font' },
+            ]}
+          />
+          <AdminSelect
+            value={premiumFilter}
+            onChange={setPremiumFilter}
+            options={[
+              { value: '', label: 'All Tiers' },
+              { value: 'true', label: 'Pro Only' },
+              { value: 'false', label: 'Free' },
+            ]}
+          />
         </div>
 
+        {/* ── Bulk Action Bar (animated) ── */}
+        {someSelected && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '10px 20px',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.08))',
+            borderBottom: '1px solid rgba(99,102,241,0.2)',
+            animation: 'bulkBarIn 0.2s ease',
+          }}>
+            <style>{`
+              @keyframes bulkBarIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+            `}</style>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+              {selectedIds.size} selected
+            </span>
+            <button
+              onClick={() => bulkSetPremium(true)}
+              disabled={bulkLoading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(135deg,#f59e0b,#f97316)',
+                color: 'white', fontSize: 12, fontWeight: 700,
+                opacity: bulkLoading ? 0.6 : 1,
+              }}
+            >
+              <Crown size={12} /> Set Pro
+            </button>
+            <button
+              onClick={() => bulkSetPremium(false)}
+              disabled={bulkLoading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border)',
+                background: 'var(--bg-card)', cursor: 'pointer',
+                color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700,
+                opacity: bulkLoading ? 0.6 : 1,
+              }}
+            >
+              Set Free
+            </button>
+            <button
+              onClick={bulkDelete}
+              disabled={bulkLoading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: 'rgba(239,68,68,0.12)', color: '#ef4444',
+                fontSize: 12, fontWeight: 700,
+                opacity: bulkLoading ? 0.6 : 1,
+              }}
+            >
+              <Trash2 size={12} /> Delete
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              style={{
+                marginLeft: 'auto', background: 'none', border: 'none',
+                cursor: 'pointer', color: 'var(--text-muted)',
+              }}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
         <div style={{ overflowX: 'auto' }}>
-          <table className="admin-table">
+          <table className="admin-table" style={{ userSelect: 'none' }}>
             <thead>
               <tr>
+                {/* Select-all checkbox */}
+                <th style={{ width: 40 }}>
+                  <button
+                    onClick={toggleAll}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}
+                    title={allSelected ? 'Deselect all' : 'Select all'}
+                  >
+                    {allSelected
+                      ? <CheckSquare size={16} color="var(--accent)" />
+                      : someSelected
+                        ? <CheckSquare size={16} color="var(--accent)" style={{ opacity: 0.5 }} />
+                        : <Square size={16} />
+                    }
+                  </button>
+                </th>
                 <th>Preview</th>
                 <th>Name</th>
                 <th>Type</th>
-                <th>Category</th>
                 <th>Tags</th>
                 <th>Tier</th>
                 <th>Size</th>
@@ -251,11 +408,11 @@ export default function AdminAssets() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40 }}>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40 }}>
                   <div className="admin-spinner" style={{ margin: '0 auto' }} />
                 </td></tr>
               ) : assets.length === 0 ? (
-                <tr><td colSpan={8}>
+                <tr><td colSpan={9}>
                   <div className="admin-empty">
                     <span className="admin-empty-icon">🖼️</span>
                     <span className="admin-empty-text">No assets found</span>
@@ -263,8 +420,35 @@ export default function AdminAssets() {
                 </td></tr>
               ) : assets.map(a => {
                 const TypeIcon = TYPE_ICONS[a.type] || Image;
+                const isSelected = selectedIds.has(a.id);
                 return (
-                  <tr key={a.id}>
+                  <tr
+                    key={a.id}
+                    onMouseEnter={() => handleRowMouseEnter(a.id)}
+                    style={{
+                      background: isSelected
+                        ? 'rgba(99,102,241,0.08)'
+                        : undefined,
+                      cursor: 'default',
+                      transition: 'background 0.1s',
+                    }}
+                  >
+                    {/* Checkbox cell — drag starts here */}
+                    <td>
+                      <button
+                        onMouseDown={e => handleCheckboxMouseDown(e, a.id)}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: isSelected ? 'var(--accent)' : 'var(--text-muted)',
+                          display: 'flex', padding: 0,
+                        }}
+                      >
+                        {isSelected
+                          ? <CheckSquare size={16} color="var(--accent)" />
+                          : <Square size={16} />
+                        }
+                      </button>
+                    </td>
                     <td>
                       {a.type === 'image' || a.type === 'sticker' ? (
                         <img src={a.url} alt={a.name}
@@ -280,14 +464,13 @@ export default function AdminAssets() {
                       )}
                     </td>
                     <td style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{a.name}</td>
-                    <td>
-                      <span className="badge badge-free" style={{ textTransform: 'capitalize' }}>
-                        <TypeIcon size={10} /> {a.type}
-                      </span>
+                    <td style={{ textTransform: 'capitalize' }}>
+                      <div className="badge badge-free" style={{ gap: 4, padding: '4px 8px' }}>
+                        <TypeIcon size={12} /> {a.type}
+                      </div>
                     </td>
-                    <td>{a.category_name || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                     <td>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {(a.tags || []).slice(0, 3).map(t => (
                           <span key={t} style={{
                             fontSize: 10, padding: '2px 6px', borderRadius: 4,
@@ -350,14 +533,6 @@ export default function AdminAssets() {
               <label className="admin-label">Tags (comma separated)</label>
               <input className="admin-input" value={editForm.tags}
                 onChange={e => setEditForm(f => ({ ...f, tags: e.target.value }))} />
-            </div>
-            <div className="admin-form-group">
-              <label className="admin-label">Category</label>
-              <select className="admin-form-select" value={editForm.category_id}
-                onChange={e => setEditForm(f => ({ ...f, category_id: e.target.value }))}>
-                <option value="">No Category</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
             </div>
             <div className="admin-form-group">
               <label className="admin-toggle">

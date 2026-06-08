@@ -21,6 +21,8 @@ interface EditorTopBarProps {
   setExportConfig: (v: any) => void;
   exportScale: number;
   setExportScale: (v: number) => void;
+  exportQuality: number;
+  setExportQuality: (v: number) => void;
   exportSelectedPages: string[];
   setExportSelectedPages: (v: string[]) => void;
   pages: any[];
@@ -58,6 +60,7 @@ export default function EditorTopBar({
   isEditingTitle, tempTitle, setTempTitle, setIsEditingTitle, setDesign,
   showExportPopover, setShowExportPopover,
   exportConfig, setExportConfig, exportScale, setExportScale,
+  exportQuality, setExportQuality,
   exportSelectedPages, setExportSelectedPages,
   pages, stageWidth, stageHeight,
   executeExport, handleSave, handleSaveVersion, handleOpenVersionHistory,
@@ -300,18 +303,57 @@ export default function EditorTopBar({
                   </select>
                 </div>
 
-                {/* Scale */}
+                {/* Scale — locked aspect ratio, preset buttons only */}
                 {(exportConfig.format === 'png' || exportConfig.format === 'jpeg') && (
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Size Scale ({exportScale}x)</label>
-                      <span className="text-[10px] font-bold text-indigo-600">{stageWidth * exportScale} x {stageHeight * exportScale} px</span>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Độ phân giải</label>
+                      <span className="text-[10px] font-bold text-indigo-600">
+                        {stageWidth * exportScale} × {stageHeight * exportScale} px
+                      </span>
+                    </div>
+                    {/* Preset scale buttons — aspect ratio is always locked */}
+                    <div style={{ display:'flex', gap:6 }}>
+                      {[1, 2, 3].map(scale => (
+                        <button
+                          key={scale}
+                          onClick={() => setExportScale(scale)}
+                          style={{
+                            flex:1, padding:'7px 0', borderRadius:10, border:'none', cursor:'pointer',
+                            fontWeight:800, fontSize:12, transition:'all 0.15s',
+                            background: exportScale === scale
+                              ? 'linear-gradient(135deg,#6366f1,#8b5cf6)'
+                              : '#f1f5f9',
+                            color: exportScale === scale ? 'white' : '#475569',
+                            boxShadow: exportScale === scale ? '0 4px 12px rgba(99,102,241,0.3)' : 'none',
+                          }}
+                        >
+                          {scale}×
+                        </button>
+                      ))}
+                    </div>
+                    <p style={{ fontSize:10, color:'#94a3b8', margin:0 }}>
+                      🔒 Tỉ lệ khóa cố định ({stageWidth}:{stageHeight}). Để thay đổi tỉ lệ, dùng Resize.
+                    </p>
+                  </div>
+                )}
+
+                {/* Quality slider — JPEG only */}
+                {exportConfig.format === 'jpeg' && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Chất lượng</label>
+                      <span className="text-[10px] font-bold text-emerald-600">{Math.round(exportQuality * 100)}%</span>
                     </div>
                     <input
-                      type="range" min="1" max="3" step="0.5" value={exportScale}
-                      onChange={e => setExportScale(Number(e.target.value))}
-                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                      type="range" min="10" max="100" step="5"
+                      value={Math.round(exportQuality * 100)}
+                      onChange={e => setExportQuality(Number(e.target.value) / 100)}
+                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500"
                     />
+                    <div style={{ display:'flex', justifyContent:'space-between', fontSize:9, color:'#94a3b8', fontWeight:700 }}>
+                      <span>10% (nhỏ)</span><span>100% (tốt nhất)</span>
+                    </div>
                   </div>
                 )}
 

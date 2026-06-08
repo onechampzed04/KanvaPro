@@ -23,7 +23,7 @@ function getInitials(name: string): string {
 }
 
 export default function CollaboratorAvatars({
-  users,
+  users = [],
   currentUserId,
   isConnected,
 }: CollaboratorAvatarsProps) {

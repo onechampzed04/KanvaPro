@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 type AuthStep =
   | 'login'
   | 'otp'              // OTP đăng nhập chưa verify
+  | 'admin_2fa'        // Admin 2FA - bước 2 sau khi login đúng password
   | 'forgot_email'    // Nhập email forgot password
   | 'forgot_otp'      // Nhập OTP reset
   | 'reset_password'; // Nhập mật khẩu mới
@@ -50,7 +51,15 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      if (data.user.is_verified === false) {
+      // [FIX 5] Admin 2FA: backend trả về require2FA thay vì token
+      if (data.require2FA) {
+        setUserId(data.userId);
+        setStep('admin_2fa');
+        setSuccess(data.message || 'Mã 2FA đã gửi về email của bạn.');
+        return;
+      }
+
+      if (data.user?.is_verified === false) {
         setUserId(data.userId);
         setStep('otp');
       } else {
@@ -65,7 +74,7 @@ export default function LoginPage() {
     }
   };
 
-  // ─── Verify Login OTP ─────────────────────────────────────────────────────
+  // ─── Verify Login OTP (user chưa verify email) ─────────────────────────────────────
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -82,6 +91,31 @@ export default function LoginPage() {
       if (data.token) localStorage.setItem('token', data.token);
       await login(data.user);
       navigate('/');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── [FIX 5] Verify Admin 2FA OTP ─────────────────────────────────────────────────
+  const handleVerifyAdmin2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    clearMessages();
+    try {
+      const res = await fetch('/api/auth/admin-verify-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ userId, otp }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      if (data.token) localStorage.setItem('token', data.token);
+      await login(data.user);
+      navigate('/admin');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -177,6 +211,7 @@ export default function LoginPage() {
   const stepConfig: Record<AuthStep, string> = {
     login: 'Welcome Back',
     otp: 'Enter OTP',
+    admin_2fa: 'Admin Verification', // [FIX 5]
     forgot_email: 'Forgot Password',
     forgot_otp: 'Enter Reset OTP',
     reset_password: 'New Password',
@@ -258,6 +293,39 @@ export default function LoginPage() {
             <button type="submit" disabled={loading} className={btnPrimary}>{loading ? 'Verifying...' : 'Verify & Login'}</button>
             <button type="button" onClick={() => setStep('login')} className="w-full text-sm font-bold text-slate-400 hover:text-sky-500 transition-colors">
               ← Back to Login
+            </button>
+          </motion.form>
+        )}
+
+        {/* ── [FIX 5] Bước Admin 2FA ── */}
+        {step === 'admin_2fa' && (
+          <motion.form initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} onSubmit={handleVerifyAdmin2FA} className="space-y-6">
+            <div className="flex flex-col items-center gap-3 mb-2">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg">
+                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
+              <p className="text-sm text-slate-500 text-center leading-relaxed">
+                Xác thực 2 bước bắt buộc cho tài khoản Admin.<br />
+                Mã 6 số đã được gửi đến <strong className="text-slate-700">{email}</strong>.
+              </p>
+            </div>
+            <input
+              id="admin-2fa-otp"
+              type="text" maxLength={6} value={otp}
+              onChange={e => setOtp(e.target.value.replace(/\D/g, ''))}
+              placeholder="123456"
+              className="w-full text-center text-3xl tracking-[0.5em] rounded-2xl border border-violet-200 bg-white/50 px-4 py-4 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all outline-none font-mono font-bold text-slate-700 shadow-inner"
+              required autoFocus
+            />
+            <button type="submit" disabled={loading}
+              className="mt-4 w-full bg-gradient-to-r from-violet-500 to-purple-600 text-white py-3.5 px-4 rounded-2xl hover:from-violet-600 hover:to-purple-700 transition-all duration-300 shadow-md hover:shadow-xl transform hover:-translate-y-0.5 font-bold disabled:opacity-50">
+              {loading ? 'Verifying...' : 'Đăng nhập vào Admin Panel'}
+            </button>
+            <button type="button" onClick={() => { setStep('login'); setOtp(''); clearMessages(); }}
+              className="w-full text-sm font-bold text-slate-400 hover:text-violet-500 transition-colors">
+              ← Quấy lại trang đăng nhập
             </button>
           </motion.form>
         )}

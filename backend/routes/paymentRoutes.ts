@@ -25,7 +25,5 @@ router.get('/verify-order', authenticate, paymentController.verifyByOrderCode);
 //    Frontend gọi khi user chọn gói để hiện Modal tạm tính
 router.get('/preview-upgrade', authenticate, paymentController.previewUpgrade);
 
-// 7. User hủy gia hạn tự động (Cancel at period end)
-router.post('/cancel-renewal', authenticate, paymentController.cancelAutoRenewal);
 
 export default router;

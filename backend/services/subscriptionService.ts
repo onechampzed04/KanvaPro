@@ -8,6 +8,12 @@ export const subscriptionService = {
     return result.rows;
   },
 
+  // Lấy danh sách gói cước đang bán (Public)
+  getActivePlans: async () => {
+    const result = await db.query('SELECT * FROM subscription_plans WHERE is_active = true ORDER BY monthly_price ASC');
+    return result.rows;
+  },
+
   // Lấy 1 gói theo ID
   getPlanById: async (id: string) => {
     const result = await db.query('SELECT * FROM subscription_plans WHERE id = $1', [id]);
@@ -31,20 +37,21 @@ export const subscriptionService = {
     return result.rows[0];
   },
 
-  // Cập nhật gói
-  updatePlan: async (id: string, data: any) => {
-    const { name, slug, monthly_price, yearly_price, max_storage_gb, max_team_members, features, is_active } = data;
-    const featuresJson = JSON.stringify(features || []);
-
-    const result = await db.query(
-      `UPDATE subscription_plans
-       SET name = $1, slug = $2, monthly_price = $3, yearly_price = $4, 
-           max_storage_gb = $5, max_team_members = $6, features = $7, is_active = $8
-       WHERE id = $9 
-       RETURNING *`,
-      [name, slug, monthly_price, yearly_price, max_storage_gb, max_team_members || null, featuresJson, is_active, id]
+  // [FIX Vấn đề 6] DEPRECATED — Không dùng trực tiếp hàm này.
+  // adminController.subscriptionPlanController.update() có guard chặn sửa monthly_price
+  // để bảo toàn logic cấn trừ cho user cũ. Hàm này KHÔNG có guard đó.
+  //
+  // Nếu bạn cần cập nhật gói cước:
+  //   - Thông tin không liên quan tiền (name, features...): dùng PUT /api/admin/plans/:id
+  //   - Giá mới: tạo gói mới + ẩn gói cũ (POST /api/admin/plans + toggle is_active)
+  //
+  // Hàm này được giữ lại để tránh lỗi import, nhưng sẽ throw nếu ai gọi trong production.
+  updatePlan: async (_id: string, _data: any): Promise<never> => {
+    throw new Error(
+      '[DEPRECATED] subscriptionService.updatePlan() đã bị vô hiệu hóa. ' +
+      'Dùng PUT /api/admin/plans/:id (adminController) để cập nhật gói cước. ' +
+      'Xem comment trong subscriptionService.ts để biết lý do.'
     );
-    return result.rows[0];
   },
 
   // Xóa (Ẩn) gói cước - Soft Delete

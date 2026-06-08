@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Download, CheckCircle, Clock, ChevronDown, ChevronUp, CalendarDays, Package, CreditCard, Sparkles, XCircle, RefreshCw, AlertTriangle } from 'lucide-react';
-import { fetchActiveSubscriptions, verifyOrderByCode, cancelAutoRenewal } from '../api/api';
+import { fetchActiveSubscriptions, verifyOrderByCode } from '../api/api';
 import Swal from 'sweetalert2';
 
 function formatVND(amount: number) {
@@ -16,12 +16,10 @@ export default function BillingPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
-  const [isCancelling, setIsCancelling] = useState(false);
 
   // Lấy thông tin subscription hiện tại của user
   const activeSub = user?.subscription;
-  const isSubActive = activeSub?.status === 'active';
-  const willCancel = !!activeSub?.cancel_at;
+  const isSubActive = activeSub?.status === 'active' && activeSub?.current_period_end && new Date(activeSub.current_period_end) > new Date();
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -88,31 +86,6 @@ export default function BillingPage() {
     }
   };
 
-  // [MỚI] Nút "Hủy gia hạn tự động"
-  const handleCancelRenewal = async () => {
-    const confirm = await Swal.fire({
-      title: 'Hủy gia hạn tự động?',
-      html: `Gói của bạn sẽ <strong>không tự động gia hạn</strong> sau ngày <strong>${activeSub?.current_period_end ? new Date(activeSub.current_period_end).toLocaleDateString('vi-VN') : '—'}</strong>.<br/><br/>Bạn vẫn được sử dụng đầy đủ tính năng cho đến ngày đó.`,
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonText: 'Xác nhận hủy gia hạn',
-      cancelButtonText: 'Giữ nguyên',
-      confirmButtonColor: '#ef4444',
-    });
-    if (!confirm.isConfirmed) return;
-
-    setIsCancelling(true);
-    try {
-      const result = await cancelAutoRenewal();
-      await Swal.fire('Đã hủy gia hạn', result.message, 'success');
-      if (refreshUser) await refreshUser();
-    } catch (err: any) {
-      Swal.fire('Lỗi', err.message || 'Không thể hủy gia hạn lúc này.', 'error');
-    } finally {
-      setIsCancelling(false);
-    }
-  };
-
   const toggleRow = (id: string) => {
     setExpandedRowId(expandedRowId === id ? null : id);
   };
@@ -145,33 +118,7 @@ export default function BillingPage() {
       <div className="print:hidden p-8 max-w-5xl mx-auto">
         <div className="flex justify-between items-start mb-8">
           <h1 className="text-3xl font-extrabold text-slate-800">Lịch sử giao dịch</h1>
-
-          {/* [MỚI] Nút Hủy gia hạn — chỉ hiện khi đang có gói active và chưa cancel */}
-          {isSubActive && !willCancel && (
-            <button
-              onClick={handleCancelRenewal}
-              disabled={isCancelling}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-red-50 border border-slate-200 hover:border-red-200 text-slate-600 hover:text-red-600 rounded-xl text-sm font-semibold transition-all disabled:opacity-50"
-            >
-              <XCircle size={16} />
-              {isCancelling ? 'Đang xử lý...' : 'Hủy gia hạn tự động'}
-            </button>
-          )}
         </div>
-
-        {/* Banner thông báo nếu đã hủy gia hạn */}
-        {isSubActive && willCancel && (
-          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
-            <AlertTriangle size={20} className="text-amber-500 mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-semibold text-amber-800">Gia hạn tự động đã được hủy</p>
-              <p className="text-sm text-amber-700 mt-0.5">
-                Gói của bạn sẽ hết hạn vào <strong>{new Date(activeSub.cancel_at).toLocaleDateString('vi-VN')}</strong>.
-                Sau ngày này, tài khoản sẽ trở về gói Free.
-              </p>
-            </div>
-          </div>
-        )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           <table className="w-full text-left border-collapse">

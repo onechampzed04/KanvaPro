@@ -149,6 +149,27 @@ def generate_image():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@app.route('/translate', methods=['POST'])
+def translate_text():
+    if not translation_model:
+        return jsonify({'error': 'Translation model is not initialized.'}), 500
+
+    data = request.json
+    if not data or 'text' not in data:
+        return jsonify({'error': 'Missing text in request body.'}), 400
+
+    original_text = data['text']
+    try:
+        translate_prompt = f"Translate the following text to English for a search query. Just return the English translation, no other words: '{original_text}'"
+        translation_response = translation_model.generate_content(translate_prompt)
+        english_text = translation_response.text.strip()
+        
+        return jsonify({'translatedText': english_text})
+    except Exception as e:
+        print("Error translating text:")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     # Chạy trên port 5000, hỗ trợ từ các client khác
     app.run(host='0.0.0.0', port=5000, debug=True)

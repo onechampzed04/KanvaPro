@@ -57,6 +57,10 @@
   animation: adSpin 0.8s linear infinite;
 }
 @keyframes adSpin { to { transform: rotate(360deg); } }
+@keyframes adselDrop {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 /* ───────────────────────────────────────────────────────
    SIDEBAR
@@ -206,11 +210,34 @@
   color: var(--t1); font-size: 13px; width: 100%; font-family: 'Inter',sans-serif;
 }
 .admin-shell .admin-search input::placeholder { color: var(--t3); }
+/* ── Custom Select (toolbar filter) ── */
 .admin-shell .admin-select {
-  background: var(--ah); border: 1px solid var(--bdr);
-  border-radius: var(--rs); padding: 8px 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--ah);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  border: 1px solid var(--bdr);
+  border-radius: var(--rs);
+  padding: 8px 34px 8px 12px;
   color: var(--t1); font-size: 13px; outline: none; cursor: pointer;
   font-family: 'Inter',sans-serif;
+  font-weight: 500;
+  transition: border-color .18s, box-shadow .18s, background-color .18s;
+}
+.admin-shell .admin-select:hover {
+  border-color: rgba(139,92,246,.45);
+  background-color: var(--ac);
+}
+.admin-shell .admin-select:focus {
+  border-color: var(--pr-l);
+  box-shadow: 0 0 0 3px rgba(139,92,246,.18);
+}
+.admin-shell .admin-select option {
+  background: var(--as);
+  color: var(--t1);
+  padding: 8px;
 }
 .admin-shell table.admin-table { width: 100%; border-collapse: collapse; }
 .admin-shell table.admin-table thead tr { background: rgba(255,255,255,.03); }
@@ -302,16 +329,44 @@
   margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em;
 }
 .admin-shell .admin-input,
-.admin-shell .admin-textarea,
-.admin-shell .admin-form-select {
+.admin-shell .admin-textarea {
   width: 100%; background: var(--ah); border: 1px solid var(--bdr);
   border-radius: var(--rs); padding: 10px 14px;
   color: var(--t1); font-size: 14px; outline: none;
-  transition: border-color .18s; font-family: 'Inter',sans-serif;
+  transition: border-color .18s, box-shadow .18s; font-family: 'Inter',sans-serif;
 }
 .admin-shell .admin-input:focus,
-.admin-shell .admin-textarea:focus,
-.admin-shell .admin-form-select:focus { border-color: var(--pr-l); }
+.admin-shell .admin-textarea:focus { border-color: var(--pr-l); box-shadow: 0 0 0 3px rgba(139,92,246,.15); }
+
+/* ── Custom Select (scoped form) ── */
+.admin-shell .admin-form-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--ah);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  border: 1px solid var(--bdr);
+  border-radius: var(--rs);
+  padding: 10px 36px 10px 14px;
+  color: var(--t1); font-size: 14px; outline: none; cursor: pointer;
+  font-family: 'Inter',sans-serif;
+  font-weight: 500;
+  transition: border-color .18s, box-shadow .18s, background-color .18s;
+}
+.admin-shell .admin-form-select:hover {
+  border-color: rgba(139,92,246,.45);
+  background-color: var(--ac);
+}
+.admin-shell .admin-form-select:focus {
+  border-color: var(--pr-l);
+  box-shadow: 0 0 0 3px rgba(139,92,246,.15);
+}
+.admin-shell .admin-form-select option {
+  background: var(--as);
+  color: var(--t1);
+}
 .admin-shell .admin-textarea { min-height: 80px; resize: vertical; }
 
 /* ── Toggle (scoped) ── */
@@ -379,10 +434,23 @@
 .admin-modal .admin-input, .admin-modal .admin-form-select {
   width: 100%; background: #1e2330; border: 1px solid rgba(255,255,255,.07);
   border-radius: 8px; padding: 10px 14px; color: #f1f5f9; font-size: 14px;
-  outline: none; transition: border-color .18s; font-family: 'Inter',sans-serif;
+  outline: none; transition: border-color .18s, box-shadow .18s; font-family: 'Inter',sans-serif;
   box-sizing: border-box;
 }
-.admin-modal .admin-input:focus, .admin-modal .admin-form-select:focus { border-color: #8b5cf6; }
+.admin-modal .admin-input:focus { border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,.15); }
+.admin-modal .admin-form-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.admin-modal .admin-form-select:hover { border-color: rgba(139,92,246,.4); }
+.admin-modal .admin-form-select:focus { border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,.15); }
+.admin-modal .admin-form-select option { background: #161a23; color: #f1f5f9; }
 .admin-modal .admin-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .admin-modal .admin-toggle input[type=checkbox] { display: none; }
 .admin-modal .admin-toggle-track {

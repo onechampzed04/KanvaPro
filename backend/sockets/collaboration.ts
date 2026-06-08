@@ -1,36 +1,29 @@
 // backend/sockets/collaboration.ts
-// Xử lý real-time collaboration: presence tracking + element sync
+// [FIX Vấn đề 6] Thay thế in-memory Map bằng RedisPresenceService → Horizontal Scaling
+// [FIX Vấn đề 7] Hybrid Catch-up: delta replay vs full snapshot dựa trên ngưỡng
+// [FIX Vấn đề 8] markDirty() sau mỗi ot-op → Server-Side Write-Behind flush xuống DB
 
 import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import db from '../config/db';
+import { revisionStore } from '../ot/revisionStore';
+import { designElementService } from '../services/designElementService';
+import { RedisPresenceService, CollaboratorInfo } from '../services/redisPresenceService';
+import { markDirty, flushNow } from '../services/designWriteService';
+import { JWT_SECRET } from '../config/jwt'; // [FIX Vấn đề 20] Dùng từ config tập trung
+import type { ClientOp, AcceptedOp } from '../ot/types';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-export interface CollaboratorInfo {
-  userId: string;
-  name: string;
-  email: string;
-  avatarColor: string; // HSL color riêng cho từng user
-  socketId: string;
-  joinedAt: number;
-}
-
-// room key = designId, value = Map<socketId, CollaboratorInfo>
-const rooms = new Map<string, Map<string, CollaboratorInfo>>();
+// [FIX Vấn đề 7] Ngưỡng op delta: nếu client lạc hậu quá CATCHUP_THRESHOLD ops,
+// gửi Full Snapshot thay vì danh sách op. Ngăn chặn CPU freeze khi replay hàng nghìn ops.
+const CATCHUP_THRESHOLD = 50;
 
 // Bảng màu cố định để tô màu avatar theo userId (hash đơn giản)
 const AVATAR_COLORS = [
-  '#6366f1', // Indigo
-  '#ec4899', // Pink
-  '#f59e0b', // Amber
-  '#10b981', // Emerald
-  '#3b82f6', // Blue
-  '#8b5cf6', // Violet
-  '#ef4444', // Red
-  '#14b8a6', // Teal
-  '#f97316', // Orange
-  '#06b6d4', // Cyan
+  '#6366f1', '#ec4899', '#f59e0b', '#10b981',
+  '#3b82f6', '#8b5cf6', '#ef4444', '#14b8a6',
+  '#f97316', '#06b6d4',
 ];
 
 function getAvatarColor(userId: string): string {
@@ -41,10 +34,9 @@ function getAvatarColor(userId: string): string {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-// ─── Auth Middleware ──────────────────────────────────────────────────────────
+// ─── Auth ─────────────────────────────────────────────────────────────────────
 
-// JWT_SECRET phải khớp chính xác với authController.ts
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
+// [FIX Vấn đề 20] Dùng JWT_SECRET tập trung từ config/jwt.ts (bỏ khai báo thừa)
 
 function verifySocketToken(token: string): { id: string; name: string; email: string } | null {
   try {
@@ -60,16 +52,18 @@ function verifySocketToken(token: string): { id: string; name: string; email: st
   }
 }
 
-
-// ─── Setup ───────────────────────────────────────────────────────────────────
+// ─── Global IO + Online Users ─────────────────────────────────────────────────
 
 export let globalIo: Server | null = null;
-const globalOnlineUsers = new Map<string, Set<string>>(); // userId -> Set of socketIds
+
+// [FIX Vấn đề 6] globalOnlineUsers vẫn dùng in-memory Map để track socketId per userId.
+// Đây là dữ liệu per-process cần thiết để emitForceLogout có thể disconnect đúng socket.
+// Không cần Redis vì forceLogout chỉ cần chạy trên đúng node đang giữ socket đó.
+const globalOnlineUsers = new Map<string, Set<string>>(); // userId → Set<socketId>
 
 export function forceLogoutUser(userId: string, reason: string) {
   if (globalIo) {
     globalIo.to(`user-${userId}`).emit('auth:force_logout', { reason });
-    // Dọn dẹp sockets của user này
     const userSockets = globalOnlineUsers.get(userId);
     if (userSockets) {
       userSockets.forEach(socketId => {
@@ -80,9 +74,38 @@ export function forceLogoutUser(userId: string, reason: string) {
   }
 }
 
+export function emitTeamMemberRemoved(teamId: string, removedUserId: string, actorName: string) {
+  if (!globalIo) return;
+  globalIo.to(`team-${teamId}`).emit('team:members_changed', { teamId });
+  globalIo.to(`user-${removedUserId}`).emit('team:you_were_removed', {
+    teamId,
+    message: `Bạn đã bị ${actorName} xóa khỏi nhóm.`,
+  });
+}
+
+export function emitTeamOwnershipTransferred(teamId: string, newOwnerId: string, actorName: string) {
+  if (!globalIo) return;
+  globalIo.to(`team-${teamId}`).emit('team:members_changed', { teamId });
+  globalIo.to(`user-${newOwnerId}`).emit('team:you_are_now_owner', {
+    teamId,
+    message: `${actorName} vừa chuyển nhượng quyền Chủ nhóm (Owner) cho bạn!`,
+  });
+}
+
+export function emitTeamMemberAdded(teamId: string, targetUserId: string, actorName: string) {
+  if (!globalIo) return;
+  globalIo.to(`team-${teamId}`).emit('team:members_changed', { teamId });
+  globalIo.to(`user-${targetUserId}`).emit('team:you_were_invited', {
+    teamId,
+    message: `${actorName} vừa mời bạn vào nhóm của họ!`,
+  });
+}
+
 export function getGlobalOnlineUsers(): string[] {
   return Array.from(globalOnlineUsers.keys());
 }
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
 
 export function setupCollaboration(io: Server) {
   globalIo = io;
@@ -92,53 +115,78 @@ export function setupCollaboration(io: Server) {
     let currentUser: CollaboratorInfo | null = null;
     let globalUserId: string | null = null;
 
-    // ── 0. Join global room (AuthContext) ────────────────────────────────────
+    // ── 0. Join global room (AuthContext) ─────────────────────────────────────────
     socket.on('join-global', ({ token }: { token: string }) => {
       const userData = verifySocketToken(token);
       if (userData) {
         globalUserId = userData.id;
         socket.join(`user-${userData.id}`);
-        
-        if (!globalOnlineUsers.has(userData.id)) {
-          globalOnlineUsers.set(userData.id, new Set());
-        }
+        if (!globalOnlineUsers.has(userData.id)) globalOnlineUsers.set(userData.id, new Set());
         globalOnlineUsers.get(userData.id)!.add(socket.id);
-        
-        // Notify admins if needed
-        io.to('admin-dashboard').emit('user-online', { userId: userData.id });
+        // [FIX 2] Dùng tên event chuẩn hóa để frontend AdminUsers lắng nghe
+        io.to('admin-dashboard').emit('admin:user-online', { userId: userData.id });
       }
+    });
+
+    // ── 0a. Join admin dashboard room ──────────────────────────────────────
+    // [FIX 2] Chỉ cho phép admin/moderator join room này
+    socket.on('join-admin-dashboard', ({ token }: { token: string }) => {
+      const userData = verifySocketToken(token);
+      if (!userData) return;
+      // Kiểm tra role từ DB để chắc chắn admin không giả mạo token
+      db.getOne('SELECT role FROM users WHERE id = $1', [userData.id]).then(user => {
+        if (user && (user.role === 'admin' || user.role === 'moderator')) {
+          socket.join('admin-dashboard');
+          console.log(`[Admin Socket] ${userData.email} joined admin-dashboard room`);
+        }
+      }).catch(() => {});
+    });
+
+    // ── 0b. Join team room (Có kiểm tra membership) ─────────────────────────
+    socket.on('join-team', async ({ teamId, token }: { teamId: string; token: string }) => {
+      const userData = verifySocketToken(token);
+      if (!userData) return; // Token không hợp lệ → bỏ qua
+
+      // [FIX Vấn đề 16] Kiểm tra user thực sự là thành viên của team này.
+      // Trước đây: bất kỳ user nào biết teamId đều join được → nhận sự kiện real-time của team.
+      try {
+        const membership = await db.getOne(
+          'SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2',
+          [teamId, userData.id]
+        );
+        if (!membership) {
+          console.warn(`[Collab] User ${userData.id} không phải thành viên team ${teamId}, từ chối join-team`);
+          return; // Silently deny — không emit error để tránh leak thông tin team
+        }
+        socket.join(`team-${teamId}`);
+      } catch (err) {
+        console.error('[Collab] join-team membership check failed:', err);
+      }
+    });
+
+    socket.on('leave-team', ({ teamId }: { teamId: string }) => {
+      socket.leave(`team-${teamId}`);
     });
 
     // ── 1. Join design room ──────────────────────────────────────────────────
     socket.on('join-design', async ({ designId, token }: { designId: string; token: string }) => {
       let finalToken = token;
-      
-      // Nếu không có token từ client, thử lấy từ cookie trong request
       if (!finalToken && socket.request.headers.cookie) {
         const cookies = socket.request.headers.cookie.split(';').map(c => c.trim());
         const tokenCookie = cookies.find(c => c.startsWith('token='));
-        if (tokenCookie) {
-          finalToken = tokenCookie.split('=')[1];
-        }
+        if (tokenCookie) finalToken = tokenCookie.split('=')[1];
       }
 
       const userData = verifySocketToken(finalToken);
-      if (!userData) {
-        socket.emit('error', { message: 'Unauthorized' });
-        return;
-      }
+      if (!userData) { socket.emit('error', { message: 'Unauthorized' }); return; }
 
-      // Automatically join global room if joining design
       if (!globalUserId) {
         globalUserId = userData.id;
         socket.join(`user-${userData.id}`);
-        if (!globalOnlineUsers.has(userData.id)) {
-          globalOnlineUsers.set(userData.id, new Set());
-        }
+        if (!globalOnlineUsers.has(userData.id)) globalOnlineUsers.set(userData.id, new Set());
         globalOnlineUsers.get(userData.id)!.add(socket.id);
       }
 
-      // Query DB for name if it's 'Anonymous' or if we want the accurate name
       let finalName = userData.name;
       try {
         const dbUser = await db.getOne('SELECT name, email FROM users WHERE id = $1', [userData.id]);
@@ -150,10 +198,40 @@ export function setupCollaboration(io: Server) {
         console.error('[Collab] DB fetch user error:', err);
       }
 
-      // Rời room cũ nếu có
-      if (currentDesignId && rooms.has(currentDesignId)) {
-        handleLeave(socket, currentDesignId, io);
+      // [SECURITY FIX - BOLA/IDOR in WebSockets]
+      // Verify RBAC before allowing user to join the design room.
+      let designRole: 'owner' | 'editor' | 'commenter' | 'viewer' | null = null;
+      try {
+        const designRes = await db.query('SELECT user_id, is_public FROM designs WHERE id = $1 AND is_deleted = false', [designId]);
+        if (designRes.rows.length === 0) {
+          socket.emit('error', { message: 'Bản vẽ không tồn tại' });
+          return;
+        }
+        const design = designRes.rows[0];
+
+        if (design.user_id === userData.id) {
+          designRole = 'owner';
+        } else {
+          const shareRes = await db.query('SELECT role FROM design_shares WHERE design_id = $1 AND user_id = $2', [designId, userData.id]);
+          if (shareRes.rows.length > 0) {
+            designRole = shareRes.rows[0].role as any;
+          } else if (design.is_public) {
+            designRole = 'viewer';
+          }
+        }
+      } catch (err) {
+        console.error('[Collab] DB access check error:', err);
+        socket.emit('error', { message: 'Lỗi máy chủ nội bộ' });
+        return;
       }
+
+      if (!designRole) {
+        socket.emit('error', { message: 'Bạn không có quyền truy cập bản vẽ này' });
+        return;
+      }
+
+      // Rời room cũ nếu có
+      if (currentDesignId) await handleLeave(socket, currentDesignId, io);
 
       currentDesignId = designId;
       currentUser = {
@@ -163,80 +241,202 @@ export function setupCollaboration(io: Server) {
         avatarColor: getAvatarColor(userData.id),
         socketId: socket.id,
         joinedAt: Date.now(),
+        role: designRole, // Lưu role để chặn thao tác sửa đổi phía dưới
       };
 
-      // Tham gia room Socket.io
       socket.join(`design:${designId}`);
 
-      // Ghi nhớ trong Map
-      if (!rooms.has(designId)) {
-        rooms.set(designId, new Map());
+      // [FIX Vấn đề 6] Ghi vào Redis thay vì in-memory Map
+      await RedisPresenceService.addCollaborator(designId, socket.id, currentUser);
+
+      const [activeUsers, currentLocks] = await Promise.all([
+        RedisPresenceService.getCollaborators(designId),
+        RedisPresenceService.getAllLocks(designId),
+      ]);
+
+      const currentRevision = revisionStore.getCurrentRevision(designId);
+
+      // Gửi presence + revision + locks cho user vừa join
+      socket.emit('presence-sync', { users: activeUsers, revision: currentRevision });
+      if (Object.keys(currentLocks).length > 0) {
+        socket.emit('locks-sync', { locks: currentLocks });
       }
-      rooms.get(designId)!.set(socket.id, currentUser);
 
-      // Gửi danh sách users hiện tại cho người vừa join
-      const activeUsers = Array.from(rooms.get(designId)!.values());
-      socket.emit('presence-sync', { users: activeUsers });
+      io.to(`design:${designId}`).emit('user-joined', { user: currentUser, activeUsers });
 
-      // Thông báo cho mọi người trong room (kể cả người join)
-      io.to(`design:${designId}`).emit('user-joined', {
-        user: currentUser,
-        activeUsers,
-      });
-
-      console.log(`[Collab] ${currentUser.name} joined design:${designId} (${activeUsers.length} online)`);
+      const roomSize = await RedisPresenceService.getRoomSize(designId);
+      console.log(`[Collab] ${currentUser.name} joined design:${designId} (${roomSize} online, rev=${currentRevision})`);
     });
 
-    // ── 2. Elements update ───────────────────────────────────────────────────
-    socket.on('update-elements', ({
-      designId, pageId, elements
-    }: {
-      designId: string;
-      pageId: string;
-      elements: any[];
-    }) => {
+    // ── OT: Process incoming Op ──────────────────────────────────────────────
+    socket.on('ot-op', async (clientOp: ClientOp & { designId: string }) => {
+      if (!currentUser) return;
+      if (currentUser.role !== 'owner' && currentUser.role !== 'editor') {
+        socket.emit('ot-error', { opId: clientOp.opId, message: 'Bạn chỉ có quyền xem, không thể chỉnh sửa' });
+        return;
+      }
+      const { designId, ...op } = clientOp;
+      if (!designId) return;
+
+      const sanitized: ClientOp = { ...op, clientId: currentUser.userId };
+
+      try {
+        const accepted: AcceptedOp | null = await revisionStore.processOp(designId, sanitized);
+        if (!accepted) return;
+
+        io.to(`design:${designId}`).emit('ot-accepted', { ...accepted, designId });
+
+        // [FIX Vấn đề 8] Đánh dấu dirty để Write-Behind Scheduler flush xuống DB sau 8s
+        markDirty(designId);
+      } catch (err) {
+        console.error('[OT] processOp failed:', err);
+        socket.emit('ot-error', { opId: op.opId, message: 'Server error processing op' });
+      }
+    });
+
+    // ── OT: Hybrid Catch-up on reconnect ────────────────────────────────────
+    // [FIX Vấn đề 7] Quyết định gửi delta ops hay Full Snapshot dựa trên ngưỡng CATCHUP_THRESHOLD.
+    socket.on('ot-catchup', async ({
+      designId, sinceRevision, pageId,
+    }: { designId: string; sinceRevision: number; pageId?: string }) => {
       if (!currentUser) return;
 
-      // Broadcast cho tất cả TRONG ROOM, TRỪ người gửi
+      const currentRevision = revisionStore.getCurrentRevision(designId);
+      const delta = currentRevision - sinceRevision;
+
+      if (delta <= CATCHUP_THRESHOLD) {
+        // ── Mode 1: Delta Replay (ít ops) ────────────────────────────────────
+        // Gửi danh sách op để client tự replay theo thứ tự
+        const missed = revisionStore.getOpsSince(designId, sinceRevision);
+        socket.emit('ot-catchup-response', {
+          type: 'delta',
+          ops: missed,
+          currentRevision,
+        });
+        console.log(`[OT] Catch-up DELTA for ${currentUser.name}: ${missed.length} ops since rev ${sinceRevision}`);
+      } else {
+        // ── Mode 2: Full Snapshot (quá nhiều ops bị trễ) ─────────────────────
+        // Bỏ qua toàn bộ lịch sử op, tải trực tiếp trạng thái hiện tại từ DB.
+        // Client sẽ thay thế toàn bộ elements hiện tại → không cần replay.
+        try {
+          let snapshotElements: any[] = [];
+
+          if (pageId) {
+            // Nếu client cung cấp pageId → chỉ snapshot trang đang mở
+            snapshotElements = await designElementService.getElementsByPageId(pageId);
+          } else {
+            // Fallback: lấy tất cả pages của design rồi gộp elements
+            const pages = await db.query(
+              'SELECT id FROM design_pages WHERE design_id = $1 ORDER BY page_order ASC',
+              [designId]
+            );
+            const allPageElements = await Promise.all(
+              pages.rows.map((p: any) => designElementService.getElementsByPageId(p.id)
+                .then(els => els.map(el => ({ ...el, page_id: p.id })))
+              )
+            );
+            snapshotElements = allPageElements.flat();
+          }
+
+          socket.emit('ot-catchup-response', {
+            type: 'snapshot',
+            elements: snapshotElements,
+            currentRevision,
+            pageId: pageId ?? null,
+          });
+          console.log(`[OT] Catch-up SNAPSHOT for ${currentUser.name}: ${snapshotElements.length} elements (delta=${delta} > threshold=${CATCHUP_THRESHOLD})`);
+        } catch (err) {
+          console.error('[OT] Snapshot fetch failed, falling back to delta:', err);
+          const missed = revisionStore.getOpsSince(designId, sinceRevision);
+          socket.emit('ot-catchup-response', { type: 'delta', ops: missed, currentRevision });
+        }
+      }
+    });
+
+    // ── 2. Elements update (fallback: full array broadcast) ─────────────────
+    socket.on('update-elements', ({ designId, pageId, elements }: {
+      designId: string; pageId: string; elements: any[];
+    }) => {
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor')) return;
       socket.to(`design:${designId}`).emit('elements-updated', {
-        pageId,
-        elements,
+        pageId, elements,
         userId: currentUser.userId,
         senderName: currentUser.name,
       });
     });
 
-    // ── 3. Page change notification ──────────────────────────────────────────
+    // ── 2b. Element Delta ────────────────────────────────────────────────────
+    socket.on('element-delta', ({ designId, pageId, elementId, action, changes }: {
+      designId: string; pageId: string; elementId: string;
+      action: 'update' | 'add' | 'delete' | 'reorder'; changes?: Record<string, any>;
+    }) => {
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor')) return;
+      socket.to(`design:${designId}`).emit('element-delta', {
+        pageId, elementId, action, changes,
+        userId: currentUser.userId,
+      });
+    });
+
+    // ── 2c. Element Lock (nguyên tử với Redis HSETNX) ───────────────────────
+    socket.on('element-lock', async ({ designId, pageId, elementId }: {
+      designId: string; pageId: string; elementId: string;
+    }) => {
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor')) return;
+
+      // [FIX Vấn đề 6] Dùng HSETNX nguyên tử — tránh race condition giữa 2 server
+      const lockInfo = {
+        userId: currentUser.userId,
+        name: currentUser.name,
+        avatarColor: currentUser.avatarColor,
+        pageId,
+      };
+      const locked = await RedisPresenceService.lockElement(designId, elementId, lockInfo);
+
+      if (locked) {
+        socket.to(`design:${designId}`).emit('element-locked', {
+          pageId, elementId,
+          lockedBy: {
+            userId: currentUser.userId,
+            name: currentUser.name,
+            avatarColor: currentUser.avatarColor,
+          },
+        });
+      }
+      // Nếu locked=false: element đã bị người khác giữ, không emit gì cả
+    });
+
+    // ── 2d. Element Unlock ───────────────────────────────────────────────────
+    socket.on('element-unlock', async ({ designId, elementId }: {
+      designId: string; elementId: string;
+    }) => {
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor')) return;
+      const unlocked = await RedisPresenceService.unlockElement(designId, elementId, currentUser.userId);
+      if (unlocked) {
+        socket.to(`design:${designId}`).emit('element-unlocked', { elementId });
+      }
+    });
+
+    // ── 3. Page change ───────────────────────────────────────────────────────
     socket.on('page-changed', ({ designId, pageId }: { designId: string; pageId: string }) => {
       if (!currentUser) return;
       socket.to(`design:${designId}`).emit('user-page-changed', {
-        userId: currentUser.userId,
-        pageId,
+        userId: currentUser.userId, pageId,
       });
     });
 
-    // ── 3.5. Page Resize notification ────────────────────────────────────────
-    socket.on('resize-page', ({
-      designId, pageId, width, height, isLive
-    }: {
-      designId: string;
-      pageId: string;
-      width: number;
-      height: number;
-      isLive: boolean;
+    // ── 3.5. Page Resize ─────────────────────────────────────────────────────
+    socket.on('resize-page', ({ designId, pageId, width, height, isLive }: {
+      designId: string; pageId: string; width: number; height: number; isLive: boolean;
     }) => {
       if (!currentUser) return;
       socket.to(`design:${designId}`).emit('page-resized', {
-        pageId,
-        width,
-        height,
-        isLive,
+        pageId, width, height, isLive,
         userId: currentUser.userId,
-        userName: currentUser.name
+        userName: currentUser.name,
       });
     });
 
-    // ── 4. Cursor position (optional UX touch) ───────────────────────────────
+    // ── 4. Cursor position ───────────────────────────────────────────────────
     socket.on('cursor-move', ({ designId, x, y }: { designId: string; x: number; y: number }) => {
       if (!currentUser) return;
       socket.to(`design:${designId}`).emit('cursor-moved', {
@@ -247,35 +447,53 @@ export function setupCollaboration(io: Server) {
       });
     });
 
-    // ── 5. Page Added (broadcast to collaborators) ─────────────────────────────
+    // ── 5. Page Added ────────────────────────────────────────────────────────
     socket.on('page-added', ({ designId, newPage }: { designId: string; newPage: any }) => {
-      if (!currentUser) return;
-      // Broadcast tới tất cả user khác trong room
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor')) return;
       socket.to(`design:${designId}`).emit('page-added', {
         newPage,
-        addedBy: {
-          userId: currentUser.userId,
-          name: currentUser.name,
-        },
+        addedBy: { userId: currentUser.userId, name: currentUser.name },
       });
     });
 
-    // ── 6. Page Deleted (broadcast to collaborators) ─────────────────────────
+    // ── 6. Page Deleted ──────────────────────────────────────────────────────
     socket.on('page-deleted', ({ designId, pageId }: { designId: string; pageId: string }) => {
-      if (!currentUser) return;
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor')) return;
       socket.to(`design:${designId}`).emit('page-deleted', {
         pageId,
-        deletedBy: {
-          userId: currentUser.userId,
-          name: currentUser.name,
-        },
+        deletedBy: { userId: currentUser.userId, name: currentUser.name },
       });
+    });
+
+    // ── 6b. Page Thumbnail Updated ───────────────────────────────────────────
+    // [FIX 6] Khi 1 client upload thumbnail mới lên Cloud và phát sự kiện này,
+    // server relay ngay cho tất cả collaborator khác trong phòng.
+    // Các client nhận được sẽ cập nhật thumbnail trong sidebar mà không cần reload.
+    socket.on('page-thumbnail-updated', ({
+      designId, pageId, thumbUrl,
+    }: { designId: string; pageId: string; thumbUrl: string }) => {
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor') || !designId || !pageId || !thumbUrl) return;
+      // Dùng socket.to() (không gửi lại cho chính mình, vì người gửi đã tự cập nhật)
+      socket.to(`design:${designId}`).emit('page-thumbnail-updated', {
+        pageId,
+        thumbUrl,
+      });
+      console.log(`[Collab] Thumbnail updated for page ${pageId} by ${currentUser.name}`);
     });
 
     // ── 7. Disconnect ────────────────────────────────────────────────────────
-    socket.on('disconnect', () => {
-      if (currentDesignId) {
-        handleLeave(socket, currentDesignId, io);
+    socket.on('disconnect', async () => {
+      if (currentDesignId && currentUser) {
+        // [FIX Vấn đề 6] Giải phóng locks qua RedisPresenceService
+        const unlockedIds = await RedisPresenceService.clearUserLocks(currentDesignId, currentUser.userId);
+        if (unlockedIds.length > 0) {
+          io.to(`design:${currentDesignId}`).emit('elements-unlocked-batch', { elementIds: unlockedIds });
+        }
+
+        // [FIX Vấn đề 8] Flush ngay khi user rời phòng — đảm bảo không mất data
+        await flushNow(currentDesignId);
+
+        await handleLeave(socket, currentDesignId, io);
       }
       if (globalUserId) {
         const userSockets = globalOnlineUsers.get(globalUserId);
@@ -283,15 +501,20 @@ export function setupCollaboration(io: Server) {
           userSockets.delete(socket.id);
           if (userSockets.size === 0) {
             globalOnlineUsers.delete(globalUserId);
-            io.to('admin-dashboard').emit('user-offline', { userId: globalUserId });
+            // [FIX 2] Dùng tên event chuẩn hóa
+            io.to('admin-dashboard').emit('admin:user-offline', { userId: globalUserId });
           }
         }
       }
     });
 
     // ── 8. Explicit leave ────────────────────────────────────────────────────
-    socket.on('leave-design', ({ designId }: { designId: string }) => {
-      handleLeave(socket, designId, io);
+    socket.on('leave-design', async ({ designId }: { designId: string }) => {
+      if (currentUser) {
+        await RedisPresenceService.clearUserLocks(designId, currentUser.userId);
+        await flushNow(designId);
+      }
+      await handleLeave(socket, designId, io);
       currentDesignId = null;
       currentUser = null;
     });
@@ -300,29 +523,29 @@ export function setupCollaboration(io: Server) {
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
-function handleLeave(socket: Socket, designId: string, io: Server) {
-  const room = rooms.get(designId);
-  if (!room) return;
+async function handleLeave(socket: Socket, designId: string, io: Server) {
+  // [FIX Vấn đề 6] Đọc/ghi state từ Redis thay vì in-memory Map
+  const collaboratorBefore = (await RedisPresenceService.getCollaborators(designId))
+    .find(c => c.socketId === socket.id);
 
-  const user = room.get(socket.id);
-  room.delete(socket.id);
+  await RedisPresenceService.removeCollaborator(designId, socket.id);
   socket.leave(`design:${designId}`);
 
-  // Dọn room rỗng
-  if (room.size === 0) {
-    rooms.delete(designId);
+  const remainingUsers = await RedisPresenceService.getCollaborators(designId);
+
+  // Dọn sạch room khi không còn ai
+  if (remainingUsers.length === 0) {
+    await RedisPresenceService.cleanupRoom(designId);
+    revisionStore.evict(designId);
   }
 
-  const activeUsers = room ? Array.from(room.values()) : [];
-
-  // Thông báo cho những người còn lại
   io.to(`design:${designId}`).emit('user-left', {
-    userId: user?.userId,
+    userId: collaboratorBefore?.userId,
     socketId: socket.id,
-    activeUsers,
+    activeUsers: remainingUsers,
   });
 
-  if (user) {
-    console.log(`[Collab] ${user.name} left design:${designId} (${activeUsers.length} online)`);
+  if (collaboratorBefore) {
+    console.log(`[Collab] ${collaboratorBefore.name} left design:${designId} (${remainingUsers.length} online)`);
   }
 }

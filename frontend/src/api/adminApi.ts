@@ -64,9 +64,11 @@ export const bulkUploadAssets = async (formData: FormData) => {
   return res.json();
 };
 
-export const updateAsset = async (id: string, data: {
-  name?: string; is_premium?: boolean; tags?: string; category_id?: string;
-}) => {
+export interface UpdateAssetData {
+  name?: string; is_premium?: boolean; tags?: string;
+}
+
+export const updateAsset = async (id: string, data: UpdateAssetData) => {
   const res = await fetch(`/api/admin/assets/${id}`, {
     method: 'PATCH', headers: getHeaders(),
     body: JSON.stringify(data),
@@ -93,10 +95,10 @@ export const fetchAdminDesigns = async (params: {
   return res.json();
 };
 
-export const publishTemplate = async (design_id: string, category_id?: string) => {
+export const publishTemplate = async (design_id: string) => {
   const res = await fetch('/api/admin/templates/publish', {
     method: 'POST', headers: getHeaders(),
-    body: JSON.stringify({ design_id, category_id }),
+    body: JSON.stringify({ design_id }),
   });
   if (!res.ok) throw new Error('Failed to publish template');
   return res.json();
@@ -196,16 +198,6 @@ export const adminForceSuccessPayment = async (paymentId: string) => {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Failed to force payment success');
-  return data;
-};
-
-// [MỚI] Admin hủy gia hạn tự động (user vẫn dùng nốt đến cuối kỳ)
-export const adminCancelRenewal = async (subscriptionId: string) => {
-  const res = await fetch(`/api/admin/subscriptions/${subscriptionId}/cancel-renewal`, {
-    method: 'POST', headers: getHeaders(),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Failed to cancel renewal');
   return data;
 };
 

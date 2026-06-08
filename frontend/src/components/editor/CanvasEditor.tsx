@@ -1,7 +1,7 @@
 // src/components/editor/CanvasEditor.tsx
 import React, { useRef, useEffect, useState, useCallback, memo } from 'react';
 import { Stage, Layer, Rect, Transformer, Group, Line, Circle, Text } from 'react-konva';
-import { CircleShape, RectangleShape, EditableText, URLImage, IndividualBorder } from './CanvasElements';
+import { CircleShape, RectangleShape, EditableText, URLImage, IndividualBorder, ProWatermarkOverlay } from './CanvasElements';
 
 // ─── THUẬT TOÁN DOUGLAS-PEUCKER ─────────────────────────────────────────────
 // Rút gọn mảng points [x0,y0,x1,y1,...] để giảm số điểm vẽ mà không làm méo hình
@@ -72,12 +72,18 @@ interface CanvasEditorProps {
   onActionStart?: () => void;
   // Được gọi khi người dùng xong chỉnh sửa text (để push undo snapshot thông minh)
   onTextEditEnd?: (finalText: string, elementId: string) => void;
+  // [FIX #8] Callback khi bắt đầu chỉnh sửa text — để EditorPage phát element-lock
+  onTextEditStart?: (elementId: string) => void;
+  // [FIX #8] Map elementId → { name, avatarColor } của người đang lock
+  elementLocks?: Map<string, { userId: string; name: string; avatarColor: string; pageId: string }>;
   // Preview animation: IDs of elements that should be hidden (not yet "appeared")
   animPreviewHiddenIds?: Set<string>;
   // Which animationOrder step is currently animating in (for applying the correct effect)
   animPreviewCurrentStep?: number;
   // Progress 0→1 of the current step's entry animation
   animPreviewProgress?: number;
+  // Free user flag: if true, Pro stickers will show a watermark overlay
+  isFreeUser?: boolean;
 }
 
 // ─── CACHED LINE COMPONENT ────────────────────────────────────────────────────
@@ -115,7 +121,7 @@ const CachedLine = memo(({ el, activeTool, onDragMove, onDragEnd, onClick }: {
   useEffect(() => {
     const node = lineRef.current;
     if (!node) return;
-    
+
     // Chỉ cache nếu là nét vẽ tay siêu phức tạp (nhiều hơn 150 điểm) để tối ưu hiệu năng.
     // Với nét vẽ bình thường (dưới 150 điểm), không cache giúp giữ nét vẽ sắc nét và đảm bảo hitStrokeWidth hoạt động chuẩn xác.
     if (el.points && el.points.length > 150) {
@@ -443,7 +449,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     // INFINITE CANVAS AUTO-EXPAND LOGIC
     const node = e.target;
     if (node.id() === 'bg' || node.name() === 'guideline' || node.getClassName() === 'Transformer') return;
-    
+
     const parent = node.getParent();
     if (!parent) return;
 
@@ -496,7 +502,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       isDrawingRef.current = true;
       const pos = stageRef.current?.getRelativePointerPosition();
       if (!pos) return;
-      
+
       const currentLines = [...lines, { tool: props.activeTool, points: [pos.x, pos.y] }];
       setLines(currentLines);
 
@@ -596,7 +602,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       }
       return;
     }
-    
+
     if (props.activeTool === 'text') {
       const pos = stageRef.current?.getRelativePointerPosition();
       if (pos && props.addElement) {
@@ -835,8 +841,8 @@ export default function CanvasEditor(props: CanvasEditorProps) {
   const cursorStyle: React.CSSProperties = {
     cursor: props.activeTool === 'draw' || props.activeTool === 'line' ? 'crosshair'
       : props.activeTool === 'text' ? 'text'
-      : props.activeTool === 'sticky' ? 'cell'
-      : 'default'
+        : props.activeTool === 'sticky' ? 'cell'
+          : 'default'
   };
 
   return (
@@ -890,23 +896,71 @@ export default function CanvasEditor(props: CanvasEditorProps) {
               const isActive = selectedIds.includes(el.id) || editingId === el.id;
               if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
               if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
-              if (el.type === 'text') return (
-                <EditableText
-                  key={el.id} text={el}
-                  onDblClick={() => {
-                    // Lưu lại text gốc khi bắt đầu edit để kiểm tra sau khi blur
-                    editingOriginalTextRef.current = el.text;
-                    setEditingId(el.id);
-                  }}
-                  onChange={updateElement}
-                  onChangeFinal={updateElementImmediate}
-                  isEditing={editingId === el.id}
-                  onSelect={() => { }}
-                  onDragMove={handleDragMove}
-                  onActionStart={props.onActionStart}
-                />
+              if (el.type === 'text') {
+                // [FIX #8] Kiểm tra xem element này có đang bị người khác lock không
+                const lockInfo = props.elementLocks?.get(el.id);
+                const isLockedByOther = !!lockInfo;
+
+                return (
+                  <React.Fragment key={el.id}>
+                    <EditableText
+                      text={el}
+                      onDblClick={() => {
+                        // [FIX #8] Nếu element đang bị người khác lock → chặn edit
+                        if (isLockedByOther) return;
+                        // Lưu lại text gốc khi bắt đầu edit để kiểm tra sau khi blur
+                        editingOriginalTextRef.current = el.text;
+                        setEditingId(el.id);
+                        // [FIX #8] Phát sự kiện lock lên EditorPage → broadcast qua socket
+                        props.onTextEditStart?.(el.id);
+                      }}
+                      onChange={updateElement}
+                      onChangeFinal={updateElementImmediate}
+                      isEditing={editingId === el.id}
+                      onSelect={() => { }}
+                      onDragMove={handleDragMove}
+                      onActionStart={props.onActionStart}
+                    />
+                    {/* [FIX #8] Lock Overlay: khung đỏ + tên người đang edit */}
+                    {isLockedByOther && (
+                      <Group
+                        x={el.x}
+                        y={el.y}
+                        listening={false}
+                      >
+                        <Rect
+                          width={el.width || 200}
+                          height={el.height || 40}
+                          stroke={lockInfo.avatarColor || '#ef4444'}
+                          strokeWidth={2}
+                          fill="transparent"
+                          listening={false}
+                          dash={[6, 3]}
+                        />
+                        <Text
+                          text={`✏️ ${lockInfo.name} đang sửa...`}
+                          fontSize={11}
+                          fontFamily="Inter, sans-serif"
+                          fill="white"
+                          padding={3}
+                          x={0}
+                          y={-20}
+                          listening={false}
+                        />
+                      </Group>
+                    )}
+                  </React.Fragment>
+                );
+              }
+              if (el.type === 'image') return (
+                <React.Fragment key={el.id}>
+                  <URLImage image={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />
+                  {/* Pro watermark overlay: visible only for Free users on Pro sticker elements */}
+                  {el.is_premium && props.isFreeUser && (
+                    <ProWatermarkOverlay el={el} />
+                  )}
+                </React.Fragment>
               );
-              if (el.type === 'image') return <URLImage key={el.id} image={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
               if (el.type === 'line') return (
                 <CachedLine
                   key={el.id}
@@ -977,6 +1031,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
               props.onTextEditEnd?.(finalText, editingElement.id);
             }
             editingOriginalTextRef.current = null;
+            // [FIX #8] setEditingId(null) sẽ trigger EditorPage unlock element
             setEditingId(null);
           }}
           onKeyDown={(e) => {

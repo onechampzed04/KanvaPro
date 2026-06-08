@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+// ─── [WORKSPACE] Import để đồng bộ Workspace sau khi fetch user ───────────────
+// Dùng lazy import để tránh circular dependency giữa 2 Context
 
 export interface UserSubscription {
   id: string;
@@ -54,6 +56,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
+        // ─── [WORKSPACE] Lưu worksptaces vào localStorage để WorkspaceContext đọc
+        // Tránh circular dependency bằng cách dùng localStorage làm "event bus"
+        if (data.workspaces) {
+          localStorage.setItem('kanva_workspaces', JSON.stringify(data.workspaces));
+          // Phát sự kiện để WorkspaceProvider nhận và cập nhật state
+          window.dispatchEvent(new CustomEvent('workspaces:updated', { detail: data.workspaces }));
+        }
       } else {
         setUser(null);
       }
@@ -61,6 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
     }
   }, []);
+
 
   useEffect(() => {
     fetchCurrentUser().finally(() => setLoading(false));
@@ -102,6 +112,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             });
           });
         });
+      });
+
+      // ─── [REALTIME] Global Team Notifications ──────────────────────────────
+      const showGlobalToast = (icon: 'success' | 'warning' | 'info', title: string) => {
+        import('sweetalert2').then((Swal) => {
+          Swal.default.fire({
+            toast: true,
+            position: 'top-end',
+            icon: icon,
+            title: title,
+            showConfirmButton: false,
+            timer: 4000,
+            timerProgressBar: true,
+          });
+        });
+      };
+
+      socket.on('team:you_are_now_owner', (data: { message: string }) => {
+        showGlobalToast('success', data.message);
+      });
+
+      socket.on('team:you_were_removed', (data: { message: string }) => {
+        showGlobalToast('warning', data.message);
+      });
+
+      socket.on('team:you_were_invited', (data: { message: string }) => {
+        showGlobalToast('info', data.message);
       });
 
       return () => {

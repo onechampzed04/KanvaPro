@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
+import AdminSelect from './AdminSelect';
 import {
   fetchAdminSubscriptions, updateAdminSubscription, terminateSubscription, createManualSubscription,
   fetchAdminPlans, createPlan, updatePlan, deletePlan,
-  fetchAdminPayments, adminCancelRenewal, adminRevokeSubscription, adminForceSuccessPayment,
+  fetchAdminPayments, adminRevokeSubscription, adminForceSuccessPayment,
 } from '../../api/adminApi';
-import { Search, Crown, CheckCircle, XCircle, Clock, Plus, Edit, Trash2, DollarSign, Activity, Ban, RotateCcw } from 'lucide-react';
+import { Search, Crown, CheckCircle, XCircle, Clock, Plus, Edit, Trash2, DollarSign, Activity, Ban } from 'lucide-react';
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n);
@@ -92,15 +93,6 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [search, status]);
 
-  const handleCancelRenewal = async (id: string) => {
-    if (!confirm('Hủy gia hạn tự động? User vẫn được dùng đến cuối kỳ.')) return;
-    try {
-      await adminCancelRenewal(id);
-      showToast('Đã hủy gia hạn tự động. User vẫn dùng đến hết kỳ.');
-      load();
-    } catch { showToast('Lỗi hủy gia hạn', 'error'); }
-  };
-
   const handleRevoke = async (id: string) => {
     if (!confirm('⚠️ NGẮT DỊCH VỤ NGAY LẬP TỨC? Hành động này không thể hoàn tác!')) return;
     try {
@@ -124,12 +116,16 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
           <Search size={14} color="var(--text-muted)" />
           <input placeholder="Search user..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <select className="admin-select" value={status} onChange={e => setStatus(e.target.value)}>
-          <option value="">All Statuses</option>
-          <option value="active">Active</option>
-          <option value="canceled">Canceled</option>
-          <option value="expired">Expired</option>
-        </select>
+        <AdminSelect
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: '', label: 'All Statuses' },
+            { value: 'active', label: 'Active' },
+            { value: 'canceled', label: 'Canceled' },
+            { value: 'expired', label: 'Expired' },
+          ]}
+        />
       </div>
 
       <div style={{ overflowX: 'auto' }}>
@@ -162,17 +158,6 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
                     <td>
                       {s.status === 'active' && (
                         <div style={{ display: 'flex', gap: 6 }}>
-                          {/* [MỚI] Nút Hủy gia hạn — dùng nốt đến cuối kỳ */}
-                          {!s.cancel_at && (
-                            <button
-                              className="admin-btn admin-btn-ghost admin-btn-sm"
-                              style={{ color: '#f59e0b', fontSize: 11 }}
-                              onClick={() => handleCancelRenewal(s.id)}
-                              title="Hủy gia hạn tự động (user dùng nốt đến cuối kỳ)"
-                            >
-                              <RotateCcw size={11} /> Hủy gia hạn
-                            </button>
-                          )}
                           {/* [MỚI] Nút Ngắt ngay — thay thế nút Terminate cũ */}
                           <button
                             className="admin-btn admin-btn-ghost admin-btn-sm"
@@ -183,12 +168,6 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
                             <Ban size={11} /> Ngắt ngay
                           </button>
                         </div>
-                      )}
-                      {/* Hiển thị badge nếu đã lên lịch hủy gia hạn */}
-                      {s.status === 'active' && s.cancel_at && (
-                        <span style={{ fontSize: 10, color: '#f59e0b', background: 'rgba(245,158,11,0.1)', padding: '2px 6px', borderRadius: 4 }}>
-                          Hủy vào {formatDate(s.cancel_at)}
-                        </span>
                       )}
                     </td>
                   </tr>
@@ -365,12 +344,16 @@ function PaymentsTab({ showToast }: { showToast: Function }) {
           <span className="admin-table-title">Revenue & Invoices</span>
           <span className="badge badge-pro" style={{ fontSize: 14 }}><DollarSign size={14} /> Total: {formatCurrency(totalRev)}</span>
         </div>
-        <select className="admin-select" value={status} onChange={e => setStatus(e.target.value)}>
-          <option value="">All Statuses</option>
-          <option value="succeeded">Succeeded</option>
-          <option value="failed">Failed</option>
-          <option value="pending">Pending</option>
-        </select>
+        <AdminSelect
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: '', label: 'All Statuses' },
+            { value: 'succeeded', label: 'Succeeded' },
+            { value: 'failed', label: 'Failed' },
+            { value: 'pending', label: 'Pending' },
+          ]}
+        />
       </div>
 
       <div style={{ overflowX: 'auto' }}>

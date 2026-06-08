@@ -3,6 +3,8 @@ import { fetchAdminUsersV2, updateUserQuotaV2, banUserV2 } from '../../api/admin
 import { Search, Shield, Ban, Crown, MoreVertical, RefreshCw, HardDrive, UserCheck, AlertTriangle } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
+import { io as socketIO } from 'socket.io-client';
+import AdminSelect from './AdminSelect';
 
 function formatBytes(b: number) {
   if (!b) return '0 B';
@@ -59,12 +61,30 @@ export default function AdminUsers() {
 
   useEffect(() => {
     loadUsers();
-    // Auto refresh real-time status every 15s
-    const interval = setInterval(() => {
-      loadUsers();
-    }, 15000);
-    return () => clearInterval(interval);
   }, [loadUsers]);
+
+  // [FIX 2] Thay thế polling 15s bằng Socket.io events
+  // Chỉ update đúng dòng bị ảnh hưởng, không reload toàn bộ list
+  useEffect(() => {
+    const token = localStorage.getItem('token') || document.cookie.split('token=')[1]?.split(';')[0];
+    const socket = socketIO('http://localhost:3000', { withCredentials: true });
+
+    socket.emit('join-admin-dashboard', { token });
+
+    socket.on('admin:user-online', ({ userId }: { userId: string }) => {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, isOnline: true } : u));
+    });
+
+    socket.on('admin:user-offline', ({ userId }: { userId: string }) => {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, isOnline: false } : u));
+    });
+
+    socket.on('admin:user-banned', ({ userId, status }: { userId: string; status: string }) => {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, status } : u));
+    });
+
+    return () => { socket.disconnect(); };
+  }, []);
 
   const handleBanSubmit = async () => {
     if (!selectedUser) return;
@@ -163,7 +183,11 @@ export default function AdminUsers() {
             <div>
               <p className="text-gray-400 text-sm font-medium">Cảnh báo Quota</p>
               <h3 className="text-3xl font-bold text-white mt-2">
-                {users.filter(u => (parseInt(u.used_storage_bytes) / (parseFloat(u.max_storage_gb) * 1024**3)) > 0.8).length}
+                {users.filter(u => {
+                  const max = parseFloat(u.max_storage_gb) * 1024**3;
+                  if (max <= 0) return parseInt(u.used_storage_bytes) > 0;
+                  return (parseInt(u.used_storage_bytes) / max) > 0.8;
+                }).length}
               </h3>
               <p className="text-xs text-orange-400 mt-1">Users dùng &gt; 80%</p>
             </div>
@@ -185,24 +209,25 @@ export default function AdminUsers() {
             value={search} onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <select
-          value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
-          className="px-4 py-2.5 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none w-full md:w-auto"
-        >
-          <option value="">Tất cả Role</option>
-          <option value="super_admin">Super Admin</option>
-          <option value="admin">Admin</option>
-          <option value="vip_user">VIP User</option>
-          <option value="free_user">Free User</option>
-        </select>
-        <select
-          value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="px-4 py-2.5 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none w-full md:w-auto"
-        >
-          <option value="">Tất cả Trạng thái</option>
-          <option value="active">Hoạt động</option>
-          <option value="banned">Bị Khóa</option>
-        </select>
+        <AdminSelect
+          value={roleFilter}
+          onChange={setRoleFilter}
+          options={[
+            { value: '', label: 'Tất cả Role' },
+            { value: 'admin', label: 'Admin' },
+            { value: 'moderator', label: 'Moderator' },
+            { value: 'user', label: 'User' },
+          ]}
+        />
+        <AdminSelect
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: '', label: 'Tất cả Trạng thái' },
+            { value: 'active', label: 'Hoạt động' },
+            { value: 'banned', label: 'Bị Khóa' },
+          ]}
+        />
       </div>
 
       {/* ── Table ── */}
@@ -222,7 +247,7 @@ export default function AdminUsers() {
               {users.map(u => {
                 const used = parseInt(u.used_storage_bytes);
                 const max = parseFloat(u.max_storage_gb) * 1024 ** 3;
-                const percent = Math.min((used / max) * 100, 100);
+                const percent = max > 0 ? Math.min((used / max) * 100, 100) : (used > 0 ? 100 : 0);
                 const isWarning = percent > 80;
 
                 return (
@@ -248,9 +273,7 @@ export default function AdminUsers() {
                     </td>
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-1 rounded-md text-xs font-medium ${
-                        u.role === 'super_admin' ? 'bg-purple-500/20 text-purple-400' :
                         u.role === 'admin' ? 'bg-blue-500/20 text-blue-400' :
-                        u.role === 'vip_user' ? 'bg-yellow-500/20 text-yellow-400' :
                         'bg-gray-500/20 text-gray-400'
                       }`}>
                         {u.role.replace('_', ' ').toUpperCase()}
@@ -394,10 +417,8 @@ export default function AdminUsers() {
                   value={editRole} onChange={e => setEditRole(e.target.value)}
                   className="w-full px-4 py-3 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="super_admin">Super Admin</option>
                   <option value="admin">Admin</option>
-                  <option value="vip_user">VIP User</option>
-                  <option value="free_user">Free User</option>
+                  <option value="user">User</option>
                 </select>
               </div>
 

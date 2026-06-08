@@ -172,9 +172,24 @@
 }
 
 /* ── Toolbar button tooltip ──────────────────────────── */
-[title]:not([title=""]) {
+/* QUAN TRỌNG: Giới hạn [title] chỉ áp dụng cho toolbar buttons, KHÔNG áp dụng
+   cho doc-editor-content vì position:relative tạo stacking context mới làm
+   cursor bị reset về default trong một số browser */
+[title]:not([title=""]):not(.doc-editor-content):not(.doc-editor-content *) {
   position: relative;
 }
+
+/* ── Doc Editor — cursor luôn hiện dạng text ──────────── */
+/* Dùng !important để override Tailwind prose, [title] selector,
+   và bất kỳ rule nào khác có thể reset cursor về 'default' hay 'auto' */
+.doc-editor-content,
+.doc-editor-content * {
+  cursor: text !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+/* Exception: các element không phải text thì không cần text cursor */
+.doc-editor-content a { cursor: pointer !important; }
 
 /* ── Framer-motion Reorder.Item drag cursor ──────────── */
 [data-framer-component-type="ReorderItem"] {

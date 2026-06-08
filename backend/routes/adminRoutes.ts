@@ -4,12 +4,12 @@ import { isAdmin } from '../middleware/isAdmin';
 import {
   getMetrics, getUsers, updateUserRole, toggleUserBan,
   getAdminAssets, bulkUploadAssets, updateAsset, deleteAsset,
-  getDesigns, publishTemplate, unpublishTemplate, adminUpload,
+  getDesigns, publishTemplate, unpublishTemplate, adminUpload, validateMagicNumber,
   getAdminSubscriptions, createManualSubscription,
   updateSubscriptionStatus, terminateSubscription,
   subscriptionPlanController, getAdminPayments,
   getAdminUsers, banUser, updateUserQuota,
-  adminForceSuccessPayment, revokeSubscription, adminCancelRenewal,
+  adminForceSuccessPayment, revokeSubscription,
 } from '../controllers/adminController';
 
 const router = express.Router();
@@ -32,7 +32,7 @@ router.put('/users/:id/ban', toggleUserBan);
 
 // Assets
 router.get('/assets', getAdminAssets);
-router.post('/assets/bulk', adminUpload.array('files', 100), bulkUploadAssets);
+router.post('/assets/bulk', adminUpload.array('files', 100), validateMagicNumber, bulkUploadAssets);
 router.patch('/assets/:id', updateAsset);
 router.delete('/assets/:id', deleteAsset);
 
@@ -46,8 +46,7 @@ router.get('/subscriptions', getAdminSubscriptions);
 router.post('/subscriptions/manual', createManualSubscription);
 router.put('/subscriptions/:id', updateSubscriptionStatus);
 router.delete('/subscriptions/:id', terminateSubscription);
-// [MỚI] 2 nút thay cho Terminate đơn lẻ
-router.post('/subscriptions/:id/cancel-renewal', adminCancelRenewal); // Hủy gia hạn (dùng nốt đến cuối kỳ)
+// [MỚI] Nút thay cho Terminate đơn lẻ
 router.post('/subscriptions/:id/revoke', revokeSubscription);          // Ngắt ngay lập tức
 
 // ── Plans ──────────────────────────────────────────────────────────────────

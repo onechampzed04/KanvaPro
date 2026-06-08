@@ -28,9 +28,9 @@ export default {
   query: (text: string, params?: any[]) => pool.query(text, params),
   
   // Hàm tiện ích để lấy 1 dòng (giống db.get cũ)
-  async getOne(text: string, params?: any[]) {
+  async getOne<T = any>(text: string, params?: any[]): Promise<T | null> {
     const res = await pool.query(text, params);
-    return res.rows[0];
+    return res.rows[0] ?? null;
   },
 
   // Hàm thực thi không cần trả về row (giống db.run cũ)

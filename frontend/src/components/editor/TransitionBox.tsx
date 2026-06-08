@@ -40,11 +40,10 @@ export default function TransitionBox({ pages, transitionTargetId, setPages, onC
                       : p
                   ));
                 }}
-                className={`py-3 px-1 text-[11px] leading-tight font-bold rounded-lg border transition-all ${
-                  isActive
+                className={`py-3 px-1 text-[11px] leading-tight font-bold rounded-lg border transition-all ${isActive
                     ? 'bg-indigo-100 border-indigo-500 text-indigo-700 shadow-sm'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-indigo-300 hover:bg-white hover:shadow-sm'
-                }`}
+                  }`}
               >
                 {trans.label}
               </button>

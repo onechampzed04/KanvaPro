@@ -74,11 +74,10 @@ function SortableSlide({
       {/* Drag handle + click to select */}
       <button
         onClick={() => handlePageChange(page.id)}
-        className={`relative w-28 h-20 bg-white shadow-sm border-2 transition-all duration-200 overflow-hidden rounded-sm group/slide ${
-          isActive
+        className={`relative w-28 h-20 bg-white shadow-sm border-2 transition-all duration-200 overflow-hidden rounded-sm group/slide ${isActive
             ? 'border-indigo-500 ring-2 ring-indigo-200 shadow-indigo-200'
             : 'border-transparent hover:border-slate-300 hover:shadow-md'
-        } ${isDragging ? 'shadow-2xl scale-105' : ''}`}
+          } ${isDragging ? 'shadow-2xl scale-105' : ''}`}
       >
         {/* Page number badge */}
         <span className="absolute top-1 left-1 bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded opacity-70 z-10">
@@ -100,12 +99,8 @@ function SortableSlide({
           </svg>
         </div>
 
-        {/* Content preview */}
-        {isActive ? (
-          <div className="w-full h-full flex items-center justify-center text-[10px] text-indigo-500 font-bold bg-indigo-50">
-            Editing
-          </div>
-        ) : page.thumbnail ? (
+        {/* Content preview — luôn hiện thumbnail, kể cả trang đang active */}
+        {page.thumbnail ? (
           <img
             src={page.thumbnail}
             alt={`Page ${index + 1}`}
@@ -116,6 +111,10 @@ function SortableSlide({
           <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400 bg-white">
             Empty
           </div>
+        )}
+        {/* Chấm xanh nhỏ cho trang đang edit — thay cho chữ "Editing" che thumbnail */}
+        {isActive && (
+          <span className="absolute bottom-1 right-1 w-2 h-2 bg-indigo-500 rounded-full shadow-sm animate-pulse z-10" title="Đang chỉnh sửa" />
         )}
       </button>
 
@@ -240,11 +239,10 @@ export default function PageThumbnailBar({
           <div key={page.id} className="flex flex-col items-center gap-1.5 shrink-0">
             <button
               onClick={() => handlePageChange(page.id)}
-              className={`relative w-28 h-20 bg-white shadow-sm border-2 transition overflow-hidden rounded-sm ${
-                currentPageId === page.id
+              className={`relative w-28 h-20 bg-white shadow-sm border-2 transition overflow-hidden rounded-sm ${currentPageId === page.id
                   ? 'border-indigo-500 ring-2 ring-indigo-200'
                   : 'border-transparent hover:border-slate-300'
-              }`}
+                }`}
             >
               <span className="absolute top-1 left-1 bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded opacity-70 z-10">
                 {index + 1}

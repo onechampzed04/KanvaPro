@@ -162,7 +162,7 @@ export default function BottomTimeline(props: any) {
     const deltaSeconds = (e.clientX - pageDragInfo.startX) / PIXELS_PER_SECOND;
     const newDuration = Math.max(0.5, pageDragInfo.initDuration + deltaSeconds);
     if (updatePage) {
-       updatePage(pageDragInfo.id, { duration: newDuration });
+      updatePage(pageDragInfo.id, { duration: newDuration });
     }
   };
 
@@ -356,61 +356,61 @@ export default function BottomTimeline(props: any) {
                     className="relative"
                     style={{ height: `${containerHeight}px` }}
                   >
-                {pages.map((page: any) => {
-                  const pTiming = pageTimings.find((pt: any) => pt.id === page.id);
-                  if (!pTiming) return null;
+                    {pages.map((page: any) => {
+                      const pTiming = pageTimings.find((pt: any) => pt.id === page.id);
+                      if (!pTiming) return null;
 
-                  const liveElements = page.id === currentPageId ? elements : (page.elements || []);
+                      const liveElements = page.id === currentPageId ? elements : (page.elements || []);
 
-                  return liveElements.map((el: any, index: number) => {
-                    const startOffset = pTiming.start + (el.timeline?.start || 0);
-                    const duration = el.timeline?.duration || 5;
-                    const laneIndex = el.timeline?.lane !== undefined ? el.timeline.lane : index;
+                      return liveElements.map((el: any, index: number) => {
+                        const startOffset = pTiming.start + (el.timeline?.start || 0);
+                        const duration = el.timeline?.duration || 5;
+                        const laneIndex = el.timeline?.lane !== undefined ? el.timeline.lane : index;
 
-                    let bgColor = 'bg-indigo-500';
-                    if (el.type === 'image' || el.type === 'sticker') bgColor = 'bg-purple-500';
-                    if (el.type === 'rect' || el.type === 'circle') bgColor = 'bg-emerald-500';
+                        let bgColor = 'bg-indigo-500';
+                        if (el.type === 'image' || el.type === 'sticker') bgColor = 'bg-purple-500';
+                        if (el.type === 'rect' || el.type === 'circle') bgColor = 'bg-emerald-500';
 
-                    return (
-                      <div
-                        key={el.id}
-                        className={`absolute h-5 rounded text-[9px] text-white flex items-center shadow cursor-grab active:cursor-grabbing ${selectedIds.includes(el.id) ? 'ring-2 ring-white z-20' : 'opacity-80 z-10'} ${bgColor}`}
-                        style={{
-                          left: `${startOffset * PIXELS_PER_SECOND}px`,
-                          width: `${duration * PIXELS_PER_SECOND}px`,
-                          bottom: `${4 + (laneIndex * LANE_HEIGHT)}px`
-                        }}
-                        onPointerDown={(e) => {
-                          if (page.id !== currentPageId) { handlePageChange(page.id); return; }
-                          handleElementPointerDown(e, el.id, 'move', el, pTiming.start, pTiming.end, index);
-                        }}
-                      >
-                        <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeL', el, pTiming.start, pTiming.end, index); }} />
-                        <div className="flex items-center gap-1 px-1.5 truncate pointer-events-none">
-                          {el.animation?.in && el.animation.in !== 'none' && <Zap size={8} className="text-amber-300 fill-amber-300 shrink-0" />}
-                          {renderTimelineThumbnail(el)}
-                          <span className="truncate text-[8px]">{el.text || el.type.toUpperCase()}</span>
-                        </div>
-                        {/* Animation badges — shown only if animation is set */}
-                        <div className="absolute right-3 top-0 bottom-0 flex items-center gap-0.5 pointer-events-none">
-                          {el.animation?.in && el.animation.in !== 'none' && (
-                            <span className="text-[7px] font-extrabold bg-amber-400/80 text-amber-900 px-1 rounded">
-                              IN:{el.animation.in.toUpperCase().slice(0, 4)}
-                            </span>
-                          )}
-                          {el.animation?.out && el.animation.out !== 'none' && (
-                            <span className="text-[7px] font-extrabold bg-rose-400/80 text-rose-900 px-1 rounded">
-                              OUT:{el.animation.out.toUpperCase().slice(0, 4)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeR', el, pTiming.start, pTiming.end, index); }} />
-                      </div>
-                    );
-                  });
-                })}
-              </div>
-              );
+                        return (
+                          <div
+                            key={el.id}
+                            className={`absolute h-5 rounded text-[9px] text-white flex items-center shadow cursor-grab active:cursor-grabbing ${selectedIds.includes(el.id) ? 'ring-2 ring-white z-20' : 'opacity-80 z-10'} ${bgColor}`}
+                            style={{
+                              left: `${startOffset * PIXELS_PER_SECOND}px`,
+                              width: `${duration * PIXELS_PER_SECOND}px`,
+                              bottom: `${4 + (laneIndex * LANE_HEIGHT)}px`
+                            }}
+                            onPointerDown={(e) => {
+                              if (page.id !== currentPageId) { handlePageChange(page.id); return; }
+                              handleElementPointerDown(e, el.id, 'move', el, pTiming.start, pTiming.end, index);
+                            }}
+                          >
+                            <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeL', el, pTiming.start, pTiming.end, index); }} />
+                            <div className="flex items-center gap-1 px-1.5 truncate pointer-events-none">
+                              {el.animation?.in && el.animation.in !== 'none' && <Zap size={8} className="text-amber-300 fill-amber-300 shrink-0" />}
+                              {renderTimelineThumbnail(el)}
+                              <span className="truncate text-[8px]">{el.text || el.type.toUpperCase()}</span>
+                            </div>
+                            {/* Animation badges — shown only if animation is set */}
+                            <div className="absolute right-3 top-0 bottom-0 flex items-center gap-0.5 pointer-events-none">
+                              {el.animation?.in && el.animation.in !== 'none' && (
+                                <span className="text-[7px] font-extrabold bg-amber-400/80 text-amber-900 px-1 rounded">
+                                  IN:{el.animation.in.toUpperCase().slice(0, 4)}
+                                </span>
+                              )}
+                              {el.animation?.out && el.animation.out !== 'none' && (
+                                <span className="text-[7px] font-extrabold bg-rose-400/80 text-rose-900 px-1 rounded">
+                                  OUT:{el.animation.out.toUpperCase().slice(0, 4)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeR', el, pTiming.start, pTiming.end, index); }} />
+                          </div>
+                        );
+                      });
+                    })}
+                  </div>
+                );
               })()}
             </div>
 
@@ -433,9 +433,9 @@ export default function BottomTimeline(props: any) {
                     )}
                     <span className="absolute bottom-0 left-1 text-[8px] font-bold text-white bg-black/50 px-1 pointer-events-none">{idx + 1}</span>
                     <span className="absolute top-1 left-1 text-[8px] font-bold text-white bg-black/50 px-1 pointer-events-none">{Number(page.duration || 5).toFixed(1)}s</span>
-                    
+
                     {/* Resize Right Handle */}
-                    <div 
+                    <div
                       className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize bg-white/10 hover:bg-white/40 flex items-center justify-center"
                       onPointerDown={(e) => handlePagePointerDown(e, page.id, Number(page.duration || 5))}
                     >

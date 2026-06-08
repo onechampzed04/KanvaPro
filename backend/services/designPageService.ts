@@ -4,9 +4,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { designElementService } from './designElementService';
 
 export const designPageService = {
-    // Lấy danh sách pages (kèm elements)
+    // Lấy danh sách pages (kèm elements) - chỉ lấy những page chưa bị soft-delete
     getPagesWithElementsByDesignId: async (designId: string) => {
-        const pagesResult = await db.query(`SELECT * FROM design_pages WHERE design_id = $1 ORDER BY page_order ASC`, [designId]);
+        const pagesResult = await db.query(
+            `SELECT * FROM design_pages WHERE design_id = $1 AND is_deleted = false ORDER BY page_order ASC`,
+            [designId]
+        );
         
         const pages = await Promise.all(pagesResult.rows.map(async (page: any) => {
             const elements = await designElementService.getElementsByPageId(page.id);
@@ -20,7 +23,7 @@ export const designPageService = {
         const pagesResult = await db.query(
             `SELECT id, design_id, page_order, type, width, height, thumbnail, content, duration, transition 
              FROM design_pages 
-             WHERE design_id = $1 
+             WHERE design_id = $1 AND is_deleted = false
              ORDER BY page_order ASC`, 
             [designId]
         );
@@ -32,23 +35,31 @@ export const designPageService = {
         return await designElementService.getElementsByPageId(pageId);
     },
 
-    // Hàm nhận Transaction đồng bộ Pages
+    // Hàm nhận Transaction đồng bộ Pages — dùng SOFT DELETE thay vì DELETE cứng
     syncPagesForDesign: async (client: any, designId: string, pages: any[]) => {
         if (!pages || !Array.isArray(pages)) return;
 
-        // 1. Xóa các trang không còn tồn tại (bị xóa bởi client)
+        // 1. SOFT DELETE: đánh dấu is_deleted các trang không còn trong payload
+        //    Không dùng DELETE vật lý để: (a) tránh Deadlock concurrent, (b) giữ lịch sử
         const incomingIds = pages.filter(p => p.id).map(p => p.id);
         if (incomingIds.length > 0) {
             await client.query(
-                `DELETE FROM design_pages WHERE design_id = $1 AND id != ALL($2::uuid[])`,
+                `UPDATE design_pages 
+                 SET is_deleted = true, deleted_at = NOW() 
+                 WHERE design_id = $1 
+                   AND NOT (id = ANY($2::uuid[]))
+                   AND is_deleted = false`,
                 [designId, incomingIds]
             );
         } else {
-            // Nếu không có trang nào → xóa tất cả (trường hợp reset)
+            // Không có trang nào → soft delete tất cả
             await client.query(
-                `DELETE FROM design_pages WHERE design_id = $1`,
+                `UPDATE design_pages 
+                 SET is_deleted = true, deleted_at = NOW() 
+                 WHERE design_id = $1 AND is_deleted = false`,
                 [designId]
             );
+            return;
         }
 
         // 2. Upsert từng trang với page_order chuẩn hóa theo index
@@ -62,8 +73,8 @@ export const designPageService = {
                 : null;
 
             await client.query(`
-                INSERT INTO design_pages (id, design_id, page_order, type, width, height, duration, transition, thumbnail, content)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                INSERT INTO design_pages (id, design_id, page_order, type, width, height, duration, transition, thumbnail, content, is_deleted)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
                 ON CONFLICT (id) DO UPDATE SET
                     page_order = EXCLUDED.page_order,
                     type = EXCLUDED.type,
@@ -71,13 +82,15 @@ export const designPageService = {
                     height = EXCLUDED.height,
                     duration = EXCLUDED.duration,
                     transition = EXCLUDED.transition,
-                    thumbnail = EXCLUDED.thumbnail,
+                    thumbnail = COALESCE(NULLIF(EXCLUDED.thumbnail, ''), design_pages.thumbnail),
                     content = EXCLUDED.content,
+                    is_deleted = false,
+                    deleted_at = NULL,
                     updated_at = NOW()
             `, [
                 pageId, 
                 designId, 
-                i, // Dùng index trực tiếp để page_order luôn liên tục
+                i,
                 page.type, 
                 page.width, 
                 page.height, 
@@ -88,9 +101,10 @@ export const designPageService = {
             ]);
 
             // 3. Ủy quyền lưu Elements cho ElementService
-            await designElementService.syncElementsForPage(client, pageId, page.elements);
+            // Chỉ sync nếu elements không phải undefined (lazy-load: undefined = chưa load)
+            if (page.elements !== undefined) {
+                await designElementService.syncElementsForPage(client, pageId, page.elements);
+            }
         }
     }
-};
-
-// helo chào các con vợ
+};
