@@ -21,6 +21,7 @@ const REASON_LABEL: Record<string, { icon: string; label: string; color: string 
   is_premium: { icon: '👑', label: 'Sticker Pro', color: '#f59e0b' },
   ai:         { icon: '✨', label: 'AI Image',    color: '#8b5cf6' },
   remove_bg:  { icon: '🪄', label: 'Xóa nền AI', color: '#06b6d4' },
+  pro_font:   { icon: '🔤', label: 'Font Pro',    color: '#ec4899' },
 };
 
 export default function ExportProBlockModal({ proElements, onClose, onRemoveElements }: ExportProBlockModalProps) {

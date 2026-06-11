@@ -21,7 +21,7 @@ export const designPageService = {
     // === FIX #4: Lấy danh sách pages (KHÔNG join elements để load nhanh) ===
     getPagesByDesignIdWithoutElements: async (designId: string) => {
         const pagesResult = await db.query(
-            `SELECT id, design_id, page_order, type, width, height, thumbnail, content, duration, transition 
+            `SELECT id, design_id, page_order, type, width, height, thumbnail, content, duration, transition, background_color 
              FROM design_pages 
              WHERE design_id = $1 AND is_deleted = false
              ORDER BY page_order ASC`, 
@@ -73,8 +73,8 @@ export const designPageService = {
                 : null;
 
             await client.query(`
-                INSERT INTO design_pages (id, design_id, page_order, type, width, height, duration, transition, thumbnail, content, is_deleted)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
+                INSERT INTO design_pages (id, design_id, page_order, type, width, height, duration, transition, thumbnail, content, background_color, is_deleted)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false)
                 ON CONFLICT (id) DO UPDATE SET
                     page_order = EXCLUDED.page_order,
                     type = EXCLUDED.type,
@@ -84,9 +84,11 @@ export const designPageService = {
                     transition = EXCLUDED.transition,
                     thumbnail = COALESCE(NULLIF(EXCLUDED.thumbnail, ''), design_pages.thumbnail),
                     content = EXCLUDED.content,
+                    background_color = EXCLUDED.background_color,
                     is_deleted = false,
                     deleted_at = NULL,
                     updated_at = NOW()
+                WHERE design_pages.design_id = EXCLUDED.design_id
             `, [
                 pageId, 
                 designId, 
@@ -97,7 +99,8 @@ export const designPageService = {
                 page.duration || 5, 
                 page.transition ? JSON.stringify(page.transition) : null,
                 page.thumbnail,
-                contentToStore
+                contentToStore,
+                page.background_color || null
             ]);
 
             // 3. Ủy quyền lưu Elements cho ElementService

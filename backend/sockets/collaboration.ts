@@ -417,8 +417,9 @@ export function setupCollaboration(io: Server) {
     });
 
     // ── 3. Page change ───────────────────────────────────────────────────────
-    socket.on('page-changed', ({ designId, pageId }: { designId: string; pageId: string }) => {
+    socket.on('page-changed', async ({ designId, pageId }: { designId: string; pageId: string }) => {
       if (!currentUser) return;
+      await RedisPresenceService.updateCollaboratorPage(designId, socket.id, pageId);
       socket.to(`design:${designId}`).emit('user-page-changed', {
         userId: currentUser.userId, pageId,
       });
@@ -431,6 +432,15 @@ export function setupCollaboration(io: Server) {
       if (!currentUser) return;
       socket.to(`design:${designId}`).emit('page-resized', {
         pageId, width, height, isLive,
+        userId: currentUser.userId,
+        userName: currentUser.name,
+      });
+    });
+
+    socket.on('update-page-background', ({ designId, pageId, background_color }: { designId: string; pageId: string; background_color: string }) => {
+      if (!currentUser) return;
+      socket.to(`design:${designId}`).emit('page-background-updated', {
+        pageId, background_color,
         userId: currentUser.userId,
         userName: currentUser.name,
       });
@@ -517,6 +527,113 @@ export function setupCollaboration(io: Server) {
       await handleLeave(socket, designId, io);
       currentDesignId = null;
       currentUser = null;
+    });
+
+    // ── 9. Doc Collaboration (Cursor sync cho text editor) ────────────────────
+    // Tách khỏi canvas room: dùng room `doc:${designId}` riêng để tránh nhiễu OT canvas.
+    let currentDocDesignId: string | null = null;
+    let docUser: { userId: string; email: string; name: string; avatarColor: string } | null = null;
+
+    socket.on('doc:join', async ({ designId: dId, token }: { designId: string; token: string }) => {
+      const userData = verifySocketToken(token);
+      if (!userData) return;
+
+      // Lấy email từ DB
+      let email = userData.email;
+      try {
+        const dbUser = await db.getOne('SELECT email FROM users WHERE id = $1', [userData.id]);
+        if (dbUser) email = dbUser.email || email;
+      } catch {}
+
+      // [SECURITY FIX - BOLA/IDOR in WebSockets]
+      // Verify RBAC trước khi cho phép user join vào document room để nghe lén.
+      let designRole: 'owner' | 'editor' | 'commenter' | 'viewer' | null = null;
+      try {
+        const designRes = await db.query('SELECT user_id, is_public FROM designs WHERE id = $1 AND is_deleted = false', [dId]);
+        if (designRes.rows.length === 0) {
+          socket.emit('error', { message: 'Tài liệu không tồn tại' });
+          return;
+        }
+        const design = designRes.rows[0];
+
+        if (design.user_id === userData.id) {
+          designRole = 'owner';
+        } else {
+          const shareRes = await db.query('SELECT role FROM design_shares WHERE design_id = $1 AND user_id = $2', [dId, userData.id]);
+          if (shareRes.rows.length > 0) {
+            designRole = shareRes.rows[0].role as any;
+          } else if (design.is_public) {
+            designRole = 'viewer';
+          }
+        }
+      } catch (err) {
+        console.error('[DocCollab] DB access check error:', err);
+        return;
+      }
+
+      if (!designRole) {
+        // Cố tình nghe lén → Bỏ qua hoặc báo lỗi
+        socket.emit('error', { message: 'Bạn không có quyền truy cập tài liệu này' });
+        return;
+      }
+
+      // Rời doc room cũ nếu có
+      if (currentDocDesignId) socket.leave(`doc:${currentDocDesignId}`);
+      currentDocDesignId = dId;
+      docUser = {
+        userId: userData.id,
+        email,
+        name: userData.name || email.split('@')[0],
+        avatarColor: getAvatarColor(userData.id),
+      };
+
+      socket.join(`doc:${dId}`);
+      // Thông báo cho người khác biết user mới join
+      socket.to(`doc:${dId}`).emit('doc:user-joined', {
+        userId: docUser.userId,
+        email: docUser.email,
+        avatarColor: docUser.avatarColor,
+      });
+      console.log(`[DocCollab] ${docUser.email} joined doc:${dId}`);
+    });
+
+    socket.on('doc:cursor-move', ({ designId: dId, from, to }: { designId: string; from: number; to: number }) => {
+      if (!docUser) return;
+      // Broadcast cursor position (ProseMirror offset) tới người dùng khác trong cùng doc room
+      socket.to(`doc:${dId}`).emit('doc:cursor-moved', {
+        userId: docUser.userId,
+        email: docUser.email,
+        avatarColor: docUser.avatarColor,
+        from,
+        to,
+      });
+    });
+
+    // Broadcast nội dung doc tới các collaborator khác (last-write-wins)
+    socket.on('doc:content-change', ({ designId: dId, html, cursorFrom, cursorTo }: {
+      designId: string; html: string; cursorFrom?: number; cursorTo?: number;
+    }) => {
+      if (!docUser) return;
+      // Relay cho tất cả người khác trong cùng doc room, kèm cursor position
+      // để receiver cập nhật content VÀ cursor trong cùng 1 event → không race condition
+      socket.to(`doc:${dId}`).emit('doc:content-changed', {
+        html,
+        userId: docUser.userId,
+        email: docUser.email,
+        avatarColor: docUser.avatarColor,
+        cursorFrom: cursorFrom ?? 0,
+        cursorTo: cursorTo ?? 0,
+      });
+    });
+
+    socket.on('doc:leave', ({ designId: dId }: { designId: string }) => {
+      socket.leave(`doc:${dId}`);
+      if (docUser) {
+        socket.to(`doc:${dId}`).emit('doc:user-left', { userId: docUser.userId });
+        console.log(`[DocCollab] ${docUser.email} left doc:${dId}`);
+      }
+      currentDocDesignId = null;
+      docUser = null;
     });
   });
 }

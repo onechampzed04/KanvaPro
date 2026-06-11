@@ -82,32 +82,46 @@ export const teamService = {
       );
       const ownedTeamCount = countRes.rows[0]?.cnt ?? 0;
 
-      // Kiểm tra xem user có gói Pro không
+      // [FIX] Mỗi user chỉ được sở hữu tối đa 1 Team
+      if (ownedTeamCount >= 1) {
+        await client.query('ROLLBACK');
+        const err: any = new Error('Bạn chỉ được phép sở hữu tối đa 1 Đội nhóm. Vui lòng quản lý nhóm hiện tại của bạn.');
+        err.code = 'TEAM_LIMIT_EXCEEDED';
+        err.current = ownedTeamCount;
+        err.max = 1;
+        throw err;
+      }
+
+      // Kiểm tra xem user có gói Pro không VÀ gói đó có hỗ trợ Team không
       const subRes = await client.query(
-        `SELECT us.id FROM user_subscriptions us
+        `SELECT us.id, sp.max_team_members 
+         FROM user_subscriptions us
+         JOIN subscription_plans sp ON sp.id = us.plan_id
          WHERE us.user_id = $1 AND us.status = 'active'
            AND (us.cancel_at IS NULL OR us.cancel_at > NOW())
          LIMIT 1`,
         [userId]
       );
-      const isPro = subRes.rows.length > 0;
+      
+      const hasTeamPlan = subRes.rows.length > 0 && subRes.rows[0].max_team_members > 1;
 
-      // [FIX] Free user: KHÔNG được phép tạo Team
-      if (!isPro) {
+      // [FIX] Free user hoặc Personal Pro user: KHÔNG được phép tạo Team
+      if (!hasTeamPlan) {
         await client.query('ROLLBACK');
-        const err: any = new Error('Vui lòng nâng cấp lên gói Team/Pro để tạo đội nhóm.');
+        const err: any = new Error('Bạn cần nâng cấp lên gói Business/Team để tạo Đội nhóm.');
         err.code = 'TEAM_LIMIT_EXCEEDED';
         err.current = ownedTeamCount;
-        err.max = 0;
+        err.max = 1;
         throw err;
       }
 
       const teamId = uuidv4();
+      const planDefaultMaxMembers = subRes.rows[0].max_team_members || 2;
 
       await client.query(
         `INSERT INTO teams (id, name, owner_id, max_members, is_deleted, created_at, updated_at)
          VALUES ($1, $2, $3, $4, false, NOW(), NOW())`,
-        [teamId, name, userId, FREE_TEAM_MAX_MEMBERS]
+        [teamId, name, userId, planDefaultMaxMembers]
       );
 
       await client.query(
@@ -640,18 +654,31 @@ export const teamService = {
     userId: string,
     sourceTeamId: string,
     ipAddress?: string,
+    targetTeamId?: string | null,  // null = Personal Workspace, uuid = Team Workspace
+    newTitle?: string,
   ) => {
+    // Xác định workspace đích
+    const destTeamId = targetTeamId || null;
     const client = await db.connect();
     try {
       await client.query('BEGIN');
       const newDesignId = uuidv4();
 
-      await client.query(
-        `INSERT INTO designs (id, user_id, team_id, title, design_type, width, height, thumbnail_url, is_public, is_template, created_at, updated_at)
-           SELECT $1, $2, NULL, title || ' (bản sao)', design_type, width, height, thumbnail_url, false, false, NOW(), NOW()
-           FROM designs WHERE id = $3 AND is_deleted = false`,
-        [newDesignId, userId, designId]
-      );
+      if (newTitle) {
+        await client.query(
+          `INSERT INTO designs (id, user_id, team_id, title, design_type, width, height, thumbnail_url, is_public, is_template, created_at, updated_at)
+             SELECT $1, $2, $4, $5, design_type, width, height, thumbnail_url, false, false, NOW(), NOW()
+             FROM designs WHERE id = $3 AND is_deleted = false`,
+          [newDesignId, userId, designId, destTeamId, newTitle]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO designs (id, user_id, team_id, title, design_type, width, height, thumbnail_url, is_public, is_template, created_at, updated_at)
+             SELECT $1, $2, $4, title || ' (bản sao)', design_type, width, height, thumbnail_url, false, false, NOW(), NOW()
+             FROM designs WHERE id = $3 AND is_deleted = false`,
+          [newDesignId, userId, designId, destTeamId]
+        );
+      }
 
       const pages = await client.query(
         `SELECT * FROM design_pages WHERE design_id = $1 ORDER BY page_order`,
@@ -664,13 +691,56 @@ export const teamService = {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())`,
           [newPageId, newDesignId, page.page_order, page.title, page.background_color, page.duration, page.transition, page.thumbnail, page.type, page.width, page.height, page.content]
         );
+
+        // Copy toàn bộ elements của page này
+        await client.query(
+          `INSERT INTO design_elements (id, page_id, element_type, properties, z_index, locked, visible, is_deleted, created_at, updated_at)
+           SELECT gen_random_uuid(), $1, element_type, properties, z_index, locked, visible, false, NOW(), NOW()
+           FROM design_elements WHERE page_id = $2 AND is_deleted = false`,
+          [newPageId, page.id]
+        );
       }
+
+      // [SECURITY FIX - Quota Bypass] Tính tổng dung lượng ảnh thực tế trong design gốc.
+      // Không tính này, Free User có thể clone Design 500MB của Pro User mà không bị trừ quota.
+      // Ta cộng tổng file_size của tất cả assets (ảnh gốc, không phải clone) mà design đang tham chiếu.
+      const assetSizeRes = await client.query(
+        `SELECT COALESCE(SUM(a.file_size), 0)::bigint AS total_bytes
+         FROM assets a
+         WHERE a.url IN (
+           SELECT DISTINCT de.properties->>'src'
+           FROM design_elements de
+           JOIN design_pages dp ON dp.id = de.page_id
+           WHERE dp.design_id = $1
+             AND de.properties->>'src' IS NOT NULL
+             AND de.properties->>'src' != ''
+         )
+         AND a.file_size IS NOT NULL`,
+        [designId]
+      );
+      const designAssetBytes = Number(assetSizeRes.rows[0]?.total_bytes ?? 0);
 
       await client.query('COMMIT');
 
+      // Cộng dồn quota vào workspace đích
+      if (designAssetBytes > 0) {
+        if (destTeamId) {
+          await db.execute(
+            `UPDATE teams SET used_storage_bytes = COALESCE(used_storage_bytes, 0) + $1 WHERE id = $2`,
+            [designAssetBytes, destTeamId]
+          );
+        } else {
+          await db.execute(
+            `UPDATE users SET storage_used_bytes = COALESCE(storage_used_bytes, 0) + $1 WHERE id = $2`,
+            [designAssetBytes, userId]
+          );
+        }
+      }
+
       await writeAuditLog(sourceTeamId, userId, 'CLONE_DESIGN', newDesignId, {
         source_design_id: designId,
-        cloned_to_personal: true,
+        cloned_to: destTeamId ? `team:${destTeamId}` : 'personal',
+        estimated_bytes: designAssetBytes,
       }, ipAddress);
 
       return newDesignId;
@@ -749,6 +819,32 @@ export const teamService = {
        WHERE t.owner_id = $1 AND t.max_members = 1 AND t.is_deleted = false
        LIMIT 1`,
       [userId]
+    );
+    if (!res) return null;
+    const isPro = res.is_pro;
+    const maxGb = isPro ? Number(res.plan_storage_gb ?? 5) : 5;
+    return {
+      usedBytes: Number(res.used_storage_bytes ?? 0),
+      maxBytes: maxGb * 1024 * 1024 * 1024,
+      maxStorageGb: maxGb,
+    };
+  },
+
+  // ─── 21. getTeamStorageUsage (kiểm tra Quota nhóm trước khi Clone) ──
+  getTeamStorageUsage: async (teamId: string) => {
+    const res = await db.getOne(
+      `SELECT t.used_storage_bytes,
+              CASE
+                WHEN us.status = 'active' AND us.current_period_end > NOW() THEN true
+                ELSE false
+              END AS is_pro,
+              sp.max_storage_gb AS plan_storage_gb
+       FROM teams t
+       LEFT JOIN user_subscriptions us ON us.user_id = t.owner_id AND us.status = 'active'
+         AND (us.cancel_at IS NULL OR us.cancel_at > NOW())
+       LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+       WHERE t.id = $1 AND t.is_deleted = false`,
+      [teamId]
     );
     if (!res) return null;
     const isPro = res.is_pro;

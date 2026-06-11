@@ -30,6 +30,9 @@ interface CollabStore {
   // ── Remote Cursors ───────────────────────────────────────────────────────────
   remoteCursors: Map<string, RemoteCursorInfo>;
 
+  // ── User Active Pages ────────────────────────────────────────────────────────
+  userPageMap: Map<string, string>; // userId -> pageId
+
   // ── Collaboration Notifications ───────────────────────────────────────────────
   collabNotification: string;
 
@@ -46,6 +49,8 @@ interface CollabStore {
 
   setRemoteCursor: (userId: string, info: RemoteCursorInfo) => void;
 
+  setUserPage: (userId: string, pageId: string) => void;
+
   setCollabNotification: (msg: string) => void;
 
   /** Reset toàn bộ state khi người dùng rời phiên cộng tác */
@@ -60,6 +65,7 @@ export const useCollabStore = create<CollabStore>((set) => ({
   socketId: null,
   elementLocks: new Map(),
   remoteCursors: new Map(),
+  userPageMap: new Map(),
   collabNotification: '',
 
   setActiveUsers: (users) => set({ activeUsers: users }),
@@ -99,6 +105,13 @@ export const useCollabStore = create<CollabStore>((set) => ({
       return { remoteCursors: next };
     }),
 
+  setUserPage: (userId, pageId) =>
+    set((state) => {
+      const next = new Map(state.userPageMap);
+      next.set(userId, pageId);
+      return { userPageMap: next };
+    }),
+
   setCollabNotification: (msg) => set({ collabNotification: msg }),
 
   resetCollabState: () =>
@@ -108,6 +121,7 @@ export const useCollabStore = create<CollabStore>((set) => ({
       socketId: null,
       elementLocks: new Map(),
       remoteCursors: new Map(),
+      userPageMap: new Map(),
       collabNotification: '',
     }),
 }));

@@ -17,6 +17,7 @@ import AdminUsers from './pages/admin/AdminUsers';
 import AdminAssets from './pages/admin/AdminAssets';
 import AdminTemplates from './pages/admin/AdminTemplates';
 import AdminSubscriptions from './pages/admin/AdminSubscriptions';
+import AdminTeams from './pages/admin/AdminTeams';
 import StoragePage from './pages/StoragePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="assets" element={<AdminAssets />} />
             <Route path="templates" element={<AdminTemplates />} />
             <Route path="subscriptions" element={<AdminSubscriptions />} />
+            <Route path="teams" element={<AdminTeams />} />
           </Route>
           </Routes>
         </WorkspaceProvider>

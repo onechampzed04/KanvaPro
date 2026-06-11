@@ -2,13 +2,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, HardDrive, Image as ImageIcon, Calendar, Eye } from 'lucide-react';
+import { ChevronLeft, HardDrive, Image as ImageIcon, Calendar, Eye, Presentation, Trash2 } from 'lucide-react';
+import { deleteUserAsset } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 
 export default function StoragePage() {
-  const { user } = useAuth();
-  const { currentWorkspace } = useWorkspace();
+  const { user, refreshUser } = useAuth();
+  const { currentWorkspace, refreshWorkspaces } = useWorkspace();
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
@@ -34,7 +35,7 @@ export default function StoragePage() {
     // Nếu dưới 1 GB: hiển thị MB
     const mb = kb / 1024;
     if (mb < 1024) {
-      return mb.toFixed(1) + ' MB';
+      return mb.toFixed(3) + ' MB';
     }
     // Còn lại: hiển thị GB
     const gb = mb / 1024;
@@ -64,9 +65,31 @@ export default function StoragePage() {
     }
   };
 
+  const handleDeleteAsset = async (assetId: string) => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa tài nguyên này? Các ảnh gốc sẽ bị xóa vĩnh viễn và hoàn trả dung lượng.')) return;
+    try {
+      await deleteUserAsset(assetId);
+      showToast('✅ Xóa tài nguyên thành công');
+      loadUploadedImages();
+      window.dispatchEvent(new Event('storage:updated'));
+    } catch (e: any) {
+      showToast('❌ Lỗi xóa: ' + e.message);
+    }
+  };
+
   useEffect(() => {
     loadUploadedImages();
-  }, []);
+  }, [currentWorkspace?.id]);
+
+  useEffect(() => {
+    const handleStorageUpdate = () => {
+      refreshUser();
+      refreshWorkspaces();
+      loadUploadedImages();
+    };
+    window.addEventListener('storage:updated', handleStorageUpdate);
+    return () => window.removeEventListener('storage:updated', handleStorageUpdate);
+  }, [refreshUser, refreshWorkspaces]);
 
   // Tính toán hạn mức lưu trữ dựa trên Workspace hiện tại
   let maxGb = currentWorkspace?.is_pro 
@@ -78,7 +101,9 @@ export default function StoragePage() {
   }
 
   const maxStorageBytes = maxGb * 1024 * 1024 * 1024;
-  const storageUsedBytes = Number(currentWorkspace?.used_storage_bytes ?? 0);
+  const storageUsedBytes = currentWorkspace && currentWorkspace.workspace_type !== 'personal'
+    ? Number(currentWorkspace.used_storage_bytes ?? 0) 
+    : Number(user?.storage_used_bytes ?? 0);
   const percentage = Math.min((storageUsedBytes / maxStorageBytes) * 100, 100);
 
   return (
@@ -131,7 +156,7 @@ export default function StoragePage() {
             
             <div className="mt-6">
               <div className="flex justify-between text-xs font-extrabold text-slate-600 mb-2">
-                <span>Đã dùng: {formatResourceSize(storageUsedBytes)}</span>
+                <span>Đã dùng: {formatResourceSize(storageUsedBytes)} (DB: {user?.storage_used_bytes || '0'}, Team: {currentWorkspace?.used_storage_bytes || '0'}, CW: {currentWorkspace ? 'yes' : 'no'})</span>
                 <span>Hạn mức: {maxStorageBytes / (1024 ** 3)} GB</span>
               </div>
               
@@ -179,19 +204,26 @@ export default function StoragePage() {
               <div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-500 rounded-full animate-spin" />
             </div>
           ) : images.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-3xl border border-slate-100 border-dashed py-24 text-center flex flex-col items-center justify-center"
-            >
-              <div className="w-16 h-16 bg-slate-50 text-slate-300 rounded-2xl flex items-center justify-center mb-4">
-                <ImageIcon size={30} />
-              </div>
-              <h3 className="font-extrabold text-slate-600 mb-1">Chưa có hình ảnh nào</h3>
-              <p className="text-sm text-slate-400 max-w-xs px-4">
-                Các hình ảnh bạn tải lên Canvas hoặc kéo thả vào trình chỉnh sửa sẽ xuất hiện tại đây để quản lý.
-              </p>
-            </motion.div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="group bg-white rounded-2xl border border-slate-100 border-dashed shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-all duration-300"
+              >
+                <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden border-b border-slate-100/50 flex flex-col items-center justify-center text-slate-300">
+                  <ImageIcon size={36} className="mb-2" />
+                  <span className="text-sm font-bold text-slate-400">Chưa có ảnh nào</span>
+                </div>
+                <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="font-extrabold text-sm text-slate-400 truncate">Trống</h4>
+                    <p className="text-[11px] font-bold text-slate-400 mt-1">
+                      Dung lượng: 0 KB
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
               {images.map((img, idx) => (
@@ -202,25 +234,40 @@ export default function StoragePage() {
                   transition={{ delay: idx * 0.03 }}
                   className="group bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-all duration-300"
                 >
-                  {/* Image View */}
                   <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden border-b border-slate-100/50 flex items-center justify-center">
                     <img
-                      src={img.url.startsWith('http') ? img.url : `http://localhost:3000${img.url}`}
+                      src={img.url?.startsWith('http') ? img.url : `http://localhost:3000${img.url}`}
                       alt={img.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     />
                     
+                    {img.type === 'pptx' && (
+                      <div className="absolute top-2 right-2 bg-indigo-500/90 backdrop-blur text-white px-2 py-1 rounded-md shadow-sm flex items-center gap-1 z-10">
+                        <Presentation size={12} />
+                        <span className="text-[9px] font-bold uppercase tracking-wider">PPTX</span>
+                      </div>
+                    )}
+
                     {/* Hover actions overlay */}
-                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-3">
-                      <a
-                        href={img.url.startsWith('http') ? img.url : `http://localhost:3000${img.url}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-2.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl transition shadow-md"
-                        title="Xem ảnh gốc"
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-3 z-20">
+                      {img.type === 'image' && (
+                        <a
+                          href={img.url?.startsWith('http') ? img.url : `http://localhost:3000${img.url}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-2.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl transition shadow-md"
+                          title="Xem ảnh gốc"
+                        >
+                          <Eye size={16} />
+                        </a>
+                      )}
+                      <button
+                        onClick={() => handleDeleteAsset(img.id)}
+                        className="p-2.5 bg-white hover:bg-rose-50 text-rose-500 rounded-xl transition shadow-md"
+                        title="Xóa tài nguyên"
                       >
-                        <Eye size={16} />
-                      </a>
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </div>
 

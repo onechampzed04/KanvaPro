@@ -223,9 +223,9 @@ export default function AnimationPanel({
 
   return (
     <motion.div
-      initial={{ x: 320, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
-      exit={{ x: 320, opacity: 0 }} transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className="w-80 h-full bg-white/95 backdrop-blur-xl border-l border-slate-200/80 shadow-2xl flex flex-col"
+      initial={{ x: -350, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+      exit={{ x: -350, opacity: 0 }} transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      className="absolute top-0 left-[72px] h-full w-[350px] bg-white/80 backdrop-blur-2xl border-r border-white/50 shadow-2xl z-[65] flex flex-col"
       style={{ fontFamily: 'Inter, sans-serif' }}
     >
       {/* Header */}
@@ -448,3 +448,4 @@ export default function AnimationPanel({
     </motion.div>
   );
 }
+

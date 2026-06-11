@@ -13,7 +13,7 @@ export const designElementService = {
         );
         return result.rows.map((el: any) => {
             const props = typeof el.properties === 'string' ? JSON.parse(el.properties) : el.properties;
-            return { id: el.id, type: el.element_type, ...props };
+            return { ...props, id: el.id, type: el.element_type };
         });
     },
 
@@ -111,6 +111,7 @@ export const designElementService = {
                 is_deleted = false,
                 deleted_at = NULL,
                 updated_at = NOW()
+            WHERE design_elements.page_id = EXCLUDED.page_id
         `, [ids, pageIds, elemTypes, zIndices, propsList, lockedList, visibleList]);
     }
 };

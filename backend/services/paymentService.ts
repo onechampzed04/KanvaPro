@@ -48,6 +48,7 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
     const planName = metadata.planName;
     const membersCount = metadata.membersCount;
     const inviteEmails = metadata.inviteEmails || [];
+    const targetTeamId = metadata.teamId || null; // [FIX] teamId cụ thể để gia hạn đúng nhóm
 
     // [FIX Vấn đề 7] Chỉ lấy subscription đang active để tránh logic sai
     // khi user có subscription đã expired từ trước.
@@ -62,16 +63,18 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
     if (subCheck.rows.length > 0) {
       // A. ĐÃ TỪNG MUA
       const currentSub = subCheck.rows[0];
-      const isRenewal = currentSub.plan_id === planId && new Date(currentSub.current_period_end) > new Date();
+      const isStillActive = new Date(currentSub.current_period_end) > new Date();
+      // isRenewal = cùng gói (dù đang active hay đã expired đều gia hạn, không đổi gói)
+      const isRenewal = currentSub.plan_id === planId;
 
       if (isRenewal) {
         const teamRes = await db.query(
-          `SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false LIMIT 1`,
+          `SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false ORDER BY max_members DESC LIMIT 1`,
           [userId]
         );
         const currentMaxMembers = teamRes.rows.length > 0 ? teamRes.rows[0].max_members : 1;
 
-        if (membersCount && membersCount > currentMaxMembers) {
+        if (membersCount && membersCount > currentMaxMembers && isStillActive) {
           // Mua thêm chỗ (Add seats): Không tăng thời gian, chỉ update status
           const updateSub = await db.query(
             `UPDATE user_subscriptions
@@ -83,11 +86,17 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
           );
           subscriptionId = updateSub.rows[0].id;
         } else {
-          // Gia hạn cùng gói: Cộng dồn thêm 1 tháng, xóa trạng thái hủy (nếu có)
+          // Gia hạn cùng gói:
+          // - Nếu còn hạn: cộng dồn 1 tháng từ ngày hết hạn cũ
+          // - Nếu đã hết hạn: bắt đầu lại từ NOW()
+          const newEndExpr = isStillActive
+            ? `current_period_end + INTERVAL '1 month'`
+            : `NOW() + INTERVAL '1 month'`;
+
           const updateSub = await db.query(
             `UPDATE user_subscriptions
              SET status = 'active',
-                 current_period_end = current_period_end + INTERVAL '1 month',
+                 current_period_end = ${newEndExpr},
                  cancel_at = NULL,
                  updated_at = NOW()
              WHERE user_id = $1
@@ -102,21 +111,27 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
         const newPlanRes = await db.query(`SELECT monthly_price FROM subscription_plans WHERE id = $1`, [planId]);
         const newPlanPrice = Number(newPlanRes.rows[0]?.monthly_price || 0);
         const newTotal = newPlanPrice * (membersCount || 1);
-        
+
         let daysToAdd = 30; // Mặc định 1 tháng
         if (newTotal > 0) {
-           const dailyRate = newTotal / 30;
-           const paymentAmount = Number(payment.amount);
-           const totalValue = paymentAmount + deductionValue;
-           daysToAdd = Math.floor(totalValue / dailyRate);
+          const dailyRate = newTotal / 30;                   // VNĐ/ngày
+          const paymentAmount = Number(payment.amount);
+          const totalValue = paymentAmount + Number(deductionValue);
+          const raw = Math.floor(totalValue / dailyRate);
+          // Guard: NaN, Infinity hoặc âm → fallback 30; max 3650 ngày (~10 năm)
+          daysToAdd = Number.isFinite(raw) && raw > 0
+            ? Math.min(raw, 3650)
+            : 30;
         }
+        console.log(`[Subscription] daysToAdd = ${daysToAdd}`);
 
         const updateSub = await db.query(
+          // Dùng make_interval để tránh lỗi kiểu khi nhân INTERVAL với số JS
           `UPDATE user_subscriptions
            SET plan_id = $1,
                status = 'active',
                current_period_start = NOW(),
-               current_period_end = NOW() + INTERVAL '1 day' * $2,
+               current_period_end = NOW() + make_interval(days => $2::int),
                cancel_at = NULL,
                updated_at = NOW()
            WHERE user_id = $3
@@ -143,37 +158,57 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
     );
 
     // D. Xử lý tạo Workspace tương ứng với gói (Cá nhân hoặc Team)
-    const isTeamPlan = inviteEmails.length > 0 || (membersCount && membersCount > 1);
+    // [FIX] Nhận diện Team Plan qua số lượng ghế mua, email mời, hoặc tên gói có chữ "Team"
+    const isTeamPlan = inviteEmails.length > 0 || (membersCount && membersCount > 1) || (planName && planName.toLowerCase().includes('team'));
 
     if (isTeamPlan) {
-      // Tìm xem user đã có Team nào chưa (trừ Personal Team)
-      const existingTeamRes = await db.query(
-        `SELECT id FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false LIMIT 1`,
-        [userId]
-      );
-
+      // [FIX - Renew Team] Ưu tiên dùng teamId từ metadata nếu có (user bấm Gia Hạn trên trang Teams).
+      // Fallback về SELECT LIMIT 1 nếu không có teamId (lường trường hợp cũ / Pricing page).
       let teamIdToUse: string;
-      if (existingTeamRes.rows.length === 0) {
-        // Tạo Team mới tên mặc định
+
+      if (targetTeamId) {
+        // Xác minh teamId này thực sự thuộc về userId và chưa bị xóa
+        const teamVerify = await db.query(
+          `SELECT id FROM teams WHERE id = $1 AND owner_id = $2 AND is_deleted = false`,
+          [targetTeamId, userId]
+        );
+        if (teamVerify.rows.length === 0) {
+          // teamId giả mạo hoặc không thuộc user này → fallback
+          console.warn(`[Payment] targetTeamId ${targetTeamId} không hợp lệ cho user ${userId}, fallback SELECT LIMIT 1`);
+          const fallbackRes = await db.query(
+            `SELECT id FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false ORDER BY max_members DESC LIMIT 1`,
+            [userId]
+          );
+          teamIdToUse = fallbackRes.rows[0]?.id;
+        } else {
+          teamIdToUse = targetTeamId;
+        }
+      } else {
+        // Fallback cũ: tìm team lớn nhất
+        const existingTeamRes = await db.query(
+          `SELECT id FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false ORDER BY max_members DESC LIMIT 1`,
+          [userId]
+        );
+        teamIdToUse = existingTeamRes.rows[0]?.id;
+      }
+
+      if (!teamIdToUse) {
+        // Chưa có team nào → tạo mới
         teamIdToUse = crypto.randomUUID();
         const defaultTeamName = `Kanva Team của ${userId.substring(0, 5)}`;
-        const teamMaxMembers = membersCount > 1 ? membersCount : 5; // Mặc định ít nhất 5
-        
+        const teamMaxMembers = membersCount && membersCount > 0 ? membersCount : 1;
         await db.query(
           `INSERT INTO teams (id, name, owner_id, max_members, is_deleted, created_at, updated_at)
            VALUES ($1, $2, $3, $4, false, NOW(), NOW())`,
           [teamIdToUse, defaultTeamName, userId, teamMaxMembers]
         );
-        
-        // Thêm Owner vào nhóm
         await db.query(
           `INSERT INTO team_members (id, team_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
           [crypto.randomUUID(), teamIdToUse, userId]
         );
-        console.log(`✅ [Team] Đã tự động tạo Team mới ${teamIdToUse} cho user ${userId}`);
+        console.log(`✅ [Team] Tạo Team mới ${teamIdToUse} cho user ${userId}`);
       } else {
-        teamIdToUse = existingTeamRes.rows[0].id;
-        // Cập nhật max_members nếu cần thiết
+        // Cập nhật max_members nếu cần
         if (membersCount && membersCount > 1) {
           await db.query(
             `UPDATE teams SET max_members = $1 WHERE id = $2`,
@@ -230,7 +265,7 @@ export const paymentService = {
   // Hàm 1: Tạo link thanh toán khi user bấm "Mua gói"
   // [FIX Vấn đề 3] Bỏ tham số `amount` — giá được tính 100% từ DB, không nhận từ client.
   // =========================================================================
-  createPaymentLink: async (userId: string, planId: string, planName: string, membersCount?: number, inviteEmails?: string[]) => {
+  createPaymentLink: async (userId: string, planId: string, planName: string, membersCount?: number, inviteEmails?: string[], teamId?: string) => {
     // 1. Lấy thông tin gói mới từ DB để đảm bảo giá chính xác và gói đang active
     const newPlanRes = await db.query(
       `SELECT name, monthly_price FROM subscription_plans WHERE id = $1 AND is_active = true`,
@@ -240,8 +275,13 @@ export const paymentService = {
 
     const newPlan = newPlanRes.rows[0];
     let finalAmount = Number(newPlan.monthly_price);
-    const count = membersCount && membersCount > 0 ? membersCount : 1;
-    finalAmount = finalAmount * count;    
+
+    // [SECURITY FIX - Fractional Seats Injection]
+    // Ép về số nguyên dương. Chặn trick gửi membersCount = 0.005 để giảm 99.5% giá.
+    // Math.floor(0.005) = 0 → fallback về 1. Math.floor(2.9) = 2 (cũng an toàn).
+    const rawCount = typeof membersCount === 'number' ? membersCount : 1;
+    const count = Math.max(1, Math.floor(rawCount));
+    finalAmount = finalAmount * count;
     // [FIX Vấn đề 1] Dùng crypto.randomInt để sinh OrderCode ngẫu nhiên thực sự.
     // Tránh trường hợp 2 request cùng ms có cùng Date.now() → trùng orderCode.
     // Phạm vi 10_000_000 – 999_999_999 đảm bảo luôn đủ 9 chữ số (PayOS yêu cầu số nguyên dương).
@@ -250,7 +290,7 @@ export const paymentService = {
     // 2. Tính toán Proration (Cấn trừ) nếu user đang có gói cũ còn hạn
     const currentSubRes = await db.query(
       `SELECT us.plan_id, us.current_period_end, sp.monthly_price, sp.name,
-              (SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false LIMIT 1) as current_max_members
+              (SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false ORDER BY max_members DESC LIMIT 1) as current_max_members
        FROM user_subscriptions us 
        JOIN subscription_plans sp ON us.plan_id = sp.id
        WHERE us.user_id = $1 AND us.status = 'active'`,
@@ -304,7 +344,7 @@ export const paymentService = {
       }
     }
 
-    const metadata = JSON.stringify({ planId, planName, deductionValue, originalAmount: Number(newPlan.monthly_price), membersCount: count, inviteEmails });
+    const metadata = JSON.stringify({ planId, planName, deductionValue, originalAmount: Number(newPlan.monthly_price), membersCount: count, inviteEmails, teamId: teamId || null });
 
     // Lưu record 'pending' vào DB TRƯỚC khi gọi PayOS
     await db.query(
@@ -469,10 +509,9 @@ export const paymentService = {
     let currentPlanName: string | null = null;
     let remainingDays = 0;
 
-    // Kiểm tra user có gói cũ đang active không
     const currentSubRes = await db.query(
       `SELECT us.plan_id, us.current_period_end, sp.monthly_price, sp.name, us.cancel_at,
-              (SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false LIMIT 1) as current_max_members
+              (SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false ORDER BY max_members DESC LIMIT 1) as current_max_members
        FROM user_subscriptions us
        JOIN subscription_plans sp ON us.plan_id = sp.id
        WHERE us.user_id = $1 AND us.status = 'active'`,

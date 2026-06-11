@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { Users, Plus, ChevronLeft, Crown, Shield, Eye, Trash2, Mail, Layout, FileText, X, Check, Video, Lock, AlertTriangle, Copy, ArrowRight, LogOut, RefreshCw, Settings, Upload, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
-import { fetchMyTeams, createTeam, fetchTeamById, inviteTeamMember, removeTeamMember, updateTeamMemberRole, createDesign, previewTransferOwnership, transferTeamOwnership, updateTeam, updateTeamAvatar } from '../api/api';
+import { fetchMyTeams, createTeam, fetchTeamById, inviteTeamMember, removeTeamMember, createDesign, updateTeam, updateTeamAvatar } from '../api/api';
 import { useAuth, isSubscriptionActive } from '../context/AuthContext';
 import TeamOnboarding from '../components/dashboard/TeamOnboarding';
 
@@ -16,8 +16,8 @@ const ROLE_CONFIG: Record<string, { label: string; color: string; bg: string; ic
 };
 
 // ─── Constants for Crop ─────────────────────────────────────────────────────────
-const CROP_SIZE     = 280;          // px – hiển thị crop circle
-const OUTPUT_SIZE   = 512;          // px – ảnh output lên server
+const CROP_SIZE = 280;          // px – hiển thị crop circle
+const OUTPUT_SIZE = 512;          // px – ảnh output lên server
 
 // ─── Crop Modal ─────────────────────────────────────────────────────────────────
 interface CropModalProps {
@@ -27,12 +27,12 @@ interface CropModalProps {
 }
 
 function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
-  const canvasRef   = React.useRef<HTMLCanvasElement>(null);
-  const imageRef    = React.useRef<HTMLImageElement | null>(null);
-  const isDragging  = React.useRef(false);
-  const lastPos     = React.useRef({ x: 0, y: 0 });
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const imageRef = React.useRef<HTMLImageElement | null>(null);
+  const isDragging = React.useRef(false);
+  const lastPos = React.useRef({ x: 0, y: 0 });
 
-  const [zoom,   setZoom]   = useState(1);          // 1 = fit
+  const [zoom, setZoom] = useState(1);          // 1 = fit
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [imgNaturalSize, setImgNaturalSize] = useState({ w: 1, h: 1 });
   const [minZoom, setMinZoom] = useState(1);
@@ -70,11 +70,11 @@ function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
   // ── Draw canvas ────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
-    const img    = imageRef.current;
+    const img = imageRef.current;
     if (!canvas || !img) return;
 
     const ctx = canvas.getContext('2d')!;
-    canvas.width  = CROP_SIZE;
+    canvas.width = CROP_SIZE;
     canvas.height = CROP_SIZE;
 
     ctx.clearRect(0, 0, CROP_SIZE, CROP_SIZE);
@@ -111,7 +111,7 @@ function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
   // ── Pointer events ─────────────────────────────────────────────────────────
   const onPointerDown = (e: React.PointerEvent) => {
     isDragging.current = true;
-    lastPos.current    = { x: e.clientX, y: e.clientY };
+    lastPos.current = { x: e.clientX, y: e.clientY };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e: React.PointerEvent) => {
@@ -151,17 +151,17 @@ function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
     const img = imageRef.current;
     if (!img) return;
 
-    const out  = document.createElement('canvas');
-    out.width  = OUTPUT_SIZE;
+    const out = document.createElement('canvas');
+    out.width = OUTPUT_SIZE;
     out.height = OUTPUT_SIZE;
-    const ctx  = out.getContext('2d')!;
+    const ctx = out.getContext('2d')!;
 
     // Scale factor from CROP_SIZE → OUTPUT_SIZE
-    const scale     = OUTPUT_SIZE / CROP_SIZE;
-    const scaledW   = imgNaturalSize.w * zoom * scale;
-    const scaledH   = imgNaturalSize.h * zoom * scale;
-    const cx        = OUTPUT_SIZE / 2 + offset.x * scale - scaledW / 2;
-    const cy        = OUTPUT_SIZE / 2 + offset.y * scale - scaledH / 2;
+    const scale = OUTPUT_SIZE / CROP_SIZE;
+    const scaledW = imgNaturalSize.w * zoom * scale;
+    const scaledH = imgNaturalSize.h * zoom * scale;
+    const cx = OUTPUT_SIZE / 2 + offset.x * scale - scaledW / 2;
+    const cy = OUTPUT_SIZE / 2 + offset.y * scale - scaledH / 2;
 
     // Clip to circle
     ctx.beginPath();
@@ -267,8 +267,6 @@ export default function TeamsPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('member');
   const [actionLoading, setActionLoading] = useState(false);
-  const [showTransferPreview, setShowTransferPreview] = useState<any>(null);
-  const [transferTargetId, setTransferTargetId] = useState('');
   const [toast, setToast] = useState('');
 
   // ─── Team Settings (Tên & Avatar) ──────────────────────────────────────────
@@ -409,15 +407,6 @@ export default function TeamsPage() {
     } catch (e: any) { showToast(`❌ ${e.message}`); }
   };
 
-  const handleChangeRole = async (memberId: string, newRole: string) => {
-    if (!activeTeam) return;
-    try {
-      await updateTeamMemberRole(activeTeam.id, memberId, newRole);
-      // Socket sẽ trigger reload
-      showToast('✅ Đã cập nhật vai trò');
-    } catch (e: any) { showToast(`❌ ${e.message}`); }
-  };
-
   const handleLeaveTeam = async () => {
     if (!activeTeam || !confirm(activeTeam.members?.length === 1 ? 'Bạn là thành viên duy nhất. Rời nhóm sẽ giải tán nhóm. Tiếp tục?' : 'Bạn có chắc chắn muốn rời nhóm này?')) return;
     try {
@@ -430,35 +419,8 @@ export default function TeamsPage() {
     }
   };
 
-  const handlePreviewTransfer = async (targetUserId: string) => {
-    if (!activeTeam) return;
-    try {
-      const data = await previewTransferOwnership(activeTeam.id, targetUserId);
-      setTransferTargetId(targetUserId);
-      setShowTransferPreview(data);
-    } catch (e: any) {
-      showToast(`❌ ${e.message}`);
-    }
-  };
-
-  const handleConfirmTransfer = async () => {
-    if (!activeTeam || !transferTargetId) return;
-    setActionLoading(true);
-    try {
-      await transferTeamOwnership(activeTeam.id, transferTargetId);
-      showToast('✅ Chuyển nhượng quyền Owner thành công');
-      setShowTransferPreview(null);
-      setTransferTargetId('');
-      // Socket sẽ trigger team:members_changed
-    } catch (e: any) {
-      showToast(`❌ ${e.message}`);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-
   const openSettingsModal = () => {
+
     if (!activeTeam) return;
     setSettingsName(activeTeam.name);
     setSettingsAvatarFile(null);
@@ -545,15 +507,15 @@ export default function TeamsPage() {
   if (showUpgradeSeatsModal && activeTeam) {
     return (
       <div className="relative">
-        <button 
+        <button
           onClick={() => setShowUpgradeSeatsModal(false)}
           className="absolute top-4 left-4 z-50 bg-white p-2 rounded-full shadow-md text-slate-500 hover:text-indigo-600 transition"
         >
           <ChevronLeft size={24} />
         </button>
-        <TeamOnboarding 
-          isUpgrade={true} 
-          currentMaxMembers={activeTeam.max_members} 
+        <TeamOnboarding
+          isUpgrade={true}
+          currentMaxMembers={activeTeam.max_members}
         />
       </div>
     );
@@ -562,7 +524,7 @@ export default function TeamsPage() {
   if (showBuyTeamModal) {
     return (
       <div className="relative">
-        <button 
+        <button
           onClick={() => setShowBuyTeamModal(false)}
           className="absolute top-4 left-4 z-50 bg-white p-2 rounded-full shadow-md text-slate-500 hover:text-indigo-600 transition"
         >
@@ -588,18 +550,20 @@ export default function TeamsPage() {
             <h1 className="text-lg font-extrabold text-slate-800">Teams</h1>
           </div>
         </div>
-        <button
-          onClick={() => {
-            if (!isSubscriptionActive(user)) {
-              setShowBuyTeamModal(true);
-            } else {
-              setShowCreateModal(true);
-            }
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 text-white font-bold rounded-xl text-sm shadow-md transition-all hover:-translate-y-0.5"
-        >
-          <Plus size={15} /> Tạo nhóm mới
-        </button>
+        {!teams.some(t => t.my_role === 'owner') && (
+          <button
+            onClick={() => {
+              if (!isSubscriptionActive(user)) {
+                setShowBuyTeamModal(true);
+              } else {
+                setShowCreateModal(true);
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 text-white font-bold rounded-xl text-sm shadow-md transition-all hover:-translate-y-0.5"
+          >
+            <Plus size={15} /> Tạo nhóm mới
+          </button>
+        )}
       </header>
 
       {/* Toast */}
@@ -757,7 +721,43 @@ export default function TeamsPage() {
                     : activeTeam.max_members;
                   const isFull = (activeTeam.members?.length ?? 0) >= effectiveMax;
                   return (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* [FIX] Nút Gia hạn nhóm: chỉ hiện khi Owner và team đã hết hạn */}
+                      {activeTeam.my_role === 'owner' && !activeTeam.is_pro && (
+                        <button
+                          onClick={async () => {
+                            // Lấy gói pro_team từ API
+                            const res = await fetch('/api/subscriptions');
+                            const data = await res.json();
+                            const plans: any[] = data.plans || data.subscriptions || [];
+                            const teamPlan = plans.find((p: any) => p.slug === 'pro_team');
+                            if (!teamPlan) { alert('Không tìm thấy gói Team. Vui lòng liên hệ hỗ trợ.'); return; }
+
+                            // Tạo checkout với teamId cụ thể để gia hạn đúng nhóm này
+                            const checkoutRes = await fetch('/api/payments/create-checkout', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                              },
+                              body: JSON.stringify({
+                                planId: teamPlan.id,
+                                planName: teamPlan.name,
+                                membersCount: activeTeam.max_members,
+                                teamId: activeTeam.id, // [FIX] Truyền đích danh teamId
+                              }),
+                            });
+                            const checkoutData = await checkoutRes.json();
+                            if (!checkoutRes.ok) { alert(checkoutData.error || 'Lỗi tạo link thanh toán'); return; }
+                            window.location.href = checkoutData.checkoutUrl;
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white font-bold rounded-xl text-sm transition shadow-md hover:-translate-y-0.5"
+                          title={`Gia hạn gói cho nhóm "${activeTeam.name}"`}
+                        >
+                          <RefreshCw size={14} /> Gia hạn nhóm
+                        </button>
+                      )}
+
                       {/* Nút Thêm chỗ cho chủ nhóm Pro */}
                       {activeTeam.is_pro && activeTeam.my_role === 'owner' && (
                         <button
@@ -768,7 +768,7 @@ export default function TeamsPage() {
                           <Crown size={14} /> Thêm chỗ
                         </button>
                       )}
-                      
+
                       {/* Nút Mời thành viên */}
                       <button
                         onClick={() => isFull ? setShowUpgradeModal(true) : setShowInviteModal(true)}
@@ -798,7 +798,6 @@ export default function TeamsPage() {
                     const RoleIcon = rc.icon;
                     const isMe = m.id === user?.id;
                     const canRemove = ['owner', 'admin'].includes(activeTeam.my_role) && m.role !== 'owner' && !isMe && (activeTeam.my_role === 'owner' || m.role !== 'admin');
-                    const canChangeRole = !isMe && m.role !== 'owner' && (activeTeam.my_role === 'owner' || (activeTeam.my_role === 'admin' && m.role !== 'admin'));
 
                     return (
                       <div key={m.id}
@@ -818,27 +817,11 @@ export default function TeamsPage() {
                           <p className="text-[11px] text-slate-400 truncate">{m.email}</p>
                         </div>
 
-                        {canChangeRole ? (
-                          <div className="relative">
-                            <select
-                              value={m.role}
-                              onChange={(e) => handleChangeRole(m.id, e.target.value)}
-                              className={`appearance-none outline-none cursor-pointer flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold pr-6 ${rc.bg} ${rc.color}`}
-                            >
-                              {activeTeam.my_role === 'owner' && <option value="admin">Admin</option>}
-                              <option value="member">Member</option>
-                              <option value="viewer">Viewer</option>
-                            </select>
-                            <div className={`pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 ${rc.color}`}>
-                              <ChevronLeft size={10} className="-rotate-90" />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${rc.bg}`}>
-                            <RoleIcon size={10} className={rc.color} />
-                            <span className={`text-[10px] font-bold ${rc.color}`}>{rc.label}</span>
-                          </div>
-                        )}
+                        {/* Role badge — chỉ hiển thị, không cho chỉnh */}
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${rc.bg}`}>
+                          <RoleIcon size={10} className={rc.color} />
+                          <span className={`text-[10px] font-bold ${rc.color}`}>{rc.label}</span>
+                        </div>
                         {isMe && activeTeam.my_role !== 'owner' && !activeTeam.is_personal && (
                           <button
                             onClick={handleLeaveTeam}
@@ -857,15 +840,7 @@ export default function TeamsPage() {
                             <Trash2 size={13} />
                           </button>
                         )}
-                        {activeTeam.my_role === 'owner' && !isMe && !activeTeam.is_personal && (
-                          <button
-                            onClick={() => handlePreviewTransfer(m.id)}
-                            className="p-1.5 text-slate-300 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition"
-                            title="Chuyển quyền Owner"
-                          >
-                            <RefreshCw size={13} />
-                          </button>
-                        )}
+
                         {canRemove && (
                           <button
                             onClick={() => handleRemoveMember(m.id, m.name)}
@@ -908,12 +883,6 @@ export default function TeamsPage() {
                             >
                               <button onClick={() => handleCreateTeamDesign('presentation', 'canvas', 1920, 1080)} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 rounded-lg text-left font-bold transition">
                                 <Layout size={16} /> Presentation
-                              </button>
-                              <button onClick={() => handleCreateTeamDesign('document', 'doc', 800, 1131)} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 rounded-lg text-left font-bold transition">
-                                <FileText size={16} /> Document
-                              </button>
-                              <button onClick={() => handleCreateTeamDesign('video', 'canvas', 1920, 1080)} className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 rounded-lg text-left font-bold transition">
-                                <Video size={16} /> Video
                               </button>
                             </motion.div>
                           </>
@@ -1192,78 +1161,7 @@ export default function TeamsPage() {
         )}
       </AnimatePresence>
 
-      {/* ─── [BILLING] Transfer Ownership Preview Modal ────────────────────── */}
-      <AnimatePresence>
-        {showTransferPreview && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowTransferPreview(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="font-extrabold text-lg text-slate-800">Chuyển nhượng quyền Chủ nhóm</h3>
-                <button onClick={() => setShowTransferPreview(null)} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition">
-                  <X size={16} />
-                </button>
-              </div>
 
-              <div className="space-y-4 mb-6">
-                <p className="text-sm text-slate-600">
-                  Bạn đang chuyển quyền Chủ nhóm cho <strong>{showTransferPreview.new_owner?.name}</strong> ({showTransferPreview.new_owner?.email}).
-                </p>
-
-                {showTransferPreview.warning && (
-                  <div className={`p-4 rounded-xl border ${showTransferPreview.will_downgrade
-                    ? 'bg-red-50 border-red-200 text-red-700'
-                    : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                    }`}>
-                    <div className="flex items-start gap-3">
-                      {showTransferPreview.will_downgrade ? <AlertTriangle size={20} className="shrink-0 mt-0.5" /> : <Crown size={20} className="shrink-0 mt-0.5" />}
-                      <div>
-                        <p className="font-bold text-sm mb-1">
-                          {showTransferPreview.will_downgrade ? 'Cảnh báo hạ cấp gói (Downgrade)' : 'Nâng cấp tự động'}
-                        </p>
-                        <p className="text-xs opacity-90">{showTransferPreview.warning}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <p className="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Trạng thái gói của Workspace</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-600">Hiện tại: <strong>{showTransferPreview.current_plan?.name}</strong></span>
-                    <ArrowRight size={14} className="text-slate-400" />
-                    <span className="text-sm text-slate-600">Sau khi chuyển: <strong>{showTransferPreview.new_plan?.name}</strong></span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <button onClick={() => setShowTransferPreview(null)}
-                  className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition text-sm">
-                  Hủy
-                </button>
-                <button onClick={handleConfirmTransfer} disabled={actionLoading}
-                  className={`flex-1 py-3 rounded-2xl text-white font-bold transition shadow-md disabled:opacity-60 text-sm flex items-center justify-center gap-2 ${showTransferPreview.will_downgrade
-                    ? 'bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700'
-                    : 'bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600'
-                    }`}>
-                  <RefreshCw size={14} />
-                  {actionLoading ? 'Đang xử lý...' : 'Xác nhận chuyển quyền'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

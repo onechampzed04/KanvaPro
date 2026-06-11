@@ -1,6 +1,7 @@
 // backend/controllers/paymentController.ts
 import { Request, Response } from 'express';
 import { paymentService } from '../services/paymentService';
+import db from '../config/db';
 
 export const paymentController = {
   // ----------------------------------------------------------------------
@@ -10,7 +11,7 @@ export const paymentController = {
     try {
       // [FIX Vấn đề 3] Bỏ `amount` khỏi body — backend tự tính giá từ DB.
       // Không bao giờ tin giá tiền do client gửi lên (tránh price tampering).
-      const { planId, planName, membersCount, inviteEmails } = req.body;
+      const { planId, planName, membersCount, inviteEmails, teamId } = req.body;
       const userId = (req as any).user.id;
 
       if (!planId || !planName) {
@@ -18,7 +19,7 @@ export const paymentController = {
       }
 
       const checkoutUrl = await paymentService.createPaymentLink(
-        userId, planId, planName, membersCount, inviteEmails
+        userId, planId, planName, membersCount, inviteEmails, teamId
       );
       res.json({ checkoutUrl });
     } catch (error: any) {
@@ -68,7 +69,6 @@ export const paymentController = {
   getBillingHistory: async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id;
-      const db = require('../config/db').default;
       // Lấy cả pending để user thấy và bấm "Kiểm tra lại"
       const result = await db.query(`
         SELECT p.id, p.amount, p.status, p.created_at, p.transaction_id, p.metadata,

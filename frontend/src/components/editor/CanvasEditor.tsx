@@ -88,9 +88,10 @@ interface CanvasEditorProps {
 
 // ─── CACHED LINE COMPONENT ────────────────────────────────────────────────────
 // Memo: chỉ re-render khi el thay đổi thực sự. Sau mount gọi .cache() để tạo bitmap GPU.
-const CachedLine = memo(({ el, activeTool, onDragMove, onDragEnd, onClick }: {
+const CachedLine = memo(({ el, activeTool, onDragStart, onDragMove, onDragEnd, onClick }: {
   el: any;
   activeTool?: string;
+  onDragStart?: (e: any) => void;
   onDragMove: (e: any) => void;
   onDragEnd: (e: any) => void;
   onClick: (e: any) => void;
@@ -146,6 +147,7 @@ const CachedLine = memo(({ el, activeTool, onDragMove, onDragEnd, onClick }: {
       x={el.x || 0}
       y={el.y || 0}
       draggable={activeTool === 'select' || !activeTool}
+      onDragStart={onDragStart}
       onDragMove={onDragMove}
       onDragEnd={onDragEnd}
       onClick={onClick}
@@ -212,9 +214,11 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     const { clientWidth, clientHeight } = containerRef.current;
     setContainerSize({ width: clientWidth, height: clientHeight });
 
-    const padding = 80;
-    const scaleX = (clientWidth - padding) / stageWidth;
-    const scaleY = (clientHeight - padding) / stageHeight;
+    const paddingTop = 64; // Vừa đủ cho toolbar top-2 (cao khoảng 40px + margin)
+    const paddingBottom = 24;
+    const paddingX = 64;
+    const scaleX = (clientWidth - paddingX) / stageWidth;
+    const scaleY = (clientHeight - paddingTop - paddingBottom) / stageHeight;
     let newScale = Math.min(scaleX, scaleY, 2);
 
     if (props.isWhiteboard) {
@@ -224,7 +228,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     setScale(newScale);
     setPosition({
       x: (clientWidth - stageWidth * newScale) / 2,
-      y: (clientHeight - stageHeight * newScale) / 2
+      y: paddingTop + (clientHeight - paddingTop - paddingBottom - stageHeight * newScale) / 2
     });
   }, [stageWidth, stageHeight, props.isWhiteboard]);
 
@@ -260,10 +264,23 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
   useEffect(() => {
     if (textareaRef.current && editingElement) {
-      textareaRef.current.style.height = '0px';
-      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+      if (textareaRef.current.innerText !== editingElement.text) {
+        textareaRef.current.innerText = editingElement.text;
+        
+        // Focus and place cursor at the end
+        const el = textareaRef.current;
+        el.focus();
+        if (typeof window.getSelection !== "undefined" && typeof document.createRange !== "undefined") {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      }
     }
-  }, [editingElement?.text, scale]);
+  }, [editingId, scale]);
 
   // 3. Logic Zoom và Pan (Konva)
   const handleWheel = (e: any) => {
@@ -322,7 +339,10 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
   useEffect(() => {
     if (trRef.current && layerRef.current) {
-      const nodes = selectedIds.map(id => layerRef.current.findOne(`#${id}`)).filter(Boolean);
+      const nodes = selectedIds
+        .filter(id => id !== editingId) // Hide Transformer for the currently editing element
+        .map(id => layerRef.current.findOne(`#${id}`))
+        .filter(Boolean);
 
       trRef.current.nodes(nodes);
 
@@ -358,7 +378,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
       trRef.current.getLayer().batchDraw();
     }
-  }, [selectedIds, elements]);
+  }, [selectedIds, elements, editingId]);
 
   // LOGIC KÉO THẢ TỰ ĐỘNG HÍT NAM CHÂM 
   const [guidelines, setGuidelines] = useState<any[]>([]);
@@ -498,6 +518,11 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
   // TOOLBOX EVENT HANDLERS
   const onStageMouseDown = (e: any) => {
+    // Bắt buộc blur text editor nếu đang edit mà click ra ngoài canvas
+    if (editingId && textareaRef.current) {
+      textareaRef.current.blur();
+    }
+
     if (props.activeTool === 'draw' || props.activeTool === 'line') {
       isDrawingRef.current = true;
       const pos = stageRef.current?.getRelativePointerPosition();
@@ -596,7 +621,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       const pos = stageRef.current?.getRelativePointerPosition();
       if (pos && props.addElement) {
         props.addElement({
-          id: crypto.randomUUID(), type: 'text', text: 'Ghi chú', x: pos.x, y: pos.y, width: 200, height: 200,
+          id: crypto.randomUUID(), type: 'text', text: 'Ghi chú', x: pos.x, y: pos.y,
           fill: '#334155', backgroundColor: '#fef08a', fontSize: 18, fontFamily: 'Inter', align: 'center', verticalAlign: 'middle', padding: 20,
         });
       }
@@ -607,7 +632,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       const pos = stageRef.current?.getRelativePointerPosition();
       if (pos && props.addElement) {
         props.addElement({
-          id: crypto.randomUUID(), type: 'text', text: 'Nhập văn bản', x: pos.x, y: pos.y, width: 200, height: 50,
+          id: crypto.randomUUID(), type: 'text', text: 'Nhập văn bản', x: pos.x, y: pos.y,
           fill: '#000000', fontSize: 24, fontFamily: 'Inter', align: 'left', verticalAlign: 'top', padding: 10,
         });
       }
@@ -966,9 +991,12 @@ export default function CanvasEditor(props: CanvasEditorProps) {
                   key={el.id}
                   el={el}
                   activeTool={props.activeTool}
-                  onDragMove={handleDragMove}
+                  onDragStart={() => props.onActionStart?.()}
+                  onDragMove={(e: any) => {
+                    updateElement({ ...el, x: e.target.x(), y: e.target.y() });
+                    handleDragMove(e);
+                  }}
                   onDragEnd={(e: any) => {
-                    props.onActionStart?.();
                     updateElementImmediate({ ...el, x: e.target.x(), y: e.target.y() });
                   }}
                   onClick={(e: any) => props.handleMouseDown({ target: e.target })}
@@ -996,7 +1024,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           )}
 
           <Transformer ref={trRef} borderStroke="#6366f1" anchorStroke="#6366f1" anchorFill="#ffffff" anchorSize={8} boundBoxFunc={(oldBox, newBox) => newBox.width < 5 || newBox.height < 5 ? oldBox : newBox} />
-          {selectedIds.length > 1 && selectedIds.map(id => <IndividualBorder key={`border-${id}`} nodeId={id} />)}
+          {selectedIds.length > 1 && selectedIds.filter(id => id !== editingId).map(id => <IndividualBorder key={`border-${id}`} nodeId={id} />)}
         </Layer>
 
         {/* ── DYNAMIC LAYER: chỉ chứa nét vẽ tạm thời đang kéo (60fps, tách biệt) ── */}
@@ -1017,22 +1045,19 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       </Stage>
 
       {editingElement && (
-        <textarea
-          ref={textareaRef}
-          autoFocus
-          value={editingElement.text}
-          onChange={(e) => updateElement({ ...editingElement, text: e.target.value })}
-          onBlur={() => {
-            // ─── Undo thông minh cho Text: chỉ push snapshot 1 lần khi kết thúc edit ─
-            const finalText = editingElement.text;
+        <div
+          ref={textareaRef as any}
+          contentEditable
+          suppressContentEditableWarning
+          onBlur={(e) => {
+            const finalText = e.currentTarget.innerText;
             const originalText = editingOriginalTextRef.current;
             if (originalText !== null && finalText !== originalText) {
-              // Thông báo cho EditorPage biết text đã thay đổi để đẩy undo snapshot
               props.onTextEditEnd?.(finalText, editingElement.id);
             }
             editingOriginalTextRef.current = null;
-            // [FIX #8] setEditingId(null) sẽ trigger EditorPage unlock element
             setEditingId(null);
+            updateElementImmediate({ ...editingElement, text: finalText });
           }}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
@@ -1044,27 +1069,36 @@ export default function CanvasEditor(props: CanvasEditorProps) {
             position: 'absolute',
             top: position.y + (editingElement.y * scale),
             left: position.x + (editingElement.x * scale),
-            width: (editingElement.width || 200) * scale,
+            minWidth: `${20 * scale}px`,
+            width: editingElement.width ? `${editingElement.width * scale}px` : 'max-content',
             fontSize: editingElement.fontSize * scale,
             fontFamily: editingElement.fontFamily,
             color: editingElement.fill,
             fontWeight: editingElement.fontStyle?.includes('bold') ? 'bold' : 'normal',
             fontStyle: editingElement.fontStyle?.includes('italic') ? 'italic' : 'normal',
-            textDecoration: editingElement.textDecoration,
-            border: '1px solid #6366f1',
-            background: 'white',
+            textDecoration: editingElement.textDecoration || 'none',
+            textAlign: editingElement.align || 'left',
+            letterSpacing: editingElement.letterSpacing ? `${editingElement.letterSpacing}px` : 'normal',
+            lineHeight: editingElement.lineHeight || 1.2,
+            border: 'none',
+            background: 'rgba(255, 255, 255, 0.02)',
             outline: 'none',
-            resize: 'none',
-            lineHeight: 1.2,
+            boxShadow: '0 0 0 2px #6366f1, 0 4px 12px rgba(0, 0, 0, 0.1)',
+            borderRadius: '4px',
             zIndex: 1000,
-            padding: 0,
+            padding: editingElement.padding ? `${editingElement.padding * scale}px` : '0px',
             margin: 0,
-            overflow: 'hidden',
+            boxSizing: 'border-box',
             whiteSpace: 'pre-wrap',
-            wordWrap: 'break-word'
+            wordWrap: 'break-word',
+            transformOrigin: 'top left',
+            transform: `rotateZ(${editingElement.rotation || 0}deg)`,
+            cursor: 'text'
           }}
         />
       )}
     </div>
   );
 }
+
+

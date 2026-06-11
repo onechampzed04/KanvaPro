@@ -25,8 +25,8 @@ import { v4 as uuidv4 } from 'uuid';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IMAGES_DIR = path.join(__dirname, '..', 'public', 'uploads', 'images');
 
-/** Tổng dung lượng giải nén tối đa: 50 MB (chống Zip Bomb) */
-const MAX_EXTRACT_BYTES = 50 * 1024 * 1024;
+/** Tổng dung lượng giải nén tối đa: 250 MB (chống Zip Bomb) */
+const MAX_EXTRACT_BYTES = 250 * 1024 * 1024;
 
 /** ZIP magic bytes: PK\x03\x04 */
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
@@ -68,7 +68,7 @@ export interface PptxElement {
   x: number;
   y: number;
   width: number;
-  height: number;
+  height?: number;
   rotation: number;
   // text
   text?: string;
@@ -107,7 +107,7 @@ async function safeLoadZip(buffer: Buffer): Promise<JSZip> {
       totalSize += data.length;
       if (totalSize > MAX_EXTRACT_BYTES) {
         throw new Error(
-          `Dung lượng file sau khi giải nén vượt quá giới hạn 50 MB. ` +
+          `Dung lượng file sau khi giải nén vượt quá giới hạn 250 MB. ` +
           `File có thể là Zip Bomb hoặc quá lớn để xử lý.`
         );
       }
@@ -153,22 +153,32 @@ function extractText(txBody: any): string {
     .join('\n');
 }
 
-/** Lấy font size (PPTX sz là hundredths of pt → convert sang px) */
-function extractFontSize(txBody: any, scaleY: number): number {
+/** Lấy font size (PPTX sz là hundredths of pt → convert sang px)
+ *  Không scale theo scaleY vì pt là đơn vị tuyệt đối, không phải EMU.
+ *  Chỉ cần đổi pt → px (1pt = 96/72 px). Fallback 18pt.
+ */
+function extractFontSize(txBody: any): number {
   const paras = toArray(txBody?.['a:p'] ?? txBody?.p ?? []);
   for (const p of paras) {
+    // Ưu tiên lấy từ pPr defRPr trước (paragraph-level default)
+    const pPrDef = (p?.['a:pPr'] ?? p?.pPr)?.['a:defRPr'] ?? (p?.['a:pPr'] ?? p?.pPr)?.defRPr;
+    if (pPrDef) {
+      const sz = pPrDef?.['@_sz'];
+      if (sz && Number(sz) > 0) {
+        return Math.max(8, Math.round((Number(sz) / 100) * (96 / 72)));
+      }
+    }
     const runs = toArray(p?.['a:r'] ?? p?.r ?? []);
     for (const r of runs) {
       const rPr = r?.['a:rPr'] ?? r?.rPr;
       const sz = rPr?.['@_sz'];
       if (sz && Number(sz) > 0) {
-        // sz in hundredths of pt; 1pt = 96/72px
-        const ptSize = Number(sz) / 100;
-        return Math.max(8, Math.round(ptSize * (96 / 72) * scaleY));
+        // sz in hundredths of pt; 1pt = 96/72 px — KHÔNG nhân scaleY
+        return Math.max(8, Math.round((Number(sz) / 100) * (96 / 72)));
       }
     }
   }
-  return Math.round(18 * scaleY);
+  return 24; // default 24px (≈18pt)
 }
 
 /** Lấy font color từ run */
@@ -221,20 +231,35 @@ function toArray<T>(v: T | T[] | undefined): T[] {
   return Array.isArray(v) ? v : [v];
 }
 
+interface Transform {
+  offX: number;
+  offY: number;
+  scaleX: number;
+  scaleY: number;
+}
+
 /** Lấy xfrm (position + size) từ spPr */
-function extractXfrm(spPr: any): { x: number; y: number; cx: number; cy: number; rot: number } | null {
+function extractXfrm(spPr: any, t?: Transform): { x: number; y: number; cx: number; cy: number; rot: number } | null {
   const xfrm = spPr?.['a:xfrm'] ?? spPr?.xfrm;
   if (!xfrm) return null;
   const off = xfrm?.['a:off'] ?? xfrm?.off;
   const ext = xfrm?.['a:ext'] ?? xfrm?.ext;
   if (!off || !ext) return null;
-  return {
-    x: Number(off?.['@_x'] ?? 0),
-    y: Number(off?.['@_y'] ?? 0),
-    cx: Number(ext?.['@_cx'] ?? 0),
-    cy: Number(ext?.['@_cy'] ?? 0),
-    rot: Number(xfrm?.['@_rot'] ?? 0) / 60000, // EMU rot is in 1/60000 degree
-  };
+  
+  let x = Number(off?.['@_x'] ?? 0);
+  let y = Number(off?.['@_y'] ?? 0);
+  let cx = Number(ext?.['@_cx'] ?? 0);
+  let cy = Number(ext?.['@_cy'] ?? 0);
+  let rot = Number(xfrm?.['@_rot'] ?? 0) / 60000;
+
+  if (t) {
+    x = t.offX + x * t.scaleX;
+    y = t.offY + y * t.scaleY;
+    cx = cx * t.scaleX;
+    cy = cy * t.scaleY;
+  }
+
+  return { x, y, cx, cy, rot };
 }
 
 // ── Parse slide relationships ─────────────────────────────────────────────────
@@ -398,16 +423,19 @@ function parseBackground(slideXml: any): string {
   return '#ffffff';
 }
 
-// ── Robust rEmbed extractor: search any key containing 'embed' ───────────────
+// ── Robust rEmbed/rLink extractor: search any key containing 'embed' or 'link' ─
 // fast-xml-parser preserves namespace prefixes as-is (r:embed → @_r:embed)
-// but some PPTX variants may use different namespace aliases.
+// but some PPTX variants may use different namespace aliases or r:link for external images.
 function extractREmbed(blip: any): string | null {
   if (!blip || typeof blip !== 'object') return null;
   // 1. Standard: @_r:embed
   if (blip['@_r:embed']) return String(blip['@_r:embed']);
-  // 2. Fallback: search for any attribute key that ends with ':embed' or equals 'embed'
+  // 2. Linked image: @_r:link (external/linked images inside PPTX)
+  if (blip['@_r:link']) return String(blip['@_r:link']);
+  // 3. Fallback: search all attribute keys for any embed/link variant
   for (const key of Object.keys(blip)) {
-    if ((key.toLowerCase().endsWith(':embed') || key.toLowerCase() === '@_embed') && blip[key]) {
+    const lk = key.toLowerCase();
+    if ((lk.endsWith(':embed') || lk === '@_embed' || lk.endsWith(':link')) && blip[key]) {
       return String(blip[key]);
     }
   }
@@ -425,7 +453,8 @@ async function buildImageElement(
   lane: number,
   slideWidthEmu: number,
   slideHeightEmu: number,
-  layoutXfrm?: { x: number; y: number; cx: number; cy: number; rot: number }
+  layoutXfrm?: { x: number; y: number; cx: number; cy: number; rot: number },
+  groupT?: Transform
 ): Promise<PptxElement | null> {
   const rEmbed = extractREmbed(blipNode);
   if (!rEmbed) {
@@ -439,7 +468,7 @@ async function buildImageElement(
   // 1. slide's own p:spPr.a:xfrm (most accurate)
   // 2. slide layout's p:pic.p:spPr.a:xfrm (for layout-inherited pics)
   // 3. full slide size (last resort for truly positionless pics)
-  const slideXfrm = extractXfrm(spPr);
+  const slideXfrm = extractXfrm(spPr, groupT);
   const xfrm = slideXfrm
     ?? layoutXfrm
     ?? { x: 0, y: 0, cx: slideWidthEmu, cy: slideHeightEmu, rot: 0 };
@@ -502,7 +531,8 @@ async function buildImageElement(
   }
 
   const ext = path.extname(normalizedTarget).toLowerCase() || '.png';
-  if (!['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.emf', '.wmf'].includes(ext)) {
+  // Thêm .svg vào danh sách hỗ trợ; .emf/.wmf bỏ qua (Windows metafile, không render được)
+  if (!['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'].includes(ext)) {
     console.warn(`[PPTX]   buildImage: unsupported ext "${ext}" for "${normalizedTarget}"`);
     return null;
   }
@@ -575,7 +605,7 @@ async function parseSlide(
   // Recursive processor: handles a "shape container" (spTree, grpSp, etc.)
   // Extracts: text (p:sp with txBody), images (p:pic), shapes with blipFill
   // ─────────────────────────────────────────────────────────────────────────
-  async function processContainer(container: any, depth = 0): Promise<void> {
+  async function processContainer(container: any, depth = 0, groupT?: Transform): Promise<void> {
     if (!container || depth > 5) return;
 
     // ── 1. p:sp — Text shapes AND shapes with image fills ──────────────────
@@ -584,9 +614,17 @@ async function parseSlide(
       const spPr = sp?.['p:spPr'] ?? sp?.spPr;
       const txBody = sp?.['p:txBody'] ?? sp?.txBody;
 
+      // Kiểm tra image fill TRƯỚC (một shape có thể vừa có ảnh nền vừa có text chồng lên)
+      const blipFillInSpPr = spPr?.['a:blipFill'] ?? spPr?.blipFill;
+      if (blipFillInSpPr) {
+        const blip = blipFillInSpPr?.['a:blip'] ?? blipFillInSpPr?.blip;
+        const el = await buildImageElement(spPr, blip, rels, zip, scaleX, scaleY, lane, slideWidthEmu, slideHeightEmu, undefined, groupT);
+        if (el) { elements.push(el); lane++; }
+      }
+
       if (txBody) {
         // TEXT shape: get position from slide, fall back to layout placeholder position
-        const ownXfrm = extractXfrm(spPr);
+        const ownXfrm = extractXfrm(spPr, groupT);
         let xfrm = ownXfrm;
         if (!xfrm) {
           const phKey = getPhKey(sp);
@@ -603,10 +641,11 @@ async function parseSlide(
           x: emuToPx(xfrm.x, scaleX),
           y: emuToPx(xfrm.y, scaleY),
           width: emuToPx(xfrm.cx, scaleX),
-          height: emuToPx(xfrm.cy, scaleY),
+          // Bỏ thuộc tính height để text tự động giãn nở chiều dọc theo nội dung
+          // height: emuToPx(xfrm.cy, scaleY),
           rotation: xfrm.rot,
           text: cleanText,
-          fontSize: extractFontSize(txBody, scaleY),
+          fontSize: extractFontSize(txBody),
           fontFamily: 'Inter, Arial, sans-serif',
           fill: extractTextColor(txBody),
           fontStyle: extractFontStyle(txBody),
@@ -614,14 +653,6 @@ async function parseSlide(
           timeline: { start: 0, duration: 5, lane: lane++ },
           animation: { in: 'none' },
         });
-      } else {
-        // Check for IMAGE FILL on shape (a:blipFill inside p:spPr)
-        const blipFill = spPr?.['a:blipFill'] ?? spPr?.blipFill;
-        if (blipFill) {
-          const blip = blipFill?.['a:blip'] ?? blipFill?.blip;
-          const el = await buildImageElement(spPr, blip, rels, zip, scaleX, scaleY, lane, slideWidthEmu, slideHeightEmu);
-          if (el) { elements.push(el); lane++; }
-        }
       }
     }
 
@@ -635,18 +666,54 @@ async function parseSlide(
       console.log(`[PPTX]   pic blip keys:`, blip ? Object.keys(blip) : 'null');
 
       // Use layout xfrm as positional fallback when slide p:spPr has no a:xfrm
-      const ownXfrm = extractXfrm(spPr);
+      const ownXfrm = extractXfrm(spPr, groupT);
       const layoutFallback = ownXfrm ? undefined : layoutPos.picXfrms[layoutPicIndex];
       if (!ownXfrm) layoutPicIndex++; // consume next layout slot only when needed
 
-      const el = await buildImageElement(spPr, blip, rels, zip, scaleX, scaleY, lane, slideWidthEmu, slideHeightEmu, layoutFallback);
+      const el = await buildImageElement(spPr, blip, rels, zip, scaleX, scaleY, lane, slideWidthEmu, slideHeightEmu, layoutFallback, groupT);
       if (el) { elements.push(el); lane++; }
     }
 
     // ── 3. p:grpSp — Recurse into group shapes ────────────────────────────
     const groups = toArray(container?.['p:grpSp'] ?? container?.grpSp ?? []);
     for (const grp of groups) {
-      await processContainer(grp, depth + 1);
+      const grpPr = grp?.['p:grpSpPr'] ?? grp?.grpSpPr;
+      const xfrm = grpPr?.['a:xfrm'] ?? grpPr?.xfrm;
+      
+      let nextT: Transform = groupT ? { ...groupT } : { offX: 0, offY: 0, scaleX: 1, scaleY: 1 };
+      
+      if (xfrm) {
+        const off = xfrm['a:off'] ?? xfrm.off;
+        const ext = xfrm['a:ext'] ?? xfrm.ext;
+        const chOff = xfrm['a:chOff'] ?? xfrm.chOff;
+        const chExt = xfrm['a:chExt'] ?? xfrm.chExt;
+
+        if (off && ext && chOff && chExt) {
+          const gx = Number(off['@_x'] ?? 0);
+          const gy = Number(off['@_y'] ?? 0);
+          const gcx = Number(ext['@_cx'] ?? 1);
+          const gcy = Number(ext['@_cy'] ?? 1);
+          
+          const chx = Number(chOff['@_x'] ?? 0);
+          const chy = Number(chOff['@_y'] ?? 0);
+          const chcx = Number(chExt['@_cx'] ?? 1) || 1;
+          const chcy = Number(chExt['@_cy'] ?? 1) || 1;
+
+          const localScaleX = gcx / chcx;
+          const localScaleY = gcy / chcy;
+
+          const parentScaleX = nextT.scaleX;
+          const parentScaleY = nextT.scaleY;
+
+          nextT.scaleX = parentScaleX * localScaleX;
+          nextT.scaleY = parentScaleY * localScaleY;
+          
+          nextT.offX = nextT.offX + gx * parentScaleX - chx * localScaleX * parentScaleX;
+          nextT.offY = nextT.offY + gy * parentScaleY - chy * localScaleY * parentScaleY;
+        }
+      }
+
+      await processContainer(grp, depth + 1, nextT);
     }
 
     // ── 4. p:graphicFrame — Charts/tables (log but skip) ──────────────────
@@ -656,7 +723,7 @@ async function parseSlide(
     }
   }
 
-  await processContainer(spTree);
+  await processContainer(spTree, 0, undefined);
   return elements;
 }
 

@@ -20,6 +20,7 @@ import BillingPanel from '../components/dashboard/BillingPanel';
 import PricingPanel from '../components/dashboard/PricingPanel';
 import ProfilePanel from '../components/dashboard/ProfilePanel';
 import ImportPptxModal from '../components/dashboard/ImportPptxModal';
+import { Copy, Edit3 } from 'lucide-react';
 
 type ActivePage = 'home' | 'teams' | 'storage' | 'trash' | 'billing' | 'pricing' | 'profile';
 
@@ -27,11 +28,7 @@ type ActivePage = 'home' | 'teams' | 'storage' | 'trash' | 'billing' | 'pricing'
 const DESIGN_TEMPLATES = [
   { id: 'presentation', type: 'presentation', page_type: 'canvas', icon: Layout, label: 'Presentation', color: 'bg-[#FF7A00]', w: 1920, h: 1080 },
   { id: 'social', type: 'social_media', page_type: 'canvas', icon: ImageIcon, label: 'Logo', color: 'bg-[#FF2E54]', w: 1080, h: 1080 },
-  { id: 'video', type: 'video', page_type: 'canvas', icon: Video, label: 'Video', color: 'bg-[#C24FF6]', w: 1920, h: 1080 },
-  { id: 'print', type: 'document', page_type: 'canvas', icon: FileText, label: 'Print Shop', color: 'bg-[#C24FF6]', w: 1920, h: 1080 },
-  { id: 'doc', type: 'document', page_type: 'doc', icon: FileText, label: 'Doc', color: 'bg-[#00C4CC]', w: 800, h: null },
   { id: 'whiteboard', type: 'whiteboard', page_type: 'canvas', icon: Monitor, label: 'Whiteboard', color: 'bg-[#00D084]', w: 5000, h: 5000 },
-  { id: 'sheet', type: 'document', page_type: 'sheet', icon: Table, label: 'Sheet', color: 'bg-[#1E73E8]', w: 1200, h: null },
 ];
 
 const OWNER_OPTIONS = [
@@ -45,10 +42,7 @@ const TYPE_OPTIONS = [
   { value: 'any', label: 'Tất cả loại' },
   { value: 'presentation', label: 'Presentation' },
   { value: 'social_media', label: 'Social Media' },
-  { value: 'video', label: 'Video' },
-  { value: 'document', label: 'Document' },
-  { value: 'whiteboard', label: 'Whiteboard' },
-  { value: 'sheet', label: 'Sheet' }
+  { value: 'whiteboard', label: 'Whiteboard' }
 ];
 
 const DATE_SORT_OPTIONS = [
@@ -63,7 +57,7 @@ const NAME_SORT_OPTIONS = [
 
 export default function DashboardPage() {
   const { user, logout, updateAvatar, refreshUser } = useAuth();
-  const { currentWorkspace } = useWorkspace();
+  const { currentWorkspace, workspaces, switchWorkspace, refreshWorkspaces } = useWorkspace();
   const { isPro, planName } = useSubscription();
   const [designs, setDesigns] = useState<any[]>([]);
   const [filterOwner, setFilterOwner] = useState<'any' | 'me' | 'shared' | 'email'>('any');
@@ -98,7 +92,7 @@ export default function DashboardPage() {
     if (kb < 1) return kb.toFixed(3) + ' KB';
     if (kb < 1024) return kb.toFixed(1) + ' KB';
     const mb = kb / 1024;
-    if (mb < 1024) return mb.toFixed(1) + ' MB';
+    if (mb < 1024) return mb.toFixed(3) + ' MB';
     return (mb / 1024).toFixed(2) + ' GB';
   };
 
@@ -110,13 +104,17 @@ export default function DashboardPage() {
     maxGb = 5;
   }
   const maxStorageBytes = maxGb * 1024 * 1024 * 1024;
-  const storageUsedBytes = Number(currentWorkspace?.used_storage_bytes ?? 0);
+  const storageUsedBytes = currentWorkspace && currentWorkspace.workspace_type !== 'personal'
+    ? Number(currentWorkspace.used_storage_bytes ?? 0) 
+    : Number(user?.storage_used_bytes ?? 0);
   const storagePercentage = Math.min((storageUsedBytes / maxStorageBytes) * 100, 100);
   const isStorageWarning = storagePercentage > 90;
 
   const [deleteModalDesign, setDeleteModalDesign] = useState<any | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
+  const [cloningId, setCloningId] = useState<string | null>(null);
 
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarToast, setAvatarToast] = useState('');
@@ -132,7 +130,7 @@ export default function DashboardPage() {
       }
     };
     loadData();
-  }, []);
+  }, [currentWorkspace?.id]);
 
   const filteredDesigns = useMemo(() => {
     let result = [...designs];
@@ -161,10 +159,32 @@ export default function DashboardPage() {
   }, [designs, filterOwner, filterEmail, filterType, sortBy, user]);
 
   useEffect(() => {
-    const handler = () => setOpenMenuId(null);
+    const handler = (e: MouseEvent) => {
+      setOpenMenuId(null);
+      if (!(e.target as Element).closest('.workspace-dropdown')) {
+        setIsWorkspaceDropdownOpen(false);
+      }
+    };
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, []);
+
+  // Đảm bảo không bị kẹt ở tab Đội Nhóm nếu chuyển sang Team mà không phải Owner
+  useEffect(() => {
+    if (activePage === 'teams' && currentWorkspace && currentWorkspace.owner_id !== user?.id) {
+      setActivePage('home');
+    }
+  }, [currentWorkspace, activePage, user]);
+
+  // Cập nhật real-time dung lượng khi có thay đổi (vd: upload thành công)
+  useEffect(() => {
+    const handleStorageUpdate = () => {
+      refreshUser();
+      refreshWorkspaces();
+    };
+    window.addEventListener('storage:updated', handleStorageUpdate);
+    return () => window.removeEventListener('storage:updated', handleStorageUpdate);
+  }, [refreshUser, refreshWorkspaces]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (activePage !== 'home') return;
@@ -431,13 +451,126 @@ export default function DashboardPage() {
     }
   };
 
+  // Hàm sinh tên bản sao tự động tăng: "Tên dự án - Bản sao 1, 2, 3..."
+  const generateCloneTitle = (originalTitle: string, allDesigns: any[]) => {
+    // Tách phần tên gốc (nếu đang clone từ một bản sao khác)
+    const baseTitleMatch = originalTitle.match(/^(.*?)( - Bản sao( \d+)?)?$/);
+    const baseTitle = baseTitleMatch ? baseTitleMatch[1] : originalTitle;
+
+    // Thoát các ký tự đặc biệt trong regex
+    const escapedBaseTitle = baseTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`^${escapedBaseTitle}( - Bản sao( (\\d+))?)?$`);
+
+    let maxNum = 0;
+    for (const d of allDesigns) {
+      const match = d.title.match(regex);
+      if (match) {
+        if (match[3]) {
+          maxNum = Math.max(maxNum, parseInt(match[3], 10));
+        } else if (match[2] === '') {
+           maxNum = Math.max(maxNum, 1); // " - Bản sao" ko có số thì là 1
+        } else {
+           maxNum = Math.max(maxNum, 0); // Chính nó
+        }
+      }
+    }
+
+    if (maxNum === 0) return `${baseTitle} - Bản sao`;
+    return `${baseTitle} - Bản sao ${maxNum + 1}`;
+  };
+
+  const [renameModalDesign, setRenameModalDesign] = useState<any | null>(null);
+  const [newDesignName, setNewDesignName] = useState('');
+
+  const handleRenameSubmit = async () => {
+    if (!renameModalDesign || !newDesignName.trim()) return;
+    try {
+      const res = await fetch(`/api/designs/${renameModalDesign.id}/rename`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title: newDesignName.trim() }),
+      });
+      if (!res.ok) throw new Error('Đổi tên thất bại');
+      setDesigns(prev => prev.map(d => d.id === renameModalDesign.id ? { ...d, title: newDesignName.trim() } : d));
+      setRenameModalDesign(null);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  // Clone design được share (shared design mà không phải của mình)
+  // Canva behavior: clone vào workspace đang active (personal hoặc team)
+  const handleCloneSharedDesign = async (design: any) => {
+    setCloningId(design.id);
+    try {
+      const isInTeamWorkspace = currentWorkspace && currentWorkspace.workspace_type === 'team';
+      const targetTeamId = isInTeamWorkspace ? currentWorkspace.id : null;
+      const workspaceName = isInTeamWorkspace ? `nhóm "${currentWorkspace.name}"` : 'không gian cá nhân';
+      const newTitle = generateCloneTitle(design.title, designs);
+
+      const res = await fetch(`/api/teams/designs/${design.id}/clone-to-personal`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ targetTeamId, newTitle }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Không thể nhân bản');
+      const updated = await fetchDesigns('all');
+      setDesigns(updated.designs);
+      alert(`Đã tạo: "${newTitle}" vào ${workspaceName}.`);
+    } catch (err: any) {
+      alert(`Lỗi nhân bản: ${err.message}`);
+    } finally {
+      setCloningId(null);
+    }
+  };
+
+  // Duplicate (copy) design của chính mình (personal clone)
+  const handleDuplicateMyDesign = async (design: any) => {
+    setOpenMenuId(null);
+    setCloningId(design.id);
+    try {
+      const isInTeamWorkspace = currentWorkspace && currentWorkspace.workspace_type === 'team';
+      const targetTeamId = isInTeamWorkspace ? currentWorkspace.id : null;
+      const newTitle = generateCloneTitle(design.title, designs);
+
+      const res = await fetch(`/api/teams/designs/${design.id}/clone-to-personal`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ targetTeamId, newTitle }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Không thể sao chép');
+      
+      // Navigate vào design mới luôn
+      navigate(`/design/${data.designId}`);
+    } catch (err: any) {
+      alert(`Lỗi sao chép: ${err.message}`);
+    } finally {
+      setCloningId(null);
+    }
+  };
+
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
     if (!window.confirm('Chuyển các thiết kế đã chọn vào thùng rác?')) return;
     try {
-      await bulkDeleteDesigns(selectedIds);
-      setDesigns(prev => prev.filter(d => !selectedIds.includes(d.id)));
+      const result = await bulkDeleteDesigns(selectedIds);
+      const deletedIds = result.deletedIds || selectedIds;
+      setDesigns(prev => prev.filter(d => !deletedIds.includes(d.id)));
       setSelectedIds([]);
+      if (deletedIds.length < selectedIds.length) {
+        alert('Có ' + (selectedIds.length - deletedIds.length) + ' bản thiết kế không thể xóa vì bạn không phải là chủ sở hữu.');
+      }
     } catch (err: any) {
       alert(`Lỗi: ${err.message}`);
     }
@@ -508,31 +641,73 @@ export default function DashboardPage() {
           </button>
         )}
 
-        {/* User Avatar */}
-        <div className={`py-3 shrink-0 ${isSidebarCollapsed ? 'px-2 flex justify-center' : 'px-6'}`}>
+        {/* User Avatar & Workspace Switcher */}
+        <div className={`py-3 shrink-0 relative workspace-dropdown ${isSidebarCollapsed ? 'px-2 flex justify-center' : 'px-6'}`}>
           <div
             className={`relative group cursor-pointer ${isSidebarCollapsed
               ? 'w-10 h-10'
               : 'flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 hover:border-sky-200 transition-colors'
               }`}
-            onClick={() => avatarInputRef.current?.click()}
-            title="Đổi ảnh đại diện"
+            onClick={() => setIsWorkspaceDropdownOpen(!isWorkspaceDropdownOpen)}
+            title="Chuyển đổi Workspace"
           >
             <div className="relative shrink-0">
               {avatarSrc
                 ? <img src={avatarSrc} alt="avatar" className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm" />
                 : <div className="w-10 h-10 rounded-full bg-gradient-to-r from-pink-300 to-sky-300 flex items-center justify-center text-white font-bold shadow-sm">{user?.name?.[0]?.toUpperCase() || 'U'}</div>}
-              <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                {isUploadingAvatar ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Camera size={14} className="text-white" />}
-              </div>
             </div>
             {!isSidebarCollapsed && (
               <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-bold text-slate-800 truncate">{user?.name}</h3>
-                <p className="text-xs font-medium text-slate-500 truncate">{user?.email}</p>
+                <h3 className="text-sm font-bold text-slate-800 truncate">{currentWorkspace ? currentWorkspace.name : 'Không gian Cá nhân'}</h3>
+                <p className="text-xs font-medium text-slate-500 truncate">{currentWorkspace ? 'Team Workspace' : 'Free Workspace'}</p>
               </div>
             )}
+            {!isSidebarCollapsed && (
+               <div className="text-slate-400">▼</div>
+            )}
           </div>
+
+          <AnimatePresence>
+            {isWorkspaceDropdownOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                className="absolute left-6 right-6 top-full mt-2 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden z-50"
+              >
+                <div className="p-2 border-b border-slate-100">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2 py-1">Đổi Workspace</p>
+                  <button
+                    onClick={() => { switchWorkspace(null); setIsWorkspaceDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center justify-between ${!currentWorkspace ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}`}
+                  >
+                    <span>Cá nhân (Free)</span>
+                    {!currentWorkspace && <span className="text-indigo-600">✓</span>}
+                  </button>
+                  {workspaces.map(w => (
+                    <button
+                      key={w.id}
+                      onClick={() => { switchWorkspace(w.id); setIsWorkspaceDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center justify-between mt-1 ${currentWorkspace?.id === w.id ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}`}
+                    >
+                      <span className="truncate">{w.name} (Pro)</span>
+                      {currentWorkspace?.id === w.id && <span className="text-indigo-600">✓</span>}
+                    </button>
+                  ))}
+                </div>
+                <div className="p-2">
+                   <button
+                    onClick={() => { avatarInputRef.current?.click(); setIsWorkspaceDropdownOpen(false); }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                  >
+                    <Camera size={14} className="text-slate-400" />
+                    Đổi ảnh đại diện
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
         </div>
 
@@ -550,8 +725,9 @@ export default function DashboardPage() {
         {/* Navigation */}
         <nav className={`flex-1 overflow-y-auto py-2 space-y-1 custom-scrollbar ${isSidebarCollapsed ? 'px-2' : 'px-4'}`}>
           <NavItem icon={Home} label="Trang chủ" active={activePage === 'home'} onClick={() => setActivePage('home')} />
-          <NavItem icon={Folder} label="Dự án của tôi" active={false} onClick={() => { setActivePage('home'); setFilterOwner('me'); }} />
-          <NavItem icon={Users} label="Đội Nhóm" active={activePage === 'teams'} onClick={() => setActivePage('teams')} />
+          {(!currentWorkspace || currentWorkspace?.owner_id === user?.id) && (
+            <NavItem icon={Users} label="Đội Nhóm" active={activePage === 'teams'} onClick={() => setActivePage('teams')} />
+          )}
           <NavItem icon={HardDrive} label="Lưu trữ" active={activePage === 'storage'} onClick={() => setActivePage('storage')} />
           <NavItem icon={Trash2} label="Thùng rác" active={activePage === 'trash'} onClick={() => setActivePage('trash')} />
           <div className="my-3 border-t border-slate-100" />
@@ -587,7 +763,10 @@ export default function DashboardPage() {
               <div className="mb-4" title={`Đã dùng ${formatResourceSize(storageUsedBytes)} / ${maxStorageBytes / (1024 ** 3)} GB`}>
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-xs font-bold text-slate-500">Lưu trữ cá nhân</span>
-                  <span className="text-[10px] font-bold text-slate-400">{formatResourceSize(storageUsedBytes)} / {maxStorageBytes / (1024 ** 3)}GB</span>
+                  <span className="text-[10px] font-bold text-slate-400">
+                    {formatResourceSize(storageUsedBytes)} / {maxStorageBytes / (1024 ** 3)}GB 
+                    (DB: {user?.storage_used_bytes || '0'}, Team: {currentWorkspace?.used_storage_bytes || '0'}, CW: {currentWorkspace ? 'yes' : 'no'})
+                  </span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                   <div className={`h-full rounded-full transition-all duration-500 ${isStorageWarning ? 'bg-rose-500' : 'bg-gradient-to-r from-sky-400 to-indigo-500'}`} style={{ width: `${storagePercentage}%` }} />
@@ -864,7 +1043,22 @@ export default function DashboardPage() {
 
                         <div className="aspect-[4/3] bg-slate-50 relative flex items-center justify-center overflow-hidden border-b border-slate-100">
                           {design.thumbnail_url ? (
-                            <img src={design.thumbnail_url} alt={design.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" />
+                            <img 
+                              src={design.thumbnail_url} 
+                              alt={design.title} 
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
+                              onError={(e) => {
+                                // [FIX 404] Ảnh thumbnail bị xóa → hiển thị fallback icon thay vì broken image
+                                (e.target as HTMLImageElement).style.display = 'none';
+                                const parent = (e.target as HTMLImageElement).parentElement;
+                                if (parent && !parent.querySelector('.thumb-fallback')) {
+                                  const fallback = document.createElement('div');
+                                  fallback.className = 'thumb-fallback absolute inset-0 flex items-center justify-center text-slate-300';
+                                  fallback.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
+                                  parent.appendChild(fallback);
+                                }
+                              }}
+                            />
                           ) : (
                             <div className="text-slate-300 group-hover:scale-110 group-hover:text-indigo-400 transition-all duration-500">
                               {design.design_type === 'document' ? <FileText size={40} strokeWidth={1.5} /> : <Layout size={40} strokeWidth={1.5} />}
@@ -907,7 +1101,7 @@ export default function DashboardPage() {
                         </div>
                       </Link>
 
-                      {/* 3-dot menu */}
+                      {/* 3-dot menu cho design của CHÍNH MÌNH */}
                       {user?.id === design.user_id && (
                         <div className="absolute top-3 right-3 z-10">
                           <button
@@ -919,8 +1113,22 @@ export default function DashboardPage() {
                           <AnimatePresence>
                             {openMenuId === design.id && (
                               <motion.div initial={{ opacity: 0, scale: 0.95, y: -5 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
-                                className="absolute right-0 top-10 bg-white rounded-xl shadow-xl border border-slate-100 py-1.5 min-w-[160px] z-20 origin-top-right"
+                                className="absolute right-0 top-10 bg-white rounded-xl shadow-xl border border-slate-100 py-1.5 min-w-[170px] z-20 origin-top-right"
                                 onClick={e => e.stopPropagation()}>
+                                <button
+                                  onClick={() => handleDuplicateMyDesign(design)}
+                                  disabled={cloningId === design.id}
+                                  className="w-full flex items-center gap-2.5 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50">
+                                  <Copy size={15} />
+                                  {cloningId === design.id ? 'Đang sao chép...' : 'Sao chép thiết kế'}
+                                </button>
+                                <button
+                                  onClick={() => { setRenameModalDesign(design); setNewDesignName(design.title); setOpenMenuId(null); }}
+                                  className="w-full flex items-center gap-2.5 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors">
+                                  <Edit3 size={15} />
+                                  Đổi tên
+                                </button>
+                                <div className="mx-3 my-1 border-t border-slate-100" />
                                 <button
                                   onClick={() => { setDeleteModalDesign(design); setOpenMenuId(null); }}
                                   className="w-full flex items-center gap-2.5 px-4 py-2 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition-colors">
@@ -930,6 +1138,21 @@ export default function DashboardPage() {
                               </motion.div>
                             )}
                           </AnimatePresence>
+                        </div>
+                      )}
+
+                      {/* Nút Clone cho design được SHARE (không phải của mình) */}
+                      {user?.id !== design.user_id && (
+                        <div className="absolute top-3 right-3 z-10">
+                          <button
+                            onClick={e => { e.preventDefault(); e.stopPropagation(); handleCloneSharedDesign(design); }}
+                            disabled={cloningId === design.id}
+                            title="Nhân bản vào không gian cá nhân"
+                            className="w-8 h-8 bg-white/90 backdrop-blur-sm rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-indigo-50 hover:shadow-md border border-slate-100 text-slate-500 hover:text-indigo-600 disabled:opacity-40">
+                            {cloningId === design.id
+                              ? <span className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                              : <Copy size={14} />}
+                          </button>
                         </div>
                       )}
                     </motion.div>
@@ -997,6 +1220,51 @@ export default function DashboardPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* RENAME MODAL */}
+      <AnimatePresence>
+        {renameModalDesign && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={() => setRenameModalDesign(null)}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[28px] shadow-2xl p-8 max-w-md w-full"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-5 mb-6">
+                <div className="w-14 h-14 bg-indigo-50 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Edit3 size={28} className="text-indigo-500" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-extrabold text-slate-800">Đổi tên thiết kế</h3>
+                  <p className="text-sm text-slate-500 mt-1 font-medium">Nhập tên mới cho thiết kế của bạn.</p>
+                </div>
+              </div>
+              <div className="mb-8">
+                <input
+                  type="text"
+                  autoFocus
+                  value={newDesignName}
+                  onChange={e => setNewDesignName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleRenameSubmit()}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm font-bold text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                  placeholder="Nhập tên thiết kế..."
+                />
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setRenameModalDesign(null)}
+                  className="flex-1 py-3.5 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition-colors">
+                  Hủy
+                </button>
+                <button onClick={handleRenameSubmit} disabled={!newDesignName.trim()}
+                  className="flex-1 py-3.5 rounded-xl bg-indigo-500 text-white font-bold hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-60">
+                  Lưu thay đổi
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
 
       {/* IMPORT PPTX MODAL */}
       {showImportPptx && (

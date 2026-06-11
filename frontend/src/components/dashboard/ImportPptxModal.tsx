@@ -31,8 +31,8 @@ export default function ImportPptxModal({ onClose, onSuccess }: ImportPptxModalP
       setStatus('error');
       return;
     }
-    if (file.size > 20 * 1024 * 1024) {
-      setErrorMsg('File vượt quá giới hạn 20 MB.');
+    if (file.size > 100 * 1024 * 1024) {
+      setErrorMsg('File vượt quá giới hạn 100 MB.');
       setStatus('error');
       return;
     }
@@ -52,9 +52,15 @@ export default function ImportPptxModal({ onClose, onSuccess }: ImportPptxModalP
     try {
       setStatus('parsing');
       const token = localStorage.getItem('token');
+      const workspaceId = localStorage.getItem('kanva_current_workspace_id');
+      
+      const headers: any = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (workspaceId) headers['X-Workspace-Id'] = workspaceId;
+
       const res = await fetch('/api/designs/import/pptx', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
         body: formData,
       });
 
@@ -140,16 +146,15 @@ export default function ImportPptxModal({ onClose, onSuccess }: ImportPptxModalP
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-200 ${
-                    isDragging
+                  className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-200 ${isDragging
                       ? 'border-orange-400 bg-orange-50 scale-[1.01]'
                       : 'border-slate-200 hover:border-orange-300 hover:bg-orange-50/50'
-                  }`}
+                    }`}
                 >
                   <Upload size={40} className={`mx-auto mb-3 transition-colors ${isDragging ? 'text-orange-500' : 'text-slate-300'}`} />
                   <p className="font-bold text-slate-700 mb-1">Kéo thả file PPTX vào đây</p>
                   <p className="text-sm text-slate-400">hoặc click để chọn file</p>
-                  <p className="text-xs text-slate-300 mt-3">Chỉ hỗ trợ .pptx · Tối đa 20 MB</p>
+                  <p className="text-xs text-slate-300 mt-3">Chỉ hỗ trợ .pptx · Tối đa 100 MB</p>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -159,7 +164,7 @@ export default function ImportPptxModal({ onClose, onSuccess }: ImportPptxModalP
                   />
                 </div>
 
-                {/* Security badges */}
+                {/* Security badges
                 <div className="mt-4 flex flex-wrap gap-2">
                   {['Magic Bytes kiểm tra', 'Chống Zip Bomb', 'XSS Sanitize', 'Chỉ .pptx'].map(badge => (
                     <span key={badge} className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">
@@ -167,7 +172,7 @@ export default function ImportPptxModal({ onClose, onSuccess }: ImportPptxModalP
                       {badge}
                     </span>
                   ))}
-                </div>
+                </div> */}
 
                 {/* What's NOT supported */}
                 <p className="mt-3 text-xs text-slate-400 text-center">

@@ -347,7 +347,7 @@ export const updateTeamAvatar = async (req: Request, res: Response) => {
   
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  const file = (req as any).file as Express.Multer.File | undefined;
+  const file = (req as any).file;
   if (!file) return res.status(400).json({ error: 'Không có file ảnh nào được upload' });
 
   try {
@@ -510,12 +510,16 @@ export const transferOwnership = async (req: Request, res: Response) => {
 
 
 // ── POST /api/designs/:designId/clone-to-personal ────────────────────────────
-// [FIX 2a] Kiểm tra Quota cá nhân trước khi clone.
-// [FIX BOLA] Kiểm tra quyền truy cập bản vẽ nguồn trước khi clone.
+// Hỗ trợ 2 mode clone theo Canva behavior:
+//   - targetTeamId = null/undefined → clone vào Personal Workspace (team_id = NULL)
+//   - targetTeamId = <uuid>          → clone vào Team Workspace đó (team_id = uuid, is_public = false)
+// Trong cả 2 trường hợp, user phải có quyền truy cập bản vẽ nguồn.
 export const cloneDesignToPersonal = async (req: Request, res: Response) => {
   const { designId } = req.params;
   const userId = (req as any).user?.id;
   const ip = getClientIp(req);
+  // targetTeamId: frontend gửi kèm nếu user đang hoạt động trong Team Workspace
+  const { targetTeamId } = req.body as { targetTeamId?: string | null };
 
   try {
     // 1. Tìm thiết kế gốc
@@ -524,22 +528,18 @@ export const cloneDesignToPersonal = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Không tìm thấy thiết kế' });
     }
 
-    if (!design.team_id) {
-      return res.status(400).json({ error: 'Đây không phải bản vẽ của nhóm' });
-    }
-
-    // 2. Kiểm tra user có thuộc team không (điều kiện cần tối thiểu)
-    const myRole = await teamService.getTeamRole(design.team_id, userId);
-    if (!myRole) {
-      return res.status(403).json({ error: 'Bạn không thuộc nhóm sở hữu thiết kế này' });
-    }
-
-    // 3. [FIX BOLA/IDOR] Kiểm tra quyền THỰC SỰ trên bản vẽ nguồn.
-    //    Thuộc cùng Team KHÔNG tự động cấp quyền đọc bản vẽ của người khác.
-    //    Quy tắc "Private by default": phải là Owner, được Share, hoặc bản vẽ là Public.
-    //    Logic này nhất quán với middleware checkDesignAccess.ts.
+    // 2. Kiểm tra quyền truy cập bản vẽ nguồn
+    //    - Nếu bản vẽ nguồn thuộc team: user phải là thành viên team đó
+    //    - Nếu bản vẽ nguồn là personal của người khác: phải được share hoặc is_public
     const isOwner = design.user_id === userId;
     let hasAccess = isOwner;
+
+    if (!hasAccess && design.team_id) {
+      const myRole = await teamService.getTeamRole(design.team_id, userId);
+      if (!myRole) {
+        return res.status(403).json({ error: 'Bạn không thuộc nhóm sở hữu thiết kế này' });
+      }
+    }
 
     if (!hasAccess) {
       // Kiểm tra bảng design_shares (được share nội bộ)
@@ -547,15 +547,10 @@ export const cloneDesignToPersonal = async (req: Request, res: Response) => {
         'SELECT role FROM design_shares WHERE design_id = $1 AND user_id = $2',
         [designId, userId]
       );
-      if (shareResult.rows.length > 0) {
-        hasAccess = true;
-      }
+      if (shareResult.rows.length > 0) hasAccess = true;
     }
 
-    if (!hasAccess && design.is_public) {
-      // Bản vẽ public → ai cũng được clone
-      hasAccess = true;
-    }
+    if (!hasAccess && design.is_public) hasAccess = true;
 
     if (!hasAccess) {
       return res.status(403).json({
@@ -564,29 +559,53 @@ export const cloneDesignToPersonal = async (req: Request, res: Response) => {
       });
     }
 
-    // 4. Kiểm tra Quota của Personal Workspace
-    const personalQuota = await teamService.getPersonalStorageUsage(userId);
-    if (!personalQuota) {
-      return res.status(500).json({ error: 'Không tìm thấy Personal Workspace của bạn' });
+    // 3. Nếu clone vào Team Workspace: xác minh user là thành viên team đích
+    let resolvedTeamId: string | null = null;
+    if (targetTeamId) {
+      const memberCheck = await teamService.getTeamRole(targetTeamId, userId);
+      if (!memberCheck) {
+        return res.status(403).json({ error: 'Bạn không thuộc nhóm workspace đích' });
+      }
+      resolvedTeamId = targetTeamId;
     }
 
-    if (personalQuota.usedBytes >= personalQuota.maxBytes) {
-      const usedGB = (personalQuota.usedBytes / (1024 ** 3)).toFixed(2);
-      return res.status(403).json({
-        error: 'PersonalQuotaExceeded',
-        message: `Bộ nhớ cá nhân của bạn đã đầy (${usedGB}GB / ${personalQuota.maxStorageGb}GB). Vui lòng xóa bớt tài nguyên hoặc nâng cấp gói cá nhân.`,
-        used_bytes: personalQuota.usedBytes,
-        max_bytes: personalQuota.maxBytes,
-        max_storage_gb: personalQuota.maxStorageGb,
-      });
+    // 4. Kiểm tra Quota của workspace đích
+    if (resolvedTeamId) {
+      // Clone vào Team → check team quota
+      const teamQuota = await teamService.getTeamStorageUsage(resolvedTeamId);
+      if (teamQuota && teamQuota.usedBytes >= teamQuota.maxBytes) {
+        const usedGB = (teamQuota.usedBytes / (1024 ** 3)).toFixed(2);
+        return res.status(403).json({
+          error: 'TeamQuotaExceeded',
+          message: `Bộ nhớ của nhóm đã đầy (${usedGB}GB). Vui lòng xóa bớt tài nguyên hoặc nâng cấp gói nhóm.`,
+        });
+      }
+    } else {
+      // Clone vào Personal → check personal quota
+      const personalQuota = await teamService.getPersonalStorageUsage(userId);
+      if (personalQuota && personalQuota.usedBytes >= personalQuota.maxBytes) {
+        const usedGB = (personalQuota.usedBytes / (1024 ** 3)).toFixed(2);
+        return res.status(403).json({
+          error: 'PersonalQuotaExceeded',
+          message: `Bộ nhớ cá nhân của bạn đã đầy (${usedGB}GB / ${personalQuota.maxStorageGb}GB). Vui lòng xóa bớt tài nguyên hoặc nâng cấp gói cá nhân.`,
+          used_bytes: personalQuota.usedBytes,
+          max_bytes: personalQuota.maxBytes,
+          max_storage_gb: personalQuota.maxStorageGb,
+        });
+      }
     }
 
-    // 5. Tiến hành clone (ghi audit log đúng vào team nguồn)
-    const newDesignId = await teamService.cloneDesignWithAudit(designId, userId, design.team_id, ip);
+    // 5. Tiến hành clone
+    const sourceTeamId = design.team_id || 'personal';
+    const newDesignId = await teamService.cloneDesignWithAudit(
+      designId, userId, sourceTeamId, ip, resolvedTeamId, req.body.newTitle
+    );
 
+    const location = resolvedTeamId ? 'không gian nhóm' : 'không gian cá nhân';
     res.json({
-      message: 'Đã nhân bản thiết kế về không gian cá nhân',
+      message: `Đã nhân bản thiết kế về ${location}`,
       designId: newDesignId,
+      targetTeamId: resolvedTeamId,
     });
   } catch (error) {
     console.error('Clone Design Error:', error);
@@ -612,7 +631,35 @@ export const getTeamAuditLogs = async (req: Request, res: Response) => {
     const result = await teamService.getAuditLogs(id, limit, offset);
     res.json(result);
   } catch (error) {
-    console.error('Get Audit Logs Error:', error);
+    console.error('Get Team Audit Logs Error:', error);
     res.status(500).json({ error: 'Lỗi lấy lịch sử hành động' });
+  }
+};
+
+export const getTeamStorageBreakdown = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const userId = (req as any).user?.id;
+  try {
+    const myRole = await teamService.getTeamRole(id, userId);
+    if (myRole !== 'owner') {
+      return res.status(403).json({ error: 'Chỉ Owner mới có thể xem dung lượng chi tiết' });
+    }
+
+    const result = await db.query(
+      `SELECT u.id, u.name, u.email, u.avatar_url,
+              SUM(COALESCE(a.file_size, 0)) AS total_bytes
+       FROM team_members tm
+       JOIN users u ON tm.user_id = u.id
+       LEFT JOIN assets a ON a.uploaded_by = u.id AND a.team_id = $1 AND (a.metadata->>'design_clone' IS NULL OR a.metadata->>'design_clone' = 'false')
+       WHERE tm.team_id = $1
+       GROUP BY u.id, u.name, u.email, u.avatar_url
+       ORDER BY total_bytes DESC`,
+      [id]
+    );
+
+    res.json({ breakdown: result.rows });
+  } catch (error) {
+    console.error('getTeamStorageBreakdown error:', error);
+    res.status(500).json({ error: 'Lỗi máy chủ' });
   }
 };

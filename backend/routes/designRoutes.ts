@@ -7,6 +7,7 @@ import {
   bulkDeleteDesigns, emptyTrash,
   getDesignMeta, getPageElements, // === FIX #4: Lazy Loading ===
   createVideoJob, getVideoJobStatus, // === FIX #5: Server-side Video ===
+  renameDesign,
 } from '../controllers/designController';
 import { importPptx } from '../controllers/pptxController';
 import {
@@ -16,14 +17,16 @@ import {
 import { authenticate } from '../middleware/authMiddleware';
 import { checkDesignAccess, requireRole, checkTrashedDesignAccess } from '../middleware/checkDesignAccess';
 import multer from 'multer';
+import { checkStorageQuota } from '../middleware/checkStorageQuota';
+import { resolveWorkspace } from '../middleware/resolveWorkspace';
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 const router = Router();
 
 router.post('/export/video', upload.single('video'), exportVideo);
 
-// ── PPTX Import (no auth check — public endpoint with multer, auth in controller) ──
-router.post('/import/pptx', authenticate, upload.single('pptx'), importPptx);
+// ── PPTX Import (auth check + resolveWorkspace + quota check + multer) ──
+router.post('/import/pptx', authenticate, resolveWorkspace, checkStorageQuota, upload.single('pptx'), importPptx);
 
 router.use(authenticate);
 
@@ -56,6 +59,9 @@ router.put('/:id', checkDesignAccess, requireRole('owner', 'editor'), saveFullDe
 
 // Soft delete: chỉ owner
 router.delete('/:id', checkDesignAccess, requireRole('owner'), deleteDesign);
+
+// Rename: chỉ owner và editor được đổi tên
+router.patch('/:id/rename', checkDesignAccess, requireRole('owner', 'editor'), renameDesign);
 
 // Version History: chỉ owner và editor 
 router.post('/:id/versions', checkDesignAccess, requireRole('owner', 'editor'), saveDesignVersion);

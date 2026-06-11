@@ -297,9 +297,9 @@ export default function EditorTopBar({
                   >
                     {currentPageType !== 'doc' && <option className="text-slate-900 font-bold" value="png">PNG (High Quality Image)</option>}
                     {currentPageType !== 'doc' && <option className="text-slate-900 font-bold" value="jpeg">JPG (Small size)</option>}
-                    {currentPageType !== 'doc' && <option className="text-slate-900 font-bold" value="mp4">MP4 (Video)</option>}
                     {currentPageType !== 'doc' && <option className="text-slate-900 font-bold" value="pptx">PPTX (PowerPoint)</option>}
                     {currentPageType === 'doc' && <option className="text-slate-900 font-bold" value="docx">📄 DOCX (Microsoft Word)</option>}
+                    {currentPageType === 'doc' && <option className="text-slate-900 font-bold" value="pdf">📋 PDF (In / Xem trực tiếp)</option>}
                   </select>
                 </div>
 

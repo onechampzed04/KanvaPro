@@ -8,8 +8,9 @@ import {
   getAdminSubscriptions, createManualSubscription,
   updateSubscriptionStatus, terminateSubscription,
   subscriptionPlanController, getAdminPayments,
-  getAdminUsers, banUser, updateUserQuota,
+  getAdminUsers, banUser,
   adminForceSuccessPayment, revokeSubscription,
+  getAdminTeams, getAdminTeamDetail, banTeam,
 } from '../controllers/adminController';
 
 const router = express.Router();
@@ -23,7 +24,6 @@ router.get('/metrics', getMetrics);
 // Users (Real-time V2)
 router.get('/users-v2', getAdminUsers);
 router.post('/users-v2/:id/ban', banUser);
-router.put('/users-v2/:id/quota', updateUserQuota);
 
 // Legacy fallback
 router.get('/users', getUsers);
@@ -59,5 +59,10 @@ router.delete('/plans/:id', subscriptionPlanController.delete);
 router.get('/payments', getAdminPayments);
 // [MỚI] Admin duyệt tay giao dịch Pending (PayOS webhook bị miss)
 router.post('/payments/:id/force-success', adminForceSuccessPayment);
+
+// ── Teams ──────────────────────────────────────────────────────────
+router.get('/teams', getAdminTeams);
+router.get('/teams/:id', getAdminTeamDetail);
+router.post('/teams/:id/ban', banTeam);
 
 export default router;

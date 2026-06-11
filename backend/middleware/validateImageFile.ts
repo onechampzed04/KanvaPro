@@ -11,8 +11,8 @@
 
 import { Request, Response, NextFunction } from 'express';
 
-// Kích thước tệp tối đa cho thumbnail (2MB)
-const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
+// Kích thước tệp tối đa cho ảnh (10MB)
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
 /**
  * Kiểm tra Magic Bytes của buffer để xác định định dạng ảnh thực tế.
@@ -62,7 +62,7 @@ function isValidImageBuffer(buffer: Buffer): boolean {
  *  3. Kiểm tra Magic Numbers để xác nhận định dạng ảnh thực tế
  */
 export const validateImageFile = (req: Request, res: Response, next: NextFunction) => {
-  const file = req.file;
+  const file = (req as any).file;
 
   if (!file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -72,7 +72,7 @@ export const validateImageFile = (req: Request, res: Response, next: NextFunctio
   if (file.size > MAX_FILE_SIZE_BYTES) {
     return res.status(413).json({
       error: 'FileTooLarge',
-      message: `Kích thước ảnh thumbnail không được vượt quá 2MB. Kích thước hiện tại: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
+      message: `Kích thước ảnh upload không được vượt quá 10MB. Kích thước hiện tại: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
     });
   }
 

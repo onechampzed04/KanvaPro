@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import db from '../config/db';
-import { assertCanActOn } from '../middleware/roleHierarchy';
+import { assertCanActOn, getRoleWeight } from '../middleware/roleHierarchy';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -22,21 +22,37 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Multer config ──────────────────────────────────────────────────────────
 const uploadDir = path.join(__dirname, '../sticker_upload/assets');
+const fontsDir  = path.join(__dirname, '../sticker_upload/fonts');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+if (!fs.existsSync(fontsDir))  fs.mkdirSync(fontsDir,  { recursive: true });
 
+const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
+const ALLOWED_IMAGE_EXTS  = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
+const ALLOWED_FONT_MIMES  = new Set([
+  'font/ttf', 'font/otf', 'font/woff', 'font/woff2',
+  'application/x-font-ttf', 'application/x-font-otf',
+  'application/font-woff', 'application/font-woff2',
+  'application/octet-stream', // một số browser gửi font dạng octet-stream
+]);
+const ALLOWED_FONT_EXTS  = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+
+// Storage tự động chia font / ảnh vào đúng folder
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
+  destination: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, ALLOWED_FONT_EXTS.has(ext) ? fontsDir : uploadDir);
+  },
   filename: (_req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`),
 });
-export const adminUpload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 },
+export const adminUpload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    const ALLOWED_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
-    const ALLOWED_EXTS  = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
-    if (ALLOWED_MIMES.has(file.mimetype) && ALLOWED_EXTS.has(ext)) {
+    const isImage = ALLOWED_IMAGE_MIMES.has(file.mimetype) && ALLOWED_IMAGE_EXTS.has(ext);
+    const isFont  = ALLOWED_FONT_EXTS.has(ext); // trust extension cho font (MIME không đáng tin)
+    if (isImage || isFont) {
       cb(null, true);
     } else {
-      cb(new Error(`File type not allowed: ${file.mimetype} (${ext}). Allowed: PNG, JPG, WEBP, GIF, SVG`));
+      cb(new Error(`File type not allowed: ${file.mimetype} (${ext}). Allowed: PNG, JPG, WEBP, GIF, SVG, TTF, OTF, WOFF, WOFF2`));
     }
   },
 });
@@ -49,10 +65,16 @@ export const validateMagicNumber = async (req: Request, res: Response, next: Nex
   const allFiles = files ? files : (single ? [single] : []);
   if (allFiles.length === 0) return next();
   const ALLOWED_MIMES_SET = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
+  const FONT_EXTS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
   try {
     const { fileTypeFromBuffer } = await import('file-type');
     for (const file of allFiles) {
       const filePath = file.path;
+      const ext = path.extname(file.originalname).toLowerCase();
+
+      // Font files không có magic bytes chuẩn ảnh → skip kiểm tra, đã được validate bởi fileFilter
+      if (FONT_EXTS.has(ext)) continue;
+
       // SVG là XML nên không có magic bytes riêng — kiểm tra XSS trong nội dung
       if (file.mimetype === 'image/svg+xml') {
         const svgContent = fs.readFileSync(filePath, 'utf-8');
@@ -266,6 +288,18 @@ export const updateUserRole = async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Invalid role' });
   }
 
+  // [SECURITY FIX - Privilege Escalation]
+  // Chặn actor gán một role có trọng số >= chính mình.
+  // Ví dụ: Moderator (30) không thể gán 'admin' (50) hay 'moderator' (30) cho ai.
+  // Chỉ Admin (50) mới có thể gán 'moderator' (30) hoặc 'user' (10).
+  const newRoleWeight = getRoleWeight(role);
+  const actorWeight   = getRoleWeight(actorRole);
+  if (newRoleWeight >= actorWeight) {
+    return res.status(403).json({
+      error: `Bạn không thể gán role '${role}' (trọng số ${newRoleWeight}) vì quyền của bạn (${actorRole}) chỉ ở mức ${actorWeight}.`,
+    });
+  }
+
   // [FIX Vấn đề 10] Lấy role hiện tại của Target trước khi kiểm tra thứ bậc
   const target = await db.getOne('SELECT role FROM users WHERE id = $1', [id]);
   if (!target) return res.status(404).json({ error: 'User not found' });
@@ -370,20 +404,29 @@ export const bulkUploadAssets = async (req: Request, res: Response) => {
     const { type = 'image', tags, is_premium = 'false' } = req.body;
     const tagArray = tags ? tags.split(',').map((t: string) => t.trim()) : [];
     const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
-    const baseUrl = `${API_BASE_URL}/assets`;
 
-    // [FIX 4 - SVG Sanitization] Dùng createHTMLPurify để hoạt động trong Node.js với jsdom
-    // Cách cast trực tiếp qua 'any' bược qua type mismatch của DOMPurify khi chạy server-side
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // [FIX 4 - SVG Sanitization]
     const { window: jsdomWindow } = new JSDOM('');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const purify = DOMPurify(jsdomWindow as any);
 
     const inserted: any[] = [];
     for (const file of files) {
-      // [FIX 4 - Layer 2] Sanitize SVG trước khi lưu vào ổ cứng
-      // Regex check trong validateMagicNumber chỉ block <script> đơn giản;
-      // DOMPurify xử lý toàn diện hơn: foreignObject, xlink:href, on* attributes...
+      const ext = path.extname(file.originalname).toLowerCase();
+      const isFont = ALLOWED_FONT_EXTS.has(ext);
+
+      // Bắt buộc file phải khớp với type được khai báo
+      if (type === 'font' && !isFont) {
+        fs.unlinkSync(file.path);
+        return res.status(400).json({ error: `File '${file.originalname}' không phải là font.` });
+      }
+      if (type !== 'font' && isFont) {
+        fs.unlinkSync(file.path);
+        return res.status(400).json({ error: `File '${file.originalname}' là font, nhưng bạn đang chọn loại '${type}'.` });
+      }
+
+      const assetType = type;
+
+      // [FIX 4 - Layer 2] Sanitize SVG
       if (file.mimetype === 'image/svg+xml') {
         const rawSvg = fs.readFileSync(file.path, 'utf-8');
         const cleanSvg = purify.sanitize(rawSvg, {
@@ -392,18 +435,24 @@ export const bulkUploadAssets = async (req: Request, res: Response) => {
           FORBID_ATTR: ['onload', 'onclick', 'onerror', 'onmouseover', 'onfocus', 'onblur'],
           ALLOW_DATA_ATTR: false,
         });
-        // Ghi đè file gốc bằng phiên bản đã sanitize
         fs.writeFileSync(file.path, cleanSvg, 'utf-8');
       }
 
-      const url = `${baseUrl}/${file.filename}`;
+      // Font được serve qua /fonts/, ảnh/sticker qua /assets/
+      const url = isFont
+        ? `${API_BASE_URL}/fonts/${file.filename}`
+        : `${API_BASE_URL}/assets/${file.filename}`;
+
+      // Tên hiển thị: bỏ extension, giữ khoảng trắng/gạch ngang
+      const displayName = file.originalname.replace(/\.[^/.]+$/, '');
+
       const row = await db.getOne(`
         INSERT INTO assets (name, type, url, is_premium, tags, uploaded_by, file_size)
         VALUES ($1, $2, $3, $4, $5, NULL, $6)
         RETURNING *
       `, [
-        file.originalname.split('.')[0],
-        type,
+        displayName,
+        assetType,
         url,
         is_premium === 'true',
         tagArray,
@@ -628,12 +677,29 @@ export const getAdminSubscriptions = async (req: Request, res: Response) => {
 export const createManualSubscription = async (req: Request, res: Response) => {
   try {
     const { user_id, plan_id, days } = req.body;
-    const adminId = (req as any).user.id;
+    const adminId   = (req as any).user.id;
+    const adminRole = (req as any).user?.role;
     if (!user_id || !plan_id) return res.status(400).json({ error: 'user_id and plan_id required' });
 
-    const periodDays = Number(days) || 30;
+    // [SECURITY FIX - Missing Hierarchy Guard]
+    // Kiểm tra role của user sắp được tặng gói. Moderator không thể tặng gói cho Admin.
+    const targetUser = await db.getOne('SELECT role FROM users WHERE id = $1', [user_id]);
+    if (!targetUser) return res.status(404).json({ error: 'Không tìm thấy user' });
+    const check = assertCanActOn(adminId, adminRole, user_id, targetUser.role);
+    if (!check.allowed) return res.status(403).json({ error: check.reason });
+
+    // days phải là số nguyên dương, giới hạn tối đa 3650 ngày (~10 năm) để tránh buff vĩnh viễn
+    const periodDays = Math.min(Math.max(1, Math.floor(Number(days) || 30)), 3650);
     const start = new Date();
     const end = new Date(start.getTime() + periodDays * 24 * 60 * 60 * 1000);
+
+    // [FIX - Pending Payment Conflict] Hủy tất cả giao dịch đang chờ thanh toán của user.
+    // Nếu không làm bước này: Admin tặng gói xong, webhook PayOS về sau vẫn kích hoạt lại
+    // payment cũ → ghi đè subscription mới của Admin, gây xung đột current_period_end.
+    await db.execute(
+      `UPDATE payments SET status = 'canceled' WHERE user_id = $1 AND status = 'pending'`,
+      [user_id]
+    );
 
     // Hủy sub cũ nếu có
     await db.execute(
@@ -707,11 +773,21 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
 export const terminateSubscription = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const adminId = (req as any).user.id;
-    const { ban, reason } = req.query; // ban=true để tịch thu ngay, ngược lại chỉ hủy gia hạn
+    const adminId   = (req as any).user.id;
+    const adminRole = (req as any).user?.role;
+    const { ban, reason } = req.query;
+
+    // [SECURITY FIX - Missing Hierarchy Guard]
+    // Tìm user_id của subscription, sau đó kiểm tra Moderator không được thu hồi gói của Admin.
+    const sub = await db.getOne('SELECT user_id FROM user_subscriptions WHERE id = $1', [id]);
+    if (!sub) return res.status(404).json({ error: 'Không tìm thấy subscription' });
+    const targetUser = await db.getOne('SELECT role FROM users WHERE id = $1', [sub.user_id]);
+    if (targetUser) {
+      const check = assertCanActOn(adminId, adminRole, sub.user_id, targetUser.role);
+      if (!check.allowed) return res.status(403).json({ error: check.reason });
+    }
 
     if (ban === 'true') {
-      // Tịch thu lập tức
       await db.execute(
         `UPDATE user_subscriptions SET status = 'canceled', current_period_end = NOW(), cancel_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [id]
@@ -722,7 +798,6 @@ export const terminateSubscription = async (req: Request, res: Response) => {
         [adminId, 'BAN_SUBSCRIPTION', `Tịch thu gói sub_id=${id} ngay lập tức. Lý do: ${reason || 'Không rõ'}`, hashIp(req.ip)]
       );
     } else {
-      // Hủy gia hạn thông thường (Vẫn cho dùng hết hạn)
       await db.execute(
         `UPDATE user_subscriptions SET status = 'canceled', cancel_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [id]
@@ -1057,29 +1132,34 @@ export const getAdminUsers = async (req: Request, res: Response) => {
     let paramIndex = 1;
 
     if (search) {
-      whereClause += ` AND (email ILIKE $${paramIndex} OR name ILIKE $${paramIndex})`;
+      whereClause += ` AND (u.email ILIKE $${paramIndex} OR u.name ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
       paramIndex++;
     }
     if (status) {
-      whereClause += ` AND status = $${paramIndex}`;
+      whereClause += ` AND u.status = $${paramIndex}`;
       params.push(status);
       paramIndex++;
     }
     if (role) {
-      whereClause += ` AND role = $${paramIndex}`;
+      whereClause += ` AND u.role = $${paramIndex}`;
       params.push(role);
       paramIndex++;
     }
 
-    const countQuery = `SELECT COUNT(*) FROM users ${whereClause}`;
+    const countQuery = `SELECT COUNT(*) FROM users u ${whereClause}`;
     const countResult = await db.getOne(countQuery, params);
 
     const query = `
-      SELECT id, name, email, avatar_url, is_verified, role, status, max_storage_gb, used_storage_bytes, ban_reason, created_at, last_active_at
-      FROM users
+      SELECT u.id, u.name, u.email, u.avatar_url, u.is_verified, u.role, u.status, 
+             COALESCE(sp.max_storage_gb, 5) AS max_storage_gb, 
+             COALESCE(u.storage_used_bytes, 0) AS used_storage_bytes, 
+             u.ban_reason, u.created_at, u.last_active_at
+      FROM users u
+      LEFT JOIN user_subscriptions us ON us.user_id = u.id AND us.status = 'active' AND (us.cancel_at IS NULL OR us.cancel_at > NOW())
+      LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
       ${whereClause}
-      ORDER BY created_at DESC
+      ORDER BY u.created_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
     const usersResult = await db.query(query, [...params, limit, offset]);
@@ -1110,6 +1190,12 @@ export const banUser = async (req: Request, res: Response) => {
     const { reason, status = 'banned' } = req.body;
     const actorId = (req as any).user.id;
     const actorRole = (req as any).user?.role;
+
+    // [SECURITY FIX] Whitelist enum cho status — ngăn hacker gửi status='admin' để leo thang đặc quyền
+    const ALLOWED_STATUSES = ['banned', 'suspended', 'active'];
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Trạng thái không hợp lệ. Chỉ chấp nhận: ${ALLOWED_STATUSES.join(', ')}` });
+    }
 
     // [FIX Vấn đề 10] Lấy role của Target để kiểm tra thứ bậc
     const target = await db.getOne('SELECT role FROM users WHERE id = $1', [id]);
@@ -1154,45 +1240,148 @@ export const banUser = async (req: Request, res: Response) => {
   }
 };
 
-export const updateUserQuota = async (req: Request, res: Response) => {
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEAM MANAGEMENT (Admin)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── GET /api/admin/teams ────────────────────────────────────────────────────
+// Admin xem TẤT CẢ team (kể cả bị ban/xóa). Filter theo status: active | deleted
+export const getAdminTeams = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const { role, max_storage_gb } = req.body;
-    const actorId = (req as any).user.id;
-    const actorRole = (req as any).user?.role;
+    const { page = 1, limit = 20, search = '', status = '' } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
+    const params: any[] = [];
 
-    // [FIX Vấn đề 10] Lấy role hiện tại của Target để kiểm tra thứ bậc
-    const target = await db.getOne(`SELECT role FROM users WHERE id = $1`, [id]);
-    if (!target) return res.status(404).json({ error: 'User not found' });
+    // Chỉ lấy Team thực sự (bỏ Personal Workspace có max_members=1)
+    let where = 'WHERE t.max_members > 1';
 
-    // Hierarchy Assertion thay thế hoàn toàn guard self-action cũ
-    const check = assertCanActOn(actorId, actorRole, id, target.role);
-    if (!check.allowed) return res.status(403).json({ error: check.reason });
-
-    // Chỉ cho phép set vai trò 'admin' hoặc 'user'
-    if (role !== undefined && !['user', 'admin'].includes(role)) {
-      return res.status(400).json({ error: 'Chỉ được phép phân quyền user hoặc admin!' });
+    if (search) {
+      params.push(`%${search}%`);
+      where += ` AND (t.name ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
     }
+    // Filter theo trạng thái: deleted = bị ban/xóa, active = đang hoạt động
+    if (status === 'deleted') {
+      where += ` AND t.is_deleted = true`;
+    } else if (status === 'active') {
+      where += ` AND t.is_deleted = false`;
+    }
+    // Không filter (mặc định) → hiển thị tất cả
 
-    const currentRole = target.role;
+    params.push(Number(limit), offset);
 
-    // Cập nhật role + quota
-    await db.execute(
-      `UPDATE users SET role = $1, max_storage_gb = $2 WHERE id = $3`,
-      [role, max_storage_gb, id]
+    const result = await db.query(`
+      SELECT
+        t.id, t.name, t.avatar_url, t.max_members,
+        t.is_deleted, t.deleted_at,
+        t.used_storage_bytes, 
+        COALESCE(sp.max_storage_gb, 5) AS max_storage_gb, 
+        t.created_at,
+        t.owner_id, u.name AS owner_name, u.email AS owner_email,
+        (SELECT COUNT(*)::int FROM team_members WHERE team_id = t.id) AS member_count,
+        (SELECT COUNT(*)::int FROM designs WHERE team_id = t.id AND is_deleted = false) AS design_count,
+        us.status AS sub_status, us.current_period_end,
+        sp.name AS plan_name, sp.slug AS plan_slug
+      FROM teams t
+      JOIN users u ON u.id = t.owner_id
+      LEFT JOIN user_subscriptions us ON us.user_id = t.owner_id AND us.status = 'active'
+        AND (us.cancel_at IS NULL OR us.cancel_at > NOW())
+      LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+      ${where}
+      ORDER BY t.is_deleted ASC, t.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params);
+
+    const countRes = await db.getOne(
+      `SELECT COUNT(*)::int AS total FROM teams t JOIN users u ON u.id = t.owner_id ${where}`,
+      params.slice(0, params.length - 2)
     );
 
-    // Ghi audit log
-    // [FIX Vấn đề 18] hashIp() — GDPR compliance
-    await db.execute(
-      `INSERT INTO admin_audit_logs (actor_id, target_id, action_type, description, ip_address)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [actorId, id, 'UPDATE_QUOTA_ROLE', `Cập nhật role: ${currentRole} → ${role}, dung lượng: ${max_storage_gb}GB`, hashIp(req.ip)]
-    );
-
-    res.json({ success: true, message: 'Cập nhật thông tin thành công' });
+    res.json({ teams: result?.rows || [], total: countRes?.total || 0, page: Number(page), limit: Number(limit) });
   } catch (err) {
-    console.error('updateUserQuota error:', err);
+    console.error('getAdminTeams error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+// ─── GET /api/admin/teams/:id ─────────────────────────────────────────────────
+// Admin có thể xem chi tiết cả team đang bị is_deleted (không thêm WHERE is_deleted=false)
+export const getAdminTeamDetail = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const team = await db.getOne(`
+      SELECT t.*, u.name AS owner_name, u.email AS owner_email,
+        us.status AS sub_status, us.current_period_end,
+        sp.name AS plan_name, sp.max_storage_gb AS plan_storage_gb,
+        (SELECT COUNT(*)::int FROM team_members WHERE team_id = t.id) AS member_count,
+        (SELECT COUNT(*)::int FROM designs WHERE team_id = t.id AND is_deleted = false) AS design_count
+      FROM teams t
+      JOIN users u ON u.id = t.owner_id
+      LEFT JOIN user_subscriptions us ON us.user_id = t.owner_id AND us.status = 'active'
+      LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+      WHERE t.id = $1
+    `, [id]);
+    if (!team) return res.status(404).json({ error: 'Team không tồn tại' });
+
+    team.max_storage_gb = Number(team.plan_storage_gb) || 5;
+
+    const members = await db.query(`
+      SELECT u.id, u.name, u.email, u.avatar_url, tm.role, tm.created_at AS joined_at
+      FROM team_members tm
+      JOIN users u ON u.id = tm.user_id
+      WHERE tm.team_id = $1
+      ORDER BY CASE tm.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END
+      LIMIT 50
+    `, [id]);
+
+    res.json({ team, members: members.rows });
+  } catch (err) {
+    console.error('getAdminTeamDetail error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// ─── POST /api/admin/teams/:id/ban ────────────────────────────────────────────
+// Dùng is_deleted để "ban" (vô hiệu hóa) team thay vì thêm cột mới.
+// is_deleted = true  → team bị khóa, thành viên không thể truy cập
+// is_deleted = false → mở khóa, team hoạt động trở lại
+export const banTeam = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { banned, reason } = req.body;  // banned: boolean
+    const adminId = (req as any).user.id;
+
+    // Lấy bất kỳ team nào (kể cả đang bị xóa) để admin có thể restore
+    const team = await db.getOne('SELECT id, name, is_deleted FROM teams WHERE id = $1', [id]);
+    if (!team) return res.status(404).json({ error: 'Team không tồn tại' });
+
+    if (banned) {
+      // Khóa team: set is_deleted = true + ghi thời điểm + lý do vào deleted_at
+      await db.execute(
+        `UPDATE teams SET is_deleted = true, deleted_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+    } else {
+      // Mở khóa: restore lại team
+      await db.execute(
+        `UPDATE teams SET is_deleted = false, deleted_at = NULL, updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+    }
+
+    await db.execute(
+      `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
+       VALUES ($1, $2, $3, $4)`,
+      [adminId, banned ? 'BAN_TEAM' : 'UNBAN_TEAM',
+       `${banned ? 'Khóa (is_deleted=true)' : 'Mở khóa (is_deleted=false)'} team "${team.name}" (id=${id}). Lý do: ${reason || 'Không rõ'}`,
+       hashIp(req.ip)]
+    );
+
+    res.json({ success: true, message: banned ? 'Đã khóa team' : 'Đã mở khóa và khôi phục team' });
+  } catch (err) {
+    console.error('banTeam error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import db from '../config/db';
+import { globalIo } from '../sockets/collaboration';
 
 // =============================================
 // GET /api/designs/:id/shares
@@ -129,6 +130,10 @@ export const updateShareRole = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Không tìm thấy bản ghi chia sẻ này' });
     }
 
+    if (globalIo) {
+      globalIo.to(`user-${userId}`).emit('design:access_revoked', { designId: id });
+    }
+
     res.json({ message: 'Cập nhật quyền thành công' });
   } catch (error) {
     console.error('Update Share Role Error:', error);
@@ -152,6 +157,11 @@ export const removeShare = async (req: Request, res: Response) => {
       'DELETE FROM design_shares WHERE design_id = $1 AND user_id = $2',
       [id, userId]
     );
+
+    if (globalIo) {
+      globalIo.to(`user-${userId}`).emit('design:access_revoked', { designId: id });
+    }
+
     res.json({ message: 'Đã gỡ quyền truy cập' });
   } catch (error) {
     console.error('Remove Share Error:', error);
@@ -177,6 +187,11 @@ export const togglePublicLink = async (req: Request, res: Response) => {
 
   try {
     await db.query('UPDATE designs SET is_public = $1 WHERE id = $2', [is_public, id]);
+    
+    if (is_public === false && globalIo) {
+      globalIo.to(`design:${id}`).emit('design:public_link_revoked');
+    }
+
     res.json({ message: 'Cập nhật trạng thái public thành công', is_public });
   } catch (error) {
     console.error('Toggle Public Link Error:', error);

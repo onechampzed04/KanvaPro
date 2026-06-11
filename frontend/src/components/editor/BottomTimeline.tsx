@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Maximize2, Minimize2, Music, ZoomIn, Plus, Type, Image as ImageIcon, Zap, Grid2X2, X } from 'lucide-react';
 
 export default function BottomTimeline(props: any) {
-  const { pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, updatePage, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime, onOpenTransition, onReorder, showGridView, setShowGridView } = props;
+  const { pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, updatePage, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime, onOpenTransition, onReorder, showGridView, setShowGridView, activeUsers = [], userPageMap = new Map() } = props;
 
   const [viewMode, setViewMode] = useState<'thumbnail' | 'timeline'>('thumbnail');
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -37,6 +37,7 @@ export default function BottomTimeline(props: any) {
 
   // --- LOGIC KÉO THẢ TRANG Ở CHẾ ĐỘ NORMAL ---
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIdx(index);
@@ -45,9 +46,14 @@ export default function BottomTimeline(props: any) {
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    if (dragOverIdx !== index) setDragOverIdx(index);
+  };
+  const handleDragLeave = (e: React.DragEvent, index: number) => {
+    if (dragOverIdx === index) setDragOverIdx(null);
   };
   const handleDrop = (e: React.DragEvent, index: number) => {
     e.preventDefault();
+    setDragOverIdx(null);
     if (draggedIdx !== null && draggedIdx !== index) {
       if (reorderPages) {
         reorderPages(draggedIdx, index);
@@ -192,7 +198,7 @@ export default function BottomTimeline(props: any) {
 
   return (
     <div
-      className={`border-t flex flex-col shadow-sm backdrop-blur-xl relative ${viewMode === 'timeline' ? 'bg-white/90 border-white/60' : 'h-36 bg-white/70 border-white/60 transition-all duration-300'}`}
+      className={`border-t flex flex-col shadow-sm backdrop-blur-xl relative ${viewMode === 'timeline' ? 'bg-white/90 border-white/60' : 'h-32 bg-white/70 border-white/60 transition-all duration-300'}`}
       style={viewMode === 'timeline' ? { height: `${timelineHeight}px` } : {}}
     >
       {viewMode === 'timeline' && (
@@ -211,10 +217,6 @@ export default function BottomTimeline(props: any) {
         <div className="flex items-center gap-4 text-slate-700">
           {designType === 'presentation' && (
             <>
-              <button onClick={() => { setIsPlaying(!isPlaying); if (currentTime >= totalDuration) setCurrentTime(0); }} className="hover:text-indigo-500 transition w-6 flex justify-center">
-                {isPlaying ? <Pause size={16} /> : <Play size={16} className="fill-current" />}
-              </button>
-              <span className="text-xs font-bold font-mono tracking-wider w-16 opacity-80">00:{(Number(currentTime) || 0).toFixed(1).padStart(4, '0')}</span>
               {viewMode === 'timeline' && (
                 <div className="flex items-center gap-2 ml-4">
                   <ZoomIn size={14} className="text-slate-400" />
@@ -235,12 +237,6 @@ export default function BottomTimeline(props: any) {
             <Grid2X2 size={12} /> Grid View
           </button>
 
-          {/* Nút bật/tắt Timeline chỉ dành cho Presentation */}
-          {designType === 'presentation' && (
-            <button onClick={() => setViewMode(viewMode === 'thumbnail' ? 'timeline' : 'thumbnail')} className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded transition ${viewMode === 'timeline' ? 'bg-indigo-100 hover:bg-indigo-200 text-indigo-700' : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 shadow-sm'}`}>
-              {viewMode === 'thumbnail' ? <><Maximize2 size={12} /> Timeline Mode</> : <><Minimize2 size={12} /> Normal Mode</>}
-            </button>
-          )}
         </div>
       </div>
 
@@ -258,16 +254,22 @@ export default function BottomTimeline(props: any) {
               <React.Fragment key={page.id}>
                 {/* 1. KHỐI HIỂN THỊ THUMBNAIL PAGE */}
                 <div
-                  className="flex flex-col items-center gap-2 shrink-0 relative group"
+                  className={`flex flex-col items-center gap-2 shrink-0 relative group transition-all duration-200 ${draggedIdx === index ? 'opacity-40 scale-95' : 'opacity-100'}`}
                   draggable
                   onDragStart={(e) => handleDragStart(e, index)}
                   onDragOver={(e) => handleDragOver(e, index)}
+                  onDragLeave={(e) => handleDragLeave(e, index)}
                   onDrop={(e) => handleDrop(e, index)}
+                  onDragEnd={() => { setDraggedIdx(null); setDragOverIdx(null); }}
                 >
+                  {/* VISUAL INDICATOR */}
+                  {dragOverIdx === index && draggedIdx !== index && (
+                    <div className={`absolute top-0 bottom-6 w-1.5 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.8)] z-50 transition-all ${index > draggedIdx ? '-right-4' : '-left-4'}`} />
+                  )}
                   <button
                     onClick={() => handlePageChange(page.id)}
-                    className={`relative w-32 h-20 bg-white shadow-sm border-2 transition overflow-hidden rounded-md ${isActive ? 'border-indigo-600 ring-2 ring-indigo-200' : 'border-transparent hover:border-slate-400'
-                      } ${draggedIdx === index ? 'opacity-50' : 'opacity-100'}`}
+                    className={`relative w-24 h-16 bg-white shadow-sm border-2 transition-all duration-200 overflow-hidden rounded-md ${isActive ? 'border-indigo-600 ring-2 ring-indigo-200' : 'border-transparent hover:border-slate-400'
+                      } ${dragOverIdx === index && draggedIdx !== index ? (index > draggedIdx ? 'translate-x-[-4px]' : 'translate-x-[4px]') : ''}`}
                   >
                     <span className="absolute top-1 left-1 bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded opacity-70 z-10">{index + 1}</span>
                     {page.thumbnail ? (
@@ -275,8 +277,22 @@ export default function BottomTimeline(props: any) {
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400 font-medium">Empty Page</div>
                     )}
-                    {designType === 'presentation' && (
-                      <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[8px] font-bold px-1 rounded">{page.duration || 5}s</span>
+                    {/* Hiển thị avatar của các user đang ở trang này */}
+                    {activeUsers && userPageMap && (
+                      <div className="absolute top-1 right-1 flex -space-x-1 z-20">
+                        {activeUsers
+                          .filter((u: any) => userPageMap.get(u.userId) === page.id)
+                          .map((u: any) => (
+                            <div
+                              key={u.userId}
+                              className="w-4 h-4 rounded-full border border-white flex items-center justify-center text-[8px] font-bold text-white shadow-sm"
+                              style={{ backgroundColor: u.avatarColor }}
+                              title={u.name}
+                            >
+                              {u.name.charAt(0).toUpperCase()}
+                            </div>
+                          ))}
+                      </div>
                     )}
                   </button>
                   {pages.length > 1 && deletePage && (
@@ -432,7 +448,6 @@ export default function BottomTimeline(props: any) {
                       <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400 font-bold bg-white pointer-events-none">Page {idx + 1}</div>
                     )}
                     <span className="absolute bottom-0 left-1 text-[8px] font-bold text-white bg-black/50 px-1 pointer-events-none">{idx + 1}</span>
-                    <span className="absolute top-1 left-1 text-[8px] font-bold text-white bg-black/50 px-1 pointer-events-none">{Number(page.duration || 5).toFixed(1)}s</span>
 
                     {/* Resize Right Handle */}
                     <div

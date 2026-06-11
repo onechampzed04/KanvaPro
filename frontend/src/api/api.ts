@@ -52,6 +52,10 @@ export const uploadImageFile = async (file: File): Promise<{ url: string; assetI
     const err = await response.json().catch(() => ({}));
     throw new Error(err.message || err.error || 'Failed to upload image');
   }
+  
+  // Phát sự kiện để cập nhật thanh dung lượng ở frontend (real-time không cần F5)
+  window.dispatchEvent(new Event('storage:updated'));
+  
   return response.json(); // Trả về { url, assetId, name, width, height }
 };
 
@@ -84,7 +88,7 @@ export const uploadPageThumbnail = async (blob: Blob, pageId: string): Promise<s
 // 1. Lấy danh sách thiết kế
 export const fetchDesigns = async (tab: string = 'my_designs') => {
   const response = await fetch(`${BASE_URL}/designs/my?tab=${tab}`, {
-    headers: getHeaders()
+    headers: getWorkspaceHeaders()
   });
   if (!response.ok) throw new Error('Failed to fetch designs');
   return response.json();
@@ -97,11 +101,11 @@ export const createDesign = async (designData: {
   page_type: string,
   width: number | null,
   height: number | null,
-  team_id?: string
+  team_id?: string | null
 }) => {
   const response = await fetch(`${BASE_URL}/designs`, {
     method: 'POST',
-    headers: getHeaders(),
+    headers: getWorkspaceHeaders(),
     body: JSON.stringify(designData),
   });
 
@@ -547,22 +551,6 @@ export const transferTeamOwnership = async (teamId: string, newOwnerId: string) 
 };
 
 // ─── ASSET VIRTUAL REFERENCING APIs ──────────────────────────────────────────
-
-/**
- * Tạo Bản ghi B (clone) khi user kéo ảnh từ Uploads Sidebar vào Canvas.
- * Ảnh trên Canvas sẽ tồn tại độc lập với ảnh trong thư viện Upload.
- */
-export const cloneAssetForDesign = async (assetId: string, designId: string) => {
-  const token = localStorage.getItem('token');
-  const res = await fetch('/api/assets/clone-for-design', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    body: JSON.stringify({ assetId, designId }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Không thể nhân bản asset');
-  return data; // { clonedAssetId, url }
-};
 
 /**
  * Xóa Bản ghi A (ảnh khỏi thư viện Uploads).

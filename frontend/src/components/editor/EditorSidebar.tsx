@@ -1,22 +1,22 @@
 // src/components/editor/EditorSidebar.tsx
 import React from 'react';
-import { Square, ImageIcon, Type, Upload, Search, Sparkles, Layers } from 'lucide-react';
+import { Square, ImageIcon, Type, Search, Sparkles, Layers, PenTool } from 'lucide-react';
 
 interface EditorSidebarProps {
   activeTab: string | null;
   setActiveTab: (tab: string | null) => void;
   currentPageType: string;
-  handleFontUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  showLayerPanel?: boolean;
-  onToggleLayerPanel?: () => void;
+  showPositionBox?: boolean;
+  onTogglePositionBox?: () => void;
 }
 
 export default function EditorSidebar({
-  activeTab, setActiveTab, currentPageType, handleFontUpload, showLayerPanel, onToggleLayerPanel
+  activeTab, setActiveTab, currentPageType, showPositionBox, onTogglePositionBox
 }: EditorSidebarProps) {
   const isCanvas = currentPageType === 'canvas';
 
   const tabs = [
+    { id: 'tools', icon: PenTool, label: 'Tools', show: isCanvas },
     { id: 'elements', icon: Square, label: 'Elements', show: isCanvas },
     { id: 'uploads', icon: ImageIcon, label: 'Uploads', show: true },
     { id: 'text', icon: Type, label: 'Text', show: true },
@@ -30,12 +30,10 @@ export default function EditorSidebar({
           <button
             key={tab.id}
             onClick={() => setActiveTab(activeTab === tab.id ? null : tab.id)}
-            onMouseEnter={() => setActiveTab(tab.id)}
-            className={`w-14 h-14 flex flex-col items-center justify-center gap-1 rounded-xl transition-all duration-200 group ${
-              activeTab === tab.id
-                ? 'bg-pink-100 text-pink-600 shadow-sm border border-pink-200'
-                : 'hover:bg-white/80 hover:text-indigo-500 hover:shadow-sm hover:scale-105'
-            }`}
+            className={`w-14 h-14 flex flex-col items-center justify-center gap-1 rounded-xl transition-all duration-200 group ${activeTab === tab.id
+              ? 'bg-pink-100 text-pink-600 shadow-sm border border-pink-200'
+              : 'hover:bg-white/80 hover:text-indigo-500 hover:shadow-sm hover:scale-105'
+              }`}
           >
             <tab.icon size={22} strokeWidth={2.5} />
             <span className="text-[10px] font-extrabold uppercase tracking-tighter">{tab.label}</span>
@@ -48,25 +46,17 @@ export default function EditorSidebar({
         {/* Layer Panel Toggle */}
         {isCanvas && (
           <button
-            onClick={onToggleLayerPanel}
-            className={`w-14 h-14 flex flex-col items-center justify-center gap-1 rounded-xl transition-all duration-200 group ${
-              showLayerPanel
+            onClick={onTogglePositionBox}
+            className={`w-14 h-14 flex flex-col items-center justify-center gap-1 rounded-xl transition-all duration-200 group ${showPositionBox
                 ? 'bg-indigo-100 text-indigo-600 shadow-sm border border-indigo-200'
-                : 'hover:bg-white/80 hover:text-indigo-500 hover:shadow-sm hover:scale-105'
-            }`}
+              : 'hover:bg-white/80 hover:text-indigo-500 hover:shadow-sm hover:scale-105'
+              }`}
             title="Layer Panel"
           >
             <Layers size={22} strokeWidth={2.5} />
             <span className="text-[10px] font-extrabold uppercase tracking-tighter">Layers</span>
           </button>
         )}
-
-        {/* Font Upload */}
-        <label className="w-14 h-14 flex flex-col items-center justify-center gap-1 cursor-pointer hover:bg-white/80 hover:text-indigo-500 hover:shadow-sm rounded-xl mt-auto mb-2 transition-all hover:scale-105">
-          <Upload size={20} strokeWidth={2.5} />
-          <span className="text-[10px] font-extrabold text-center uppercase">Font</span>
-          <input type="file" accept=".ttf,.otf" onChange={handleFontUpload} className="hidden" />
-        </label>
       </div>
     </div>
   );

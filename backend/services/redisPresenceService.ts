@@ -24,6 +24,7 @@ export interface CollaboratorInfo {
   socketId: string;
   joinedAt: number;
   role: 'owner' | 'editor' | 'commenter' | 'viewer'; // [SECURITY FIX] Track role for RBAC
+  activePageId?: string; // Track which page they are currently viewing
 }
 
 export interface LockInfo {
@@ -63,6 +64,24 @@ export const RedisPresenceService = {
     } else {
       memRooms.get(designId)?.delete(socketId);
       if (memRooms.get(designId)?.size === 0) memRooms.delete(designId);
+    }
+  },
+
+  async updateCollaboratorPage(designId: string, socketId: string, pageId: string): Promise<void> {
+    const redis = getRedis();
+    if (redis) {
+      const key = `design:${designId}:collaborators`;
+      const raw = await redis.hGet(key, socketId);
+      if (raw) {
+        const info = JSON.parse(raw) as CollaboratorInfo;
+        info.activePageId = pageId;
+        await redis.hSet(key, socketId, JSON.stringify(info));
+      }
+    } else {
+      const info = memRooms.get(designId)?.get(socketId);
+      if (info) {
+        info.activePageId = pageId;
+      }
     }
   },
 

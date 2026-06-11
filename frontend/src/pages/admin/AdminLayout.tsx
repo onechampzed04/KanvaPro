@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useEffect } from 'react';
 import {
   LayoutDashboard, Users, Images, LayoutTemplate,
-  LogOut, Shield, ChevronRight, Zap, CreditCard, ArrowLeft
+  LogOut, Shield, ChevronRight, Zap, CreditCard, ArrowLeft, Users2
 } from 'lucide-react';
 import './admin.css';
 
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { to: '/admin/assets', label: 'Asset Library', icon: Images },
   { to: '/admin/templates', label: 'Templates', icon: LayoutTemplate },
   { to: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCard },
+  { to: '/admin/teams', label: 'Teams', icon: Users2 },
 ];
 
 export default function AdminLayout() {

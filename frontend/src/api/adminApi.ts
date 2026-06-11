@@ -22,14 +22,7 @@ export const fetchAdminUsersV2 = async (params: {
   return res.json();
 };
 
-export const updateUserQuotaV2 = async (userId: string, role: string, max_storage_gb: number) => {
-  const res = await fetch(`/api/admin/users-v2/${userId}/quota`, {
-    method: 'PUT', headers: getHeaders(),
-    body: JSON.stringify({ role, max_storage_gb }),
-  });
-  if (!res.ok) throw new Error('Failed to update quota and role');
-  return res.json();
-};
+
 
 export const banUserV2 = async (userId: string, status: string, reason: string) => {
   const res = await fetch(`/api/admin/users-v2/${userId}/ban`, {

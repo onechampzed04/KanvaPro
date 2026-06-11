@@ -80,8 +80,8 @@ export const authService = {
          t.avatar_url,
          t.owner_id,
          t.max_members,
-         t.used_storage_bytes,
-         t.max_storage_gb,
+         CASE WHEN t.max_members = 1 THEN u.storage_used_bytes ELSE t.used_storage_bytes END AS used_storage_bytes,
+         COALESCE(sp.max_storage_gb, 5) AS max_storage_gb,
          tm.role AS my_role,
          CASE WHEN t.max_members = 1 AND t.owner_id = $1 THEN 'personal' ELSE 'team' END AS workspace_type,
          (SELECT COUNT(*) FROM team_members WHERE team_id = t.id)::int AS member_count,
@@ -93,15 +93,22 @@ export const authService = {
          sp.max_storage_gb AS plan_storage_gb,
          sp.max_team_members AS plan_max_members,
          CASE 
-           WHEN us.status = 'active' AND us.current_period_end > NOW() THEN true
+           WHEN us.status = 'active' AND us.current_period_end > NOW() THEN
+             CASE 
+               WHEN t.max_members = 1 AND t.owner_id = $1 THEN true
+               WHEN sp.max_team_members > 1 THEN true
+               ELSE false
+             END
            ELSE false
          END AS is_pro
        FROM teams t
+       JOIN users u ON u.id = t.owner_id
        JOIN team_members tm ON tm.team_id = t.id AND tm.user_id = $1
        -- [FIX Billing] Join theo owner_id vì subscription gắn với User, không phải Team
        LEFT JOIN user_subscriptions us ON us.user_id = t.owner_id AND us.status = 'active'
          AND (us.cancel_at IS NULL OR us.cancel_at > NOW())
        LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+       WHERE t.is_deleted = false
        ORDER BY workspace_type ASC, t.created_at ASC`,
       [userId]
     );

@@ -335,19 +335,6 @@ export default function CropOverlay({ element, onApply, onCancel, onReset }: Cro
             <RotateCcw size={13} /> Reset
           </button>
           <button
-            onClick={onCancel}
-            style={{
-              flex: 1, padding: '10px 16px', borderRadius: 10,
-              border: '1px solid rgba(255,255,255,0.1)',
-              background: 'rgba(255,255,255,0.05)', color: '#94a3b8',
-              fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
-            }}
-            onMouseOver={e => { e.currentTarget.style.color = '#f1f5f9'; }}
-            onMouseOut={e => { e.currentTarget.style.color = '#94a3b8'; }}
-          >
-            Hủy
-          </button>
-          <button
             onClick={() => onApply(crop)}
             style={{
               flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,

@@ -41,6 +41,12 @@ function applyCommand(elements: any[], command: CommandAction, direction: 'undo'
   switch (command.type) {
     case 'UPDATE': {
       const patch = direction === 'undo' ? command.before : command.after;
+      
+      const currentEl = elements.find(el => el.id === command.elementId);
+      if (!currentEl) {
+        throw new Error('SYNC_CONFLICT');
+      }
+
       return elements.map(el =>
         el.id === command.elementId ? { ...el, ...patch } : el
       );
@@ -137,9 +143,19 @@ export function useCommandHistory() {
     const command = undoStack.current.pop()!;
     redoStack.current.push(command);
     isApplyingRef.current = true;
-    const result = applyCommand(currentElements, command, 'undo');
-    isApplyingRef.current = false;
-    return result;
+    try {
+      const result = applyCommand(currentElements, command, 'undo');
+      isApplyingRef.current = false;
+      return result;
+    } catch (err: any) {
+      isApplyingRef.current = false;
+      if (err.message === 'SYNC_CONFLICT') {
+        alert('Không thể hoàn tác do phần tử này đã bị thay đổi hoặc xóa bởi người khác (Xung đột đồng bộ).');
+        redoStack.current.pop(); // Remove from redo since it failed
+        return currentElements;
+      }
+      throw err;
+    }
   }, []);
 
   /**
@@ -150,9 +166,19 @@ export function useCommandHistory() {
     const command = redoStack.current.pop()!;
     undoStack.current.push(command);
     isApplyingRef.current = true;
-    const result = applyCommand(currentElements, command, 'redo');
-    isApplyingRef.current = false;
-    return result;
+    try {
+      const result = applyCommand(currentElements, command, 'redo');
+      isApplyingRef.current = false;
+      return result;
+    } catch (err: any) {
+      isApplyingRef.current = false;
+      if (err.message === 'SYNC_CONFLICT') {
+        alert('Không thể tiến tác do phần tử này đã bị thay đổi hoặc xóa bởi người khác.');
+        undoStack.current.pop();
+        return currentElements;
+      }
+      throw err;
+    }
   }, []);
 
   const canUndo = () => undoStack.current.length > 0;

@@ -17,17 +17,21 @@ export const createDesign = async (req: Request, res: Response) => {
     // Thêm page_type vào req.body
     const { title, width, height, design_type, page_type, team_id } = req.body;
     const userId = (req as any).user?.id;
+    const workspaceId = req.headers['x-workspace-id'] as string;
+    
+    // Nếu tạo từ Dashboard, frontend có thể không gửi team_id mà gửi qua X-Workspace-Id
+    const finalTeamId = team_id || (workspaceId && workspaceId !== 'personal' ? workspaceId : null);
 
     try {
         // [SECURITY FIX - Missing Validation]
-        // Nếu có team_id, phải xác nhận userId thực sự là thành viên của team đó.
+        // Nếu có finalTeamId, phải xác nhận userId thực sự là thành viên của team đó.
         // Ngăn tài khoản bất kỳ tạo design "ké" vào team Pro của người khác.
-        if (team_id) {
+        if (finalTeamId) {
             const memberCheck = await db.query(
                 `SELECT 1 FROM team_members tm
                  JOIN teams t ON t.id = tm.team_id
                  WHERE tm.team_id = $1 AND tm.user_id = $2 AND t.is_deleted = false`,
-                [team_id, userId]
+                [finalTeamId, userId]
             );
             if (memberCheck.rows.length === 0) {
                 return res.status(403).json({
@@ -46,7 +50,7 @@ export const createDesign = async (req: Request, res: Response) => {
             height: height || 1080,
             design_type: design_type || 'presentation',
             page_type: page_type || 'canvas',
-            team_id: team_id || null
+            team_id: finalTeamId || null
         });
 
         res.status(201).json({ id, message: 'Design created successfully' });
@@ -59,14 +63,15 @@ export const createDesign = async (req: Request, res: Response) => {
 export const getUserDesigns = async (req: Request, res: Response) => {
     const userId = (req as any).user?.id;
     const tab = req.query.tab as string;
+    const workspaceId = req.headers['x-workspace-id'] as string;
 
     try {
         let result;
         if (tab === 'shared') {
-            result = await designService.getSharedDesigns(userId);
+            result = await designService.getSharedDesigns(userId, workspaceId);
         } else if (tab === 'all') {
-            const myDesigns = await designService.getUserDesigns(userId);
-            const sharedDesigns = await designService.getSharedDesigns(userId);
+            const myDesigns = await designService.getUserDesigns(userId, workspaceId);
+            const sharedDesigns = await designService.getSharedDesigns(userId, workspaceId);
             const map = new Map();
             myDesigns.forEach(d => map.set(d.id, d));
             sharedDesigns.forEach(d => {
@@ -74,7 +79,7 @@ export const getUserDesigns = async (req: Request, res: Response) => {
             });
             result = Array.from(map.values()).sort((a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
         } else {
-            result = await designService.getUserDesigns(userId);
+            result = await designService.getUserDesigns(userId, workspaceId);
         }
         res.json({ designs: result });
     } catch (error) {
@@ -117,9 +122,23 @@ export const getDesignMeta = async (req: Request, res: Response) => {
 };
 
 // === FIX #4: LAZY LOADING - LẤY ELEMENTS CỦA MỘT TRANG ===
+// [SECURITY FIX - IDOR] Verify rằng pageId PHẢI thuộc về designId trong URL.
+// Nếu không check: Alice dùng designId của mình + pageId của Bob → đọc trộm data.
 export const getPageElements = async (req: Request, res: Response) => {
-    const { pageId } = req.params;
+    const { id: designId, pageId } = req.params;
     try {
+        // Bước 1: Xác minh ownership — pageId phải thuộc đúng designId
+        const pageCheck = await db.query(
+            `SELECT id FROM design_pages WHERE id = $1 AND design_id = $2 AND is_deleted = false`,
+            [pageId, designId]
+        );
+        if (pageCheck.rows.length === 0) {
+            // Trả 404 thay vì 403 để tránh kẻ tấn công phân biệt được
+            // "trang không tồn tại" vs "trang tồn tại nhưng không thuộc design này"
+            return res.status(404).json({ error: 'Trang không tồn tại trong thiết kế này' });
+        }
+
+        // Bước 2: Lấy elements sau khi đã xác minh ownership
         const elements = await designPageService.getElementsByPageId(pageId);
         res.json({ pageId, elements });
     } catch (error) {
@@ -140,6 +159,21 @@ export const updateDesign = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Save error:", error);
         res.status(500).json({ error: "Failed to save design" });
+    }
+};
+
+export const renameDesign = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { title } = req.body;
+    if (!title || title.trim() === '') {
+        return res.status(400).json({ error: "Tên thiết kế không được để trống" });
+    }
+    try {
+        await db.execute('UPDATE designs SET title = $1, updated_at = NOW() WHERE id = $2', [title.trim(), id]);
+        res.json({ success: true, message: "Đã đổi tên thiết kế" });
+    } catch (error) {
+        console.error("Rename design error:", error);
+        res.status(500).json({ error: "Lỗi đổi tên thiết kế" });
     }
 };
 
@@ -210,6 +244,7 @@ export const getRecentStickers = async (req: Request, res: Response) => {
         const query = `
             SELECT 
                 de.properties->>'src' as url,
+                COALESCE(BOOL_OR((de.properties->>'is_premium')::boolean), false) as is_premium,
                 MAX(de.updated_at) as last_used
             FROM design_elements de
             JOIN design_pages dp ON de.page_id = dp.id
@@ -217,6 +252,7 @@ export const getRecentStickers = async (req: Request, res: Response) => {
             WHERE d.user_id = $1 
               AND de.properties->>'src' IS NOT NULL
               AND de.properties->>'src' != ''
+              AND de.properties->>'src' NOT LIKE '%/uploads/images/pptx_%'
             GROUP BY de.properties->>'src'
             ORDER BY last_used DESC
             LIMIT $2 OFFSET $3
@@ -228,7 +264,9 @@ export const getRecentStickers = async (req: Request, res: Response) => {
             FROM design_elements de
             JOIN design_pages dp ON de.page_id = dp.id
             JOIN designs d ON dp.design_id = d.id
-            WHERE d.user_id = $1 AND de.properties->>'src' IS NOT NULL
+            WHERE d.user_id = $1 
+              AND de.properties->>'src' IS NOT NULL
+              AND de.properties->>'src' NOT LIKE '%/uploads/images/pptx_%'
         `;
 
         const result = await db.query(query, [userId, limit, offset]);
@@ -489,20 +527,52 @@ export const emptyTrash = async (req: Request, res: Response) => {
                 [userId]
             );
 
-            // Bước 4: Với mỗi asset cuối cùng trỏ tới file đó → trừ quota ngay
-            const { decrementStorageUsage } = await import('../middleware/checkStorageQuota.js');
+            // Bước 4: Gom tổng dung lượng theo từng chủ sở hữu, rồi UPDATE 1 lần mỗi nhóm.
+            // [FIX Race Condition] Không dùng vòng for tuần tự (nếu 1 fail thì quota bị treo).
+            // Thay bằng: aggregate Map → Promise.allSettled để các UPDATE chạy song song,
+            // 1 cái fail không ảnh hưởng các cái khác. GC sẽ sync lại nếu vẫn còn lệch.
+
+            // Gom bytes: key = "user:<id>" hoặc "team:<id>"
+            const bytesByOwner = new Map<string, { type: 'user' | 'team'; id: string; bytes: number }>();
             for (const asset of orphanAssets.rows) {
-                try {
-                    await decrementStorageUsage(
-                        asset.uploaded_by,
-                        Number(asset.file_size),
-                        asset.team_id ?? undefined
-                    );
-                } catch (e) {
-                    // Không chặn response nếu 1 asset fail — GC sẽ bù sau
-                    console.warn(`[EmptyTrash] decrementStorageUsage fail for asset ${asset.id}:`, e);
+                const bytes = Number(asset.file_size) || 0;
+                if (bytes <= 0) continue;
+
+                if (asset.team_id) {
+                    const key = `team:${asset.team_id}`;
+                    const existing = bytesByOwner.get(key);
+                    if (existing) existing.bytes += bytes;
+                    else bytesByOwner.set(key, { type: 'team', id: asset.team_id, bytes });
+                } else if (asset.uploaded_by) {
+                    const key = `user:${asset.uploaded_by}`;
+                    const existing = bytesByOwner.get(key);
+                    if (existing) existing.bytes += bytes;
+                    else bytesByOwner.set(key, { type: 'user', id: asset.uploaded_by, bytes });
                 }
             }
+
+            // Chạy song song tất cả UPDATE, 1 fail không chặn cái khác
+            const updatePromises = Array.from(bytesByOwner.values()).map(({ type, id, bytes }) => {
+                if (type === 'team') {
+                    return db.execute(
+                        `UPDATE teams SET used_storage_bytes = GREATEST(0, COALESCE(used_storage_bytes, 0) - $1) WHERE id = $2`,
+                        [bytes, id]
+                    );
+                } else {
+                    return db.execute(
+                        `UPDATE users SET storage_used_bytes = GREATEST(0, COALESCE(storage_used_bytes, 0) - $1) WHERE id = $2`,
+                        [bytes, id]
+                    );
+                }
+            });
+
+            const results = await Promise.allSettled(updatePromises);
+            results.forEach((result, i) => {
+                if (result.status === 'rejected') {
+                    const entry = Array.from(bytesByOwner.values())[i];
+                    console.warn(`[EmptyTrash] Quota update fail for ${entry.type}:${entry.id}:`, result.reason);
+                }
+            });
         } else {
             // Trash đã trống sẵn
             await db.execute(
@@ -548,11 +618,12 @@ export const bulkDeleteDesigns = async (req: Request, res: Response) => {
         return res.status(400).json({ error: 'Invalid design IDs' });
     }
     try {
-        await db.query(
-            'UPDATE designs SET is_deleted = true, deleted_at = NOW() WHERE id = ANY($1) AND user_id = $2',
+        const result = await db.query(
+            'UPDATE designs SET is_deleted = true, deleted_at = NOW() WHERE id = ANY($1) AND user_id = $2 RETURNING id',
             [designIds, userId]
         );
-        res.json({ message: 'Moved to trash' });
+        const deletedIds = result.rows.map(row => row.id);
+        res.json({ message: 'Moved to trash', deletedIds });
     } catch { res.status(500).json({ error: 'Bulk delete failed' }); }
 };
 

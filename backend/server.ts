@@ -54,6 +54,7 @@ async function startServer() {
     },
     pingTimeout: 60000,
     pingInterval: 25000,
+    maxHttpBufferSize: 1e7, // 10 MB — đã chuyển sang upload-image endpoint, không dùng Base64 qua Socket
   });
 
   // [FIX Vấn đề 6] Kết nối Redis và gắn adapter trước khi setupCollaboration
@@ -76,6 +77,7 @@ async function startServer() {
 
   // ── Static Files ──────────────────────────────────────────────────────────
   app.use('/assets', express.static(path.join(__dirname, 'sticker_upload/assets')));
+  app.use('/fonts',  express.static(path.join(__dirname, 'sticker_upload/fonts')));
 
   // ── Database ──────────────────────────────────────────────────────────────
   await initDb();

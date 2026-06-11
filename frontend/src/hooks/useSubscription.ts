@@ -1,15 +1,24 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth, isSubscriptionActive } from '../context/AuthContext';
-
+import { useWorkspace } from '../context/WorkspaceContext';
 
 export function useSubscription() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  
+  let currentWorkspace = null;
+  try {
+    const workspaceCtx = useWorkspace();
+    currentWorkspace = workspaceCtx.currentWorkspace;
+  } catch (e) {
+    // If used outside of WorkspaceProvider
+  }
 
-  const isPro = isSubscriptionActive(user);
-  const planName = user?.subscription?.plan_name ?? null;
-  const planSlug = user?.subscription?.plan_slug ?? null;
-  const periodEnd = user?.subscription?.current_period_end ?? null;
+  const isUserPro = isSubscriptionActive(user);
+  const isPro = currentWorkspace?.is_pro || isUserPro;
+  const planName = currentWorkspace?.plan_name || user?.subscription?.plan_name || null;
+  const planSlug = currentWorkspace?.plan_slug || user?.subscription?.plan_slug || null;
+  const periodEnd = currentWorkspace?.current_period_end || user?.subscription?.current_period_end || null;
 
   const requirePro = (featureName = 'tính năng này'): boolean => {
     if (isPro) return true;

@@ -1,4 +1,6 @@
 // src/components/editor/VersionHistoryModal.tsx
+import { History, RotateCcw, Clock, CheckCircle2 } from 'lucide-react';
+
 interface VersionHistoryModalProps {
   versions: any[];
   isRestoring: boolean;
@@ -8,42 +10,91 @@ interface VersionHistoryModalProps {
 
 export default function VersionHistoryModal({ versions, isRestoring, onClose, onRestore }: VersionHistoryModalProps) {
   return (
-    <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-[450px] overflow-hidden flex flex-col">
-        <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
-          <h2 className="font-extrabold text-slate-800 uppercase">Version History</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">✕</button>
+    <div className="fixed inset-0 bg-slate-900/40 z-[9999] flex items-center justify-center backdrop-blur-md transition-all">
+      <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] w-[480px] overflow-hidden flex flex-col border border-white/50 relative">
+        
+        {/* Glow background effect */}
+        <div className="absolute top-0 inset-x-0 h-32 bg-gradient-to-b from-indigo-50/80 to-transparent pointer-events-none" />
+
+        <div className="px-8 pt-8 pb-5 flex justify-between items-center relative z-10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-100 flex items-center justify-center text-indigo-600 shadow-inner">
+              <History size={20} strokeWidth={2.5} />
+            </div>
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-800 tracking-tight">Version History</h2>
+              <p className="text-xs font-medium text-slate-500 mt-0.5">Khôi phục các bản sao lưu thiết kế của bạn</p>
+            </div>
+          </div>
+          <button 
+            onClick={onClose} 
+            className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors"
+          >
+            ✕
+          </button>
         </div>
 
-        <div className="p-4 max-h-[60vh] overflow-y-auto bg-slate-100 space-y-2">
-          {versions.length === 0 ? (
-            <div className="text-center text-slate-500 py-8 text-sm">Chưa có phiên bản lịch sử nào.</div>
-          ) : (
-            versions.map((v, index) => (
-              <div
-                key={v.id}
-                className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex justify-between items-center group hover:border-indigo-300 transition"
-              >
-                <div>
-                  <div className="font-bold text-sm text-slate-800">
-                    {index === 0 ? 'Current Version' : `Version ${v.version_number}`}
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    {new Date(v.created_at).toLocaleString('vi-VN')} • by {v.creator_name || 'You'}
-                  </div>
+        <div className="px-6 pb-6 max-h-[60vh] overflow-y-auto custom-scrollbar relative z-10">
+          <div className="space-y-4">
+            {versions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mb-3">
+                  <Clock size={24} className="text-slate-300" />
                 </div>
-                {index !== 0 && (
-                  <button
-                    onClick={() => onRestore(v.id)}
-                    disabled={isRestoring}
-                    className="px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-600 hover:text-white rounded opacity-0 group-hover:opacity-100 transition"
-                  >
-                    Restore
-                  </button>
-                )}
+                <p className="text-sm font-bold text-slate-600">Chưa có phiên bản lịch sử nào</p>
+                <p className="text-xs text-slate-400 mt-1">Hệ thống sẽ tự động lưu khi bạn chỉnh sửa.</p>
               </div>
-            ))
-          )}
+            ) : (
+              <div className="relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent pl-4">
+                {versions.map((v, index) => {
+                  const isCurrent = index === 0;
+                  return (
+                    <div
+                      key={v.id}
+                      className="relative flex items-center justify-between mb-4 group"
+                    >
+                      {/* Timeline dot */}
+                      <div className="absolute left-[-16px] w-8 h-8 flex items-center justify-center">
+                        <div className={`w-3 h-3 rounded-full border-2 ${isCurrent ? 'bg-white border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] ring-4 ring-indigo-50' : 'bg-slate-200 border-white group-hover:bg-indigo-300'} transition-all z-10`} />
+                      </div>
+
+                      <div className={`ml-8 flex-1 p-4 rounded-2xl border transition-all duration-200 flex items-center justify-between ${
+                        isCurrent 
+                          ? 'bg-gradient-to-r from-indigo-50/50 to-white border-indigo-100 shadow-sm' 
+                          : 'bg-white border-slate-100 shadow-sm hover:shadow-md hover:border-indigo-200'
+                      }`}>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={`font-bold text-sm ${isCurrent ? 'text-indigo-700' : 'text-slate-700'}`}>
+                              {isCurrent ? 'Phiên bản hiện tại' : `Phiên bản ${v.version_number}`}
+                            </span>
+                            {isCurrent && <CheckCircle2 size={14} className="text-indigo-500" />}
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 mt-1.5">
+                            <Clock size={12} />
+                            <span>{new Date(v.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                            <span className="mx-1">•</span>
+                            <span className="truncate max-w-[100px]">{v.creator_name || 'You'}</span>
+                          </div>
+                        </div>
+
+                        {!isCurrent && (
+                          <button
+                            onClick={() => onRestore(v.id)}
+                            disabled={isRestoring}
+                            className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 rounded-xl opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow"
+                          >
+                            <RotateCcw size={14} />
+                            Khôi phục
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

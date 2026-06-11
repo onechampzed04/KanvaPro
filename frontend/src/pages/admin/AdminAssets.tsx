@@ -45,6 +45,7 @@ export default function AdminAssets() {
   });
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fontPreviews, setFontPreviews] = useState<Record<string, string>>({});  // assetId -> objectURL
   const LIMIT = 30;
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
@@ -65,10 +66,41 @@ export default function AdminAssets() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [search, typeFilter, premiumFilter]);
 
+  // Load @font-face cho font assets để preview được tên thật
+  useEffect(() => {
+    assets.forEach(a => {
+      if (a.type !== 'font') return;
+      if (fontPreviews[a.id]) return; // đã load rồi
+      const url = a.url.startsWith('http') ? a.url : `http://localhost:3000${a.url}`;
+      const style = document.createElement('style');
+      style.textContent = `@font-face { font-family: "font-${a.id}"; src: url("${url}"); }`;
+      document.head.appendChild(style);
+      setFontPreviews(prev => ({ ...prev, [a.id]: `font-${a.id}` }));
+    });
+  }, [assets]);
+
   /* ── Upload ── */
   const handleFiles = (files: FileList | null) => {
     if (!files) return;
-    setPendingFiles(prev => [...prev, ...Array.from(files)]);
+    const fileArray = Array.from(files);
+    
+    // Lọc file theo Asset Type đang chọn
+    const isFontMode = uploadForm.type === 'font';
+    const validFiles = fileArray.filter(file => {
+      const ext = file.name.toLowerCase().match(/\.[^.]+$/)?.[0] || '';
+      const isFontFile = ['.ttf', '.otf', '.woff', '.woff2'].includes(ext);
+      
+      if (isFontMode) return isFontFile; // Đang chọn Font -> phải là font file
+      else return !isFontFile && file.type.startsWith('image/'); // Ảnh/Sticker -> phải là ảnh, ko phải font
+    });
+
+    if (validFiles.length < fileArray.length) {
+      showToast(`Có ${fileArray.length - validFiles.length} file không hợp lệ với loại "${uploadForm.type}" đã bị loại bỏ!`, 'error');
+    }
+
+    if (validFiles.length > 0) {
+      setPendingFiles(prev => [...prev, ...validFiles]);
+    }
   };
 
   const handleUpload = async () => {
@@ -219,8 +251,8 @@ export default function AdminAssets() {
             </button>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 12, padding: '0 20px 16px', flexWrap: 'wrap' }}>
-          <div style={{ flex: '0 0 160px' }}>
+        <div style={{ display: 'flex', gap: 16, padding: '16px 20px 16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: '0 0 180px' }}>
             <label className="admin-label">Asset Type</label>
             <AdminSelect
               value={uploadForm.type}
@@ -232,19 +264,19 @@ export default function AdminAssets() {
               ]}
             />
           </div>
-          <div style={{ flex: '0 0 200px' }}>
+          <div style={{ flex: '1', minWidth: 200 }}>
             <label className="admin-label">Tags (comma separated)</label>
             <input className="admin-input" placeholder="nature, summer, blue…"
               value={uploadForm.tags}
               onChange={e => setUploadForm(f => ({ ...f, tags: e.target.value }))} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
+          <div style={{ paddingBottom: 8 }}>
             <label className="admin-toggle">
               <input type="checkbox" checked={uploadForm.is_premium}
                 onChange={e => setUploadForm(f => ({ ...f, is_premium: e.target.checked }))} />
               <div className="admin-toggle-track" />
-              <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                <Crown size={12} style={{ display: 'inline', marginRight: 4, color: '#f59e0b' }} />
+              <span style={{ fontSize: 13, color: 'var(--t2)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Crown size={14} style={{ color: '#f59e0b' }} />
                 Pro Only
               </span>
             </label>
@@ -259,8 +291,13 @@ export default function AdminAssets() {
         >
           <div className="admin-upload-icon">🗂️</div>
           <div className="admin-upload-text">Drop files here or click to browse</div>
-          <div className="admin-upload-hint">Supports PNG, JPG, SVG, WEBP, TTF, OTF • Max 50MB each</div>
-          <input ref={fileInputRef} type="file" multiple accept="image/*,.ttf,.otf,.woff"
+          <div className="admin-upload-hint">
+            {uploadForm.type === 'font' 
+              ? 'Supports TTF, OTF, WOFF, WOFF2 • Max 50MB each' 
+              : 'Supports PNG, JPG, SVG, WEBP, GIF • Max 50MB each'}
+          </div>
+          <input ref={fileInputRef} type="file" multiple 
+            accept={uploadForm.type === 'font' ? '.ttf,.otf,.woff,.woff2' : 'image/*'}
             style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
         </div>
         {pendingFiles.length > 0 && (
@@ -454,6 +491,14 @@ export default function AdminAssets() {
                         <img src={a.url} alt={a.name}
                           style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, background: 'var(--bg-hover)' }}
                           onError={e => { (e.target as any).style.display = 'none'; }} />
+                      ) : a.type === 'font' ? (
+                        <div style={{
+                          width: 48, height: 48, borderRadius: 6,
+                          background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontFamily: fontPreviews[a.id] || 'serif',
+                          fontSize: 22, color: 'white', fontWeight: 700, letterSpacing: -1,
+                        }}>Aa</div>
                       ) : (
                         <div style={{
                           width: 48, height: 48, borderRadius: 6,
@@ -463,7 +508,14 @@ export default function AdminAssets() {
                         </div>
                       )}
                     </td>
-                    <td style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{a.name}</td>
+                    <td style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                      {a.type === 'font' && fontPreviews[a.id] ? (
+                        <span>
+                          <span style={{ display: 'block', fontSize: 13 }}>{a.name}</span>
+                          <span style={{ fontFamily: fontPreviews[a.id], fontSize: 16, color: 'var(--text-secondary)' }}>AaBbCc 123</span>
+                        </span>
+                      ) : a.name}
+                    </td>
                     <td style={{ textTransform: 'capitalize' }}>
                       <div className="badge badge-free" style={{ gap: 4, padding: '4px 8px' }}>
                         <TypeIcon size={12} /> {a.type}

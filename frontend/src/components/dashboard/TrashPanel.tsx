@@ -5,7 +5,16 @@ import { Trash2, RotateCcw, AlertTriangle, Clock, Layout, FileText } from 'lucid
 import { fetchTrashDesigns, restoreDesign, permanentlyDeleteDesign, emptyTrash } from '../../api/api';
 
 const getDaysLabel = (design: any) => {
-  const r = Math.max(0, Math.round(Number(design.days_remaining ?? 30)));
+  let r = 30;
+  if (design.deleted_at) {
+    const deletedTime = new Date(design.deleted_at).getTime();
+    const now = Date.now();
+    const daysPassed = Math.floor((now - deletedTime) / (1000 * 60 * 60 * 24));
+    r = Math.max(0, 30 - daysPassed);
+  } else if (design.days_remaining !== undefined) {
+    r = Math.max(0, Math.round(Number(design.days_remaining)));
+  }
+
   if (r <= 0) return { text: 'Hết hạn hôm nay', color: 'text-red-500', bg: 'bg-red-50' };
   if (r <= 3) return { text: `${r} ngày`, color: 'text-red-500', bg: 'bg-red-50' };
   if (r <= 7) return { text: `${r} ngày`, color: 'text-amber-600', bg: 'bg-amber-50' };

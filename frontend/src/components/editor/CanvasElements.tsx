@@ -24,8 +24,34 @@ import Konva from 'konva';
 // Non-destructive crop: lưu cropRect, render bằng KonvaImage.crop native.
 // KHÔNG dùng Group để tránh vấn đề hit detection với children listening=false.
 export const URLImage = ({ image, onSelect, onChange, onChangeFinal, onDragMove, onActionStart, onDblClick }: any) => {
-  const [img] = useImage(image.src, 'anonymous');
+  const [img, status] = useImage(image.src, 'anonymous');
   const shapeRef = useRef<any>(null);
+  const isBroken = status === 'failed' || (!img && status === 'loaded');
+
+  // [FIX 404] Nếu ảnh bị lỗi (đã xóa / 404), render placeholder thay vì cố load → spam console
+  if (isBroken) {
+    return (
+      <Rect
+        id={image.id}
+        x={image.x ?? 0}
+        y={image.y ?? 0}
+        width={Math.max(1, image.width ?? 100)}
+        height={Math.max(1, image.height ?? 100)}
+        fill="#f1f5f9"
+        stroke="#cbd5e1"
+        strokeWidth={2}
+        dash={[8, 4]}
+        rotation={image.rotation || 0}
+        opacity={image.opacity ?? 0.5}
+        onClick={onSelect}
+        onTap={onSelect}
+        draggable
+        onDragEnd={(e: any) => {
+          onChangeFinal?.({ ...image, x: e.target.x(), y: e.target.y() });
+        }}
+      />
+    );
+  }
 
   const hasCrop = !!(image.cropRect &&
     image.cropRect.width > 0 && image.cropRect.height > 0);
@@ -68,7 +94,14 @@ export const URLImage = ({ image, onSelect, onChange, onChangeFinal, onDragMove,
         onDblClick={onDblClick}
         onDragStart={() => onActionStart?.()}
         onTransformStart={() => onActionStart?.()}
-        onDragMove={onDragMove}
+        onDragMove={(e: any) => {
+          onChange({
+            ...image,
+            x: e.target.x() - cr.x,
+            y: e.target.y() - cr.y,
+          });
+          if (onDragMove) onDragMove(e);
+        }}
         onDragEnd={(e: any) => {
           // KonvaImage tại (image.x + cr.x) → khi drag: image.x = newX - cr.x
           onChangeFinal({
@@ -120,7 +153,10 @@ export const URLImage = ({ image, onSelect, onChange, onChangeFinal, onDragMove,
       draggable
       onDragStart={() => onActionStart?.()}
       onTransformStart={() => onActionStart?.()}
-      onDragMove={onDragMove}
+      onDragMove={(e: any) => {
+        onChange({ ...image, x: e.target.x(), y: e.target.y() });
+        if (onDragMove) onDragMove(e);
+      }}
       onDragEnd={(e: any) => {
         onChangeFinal({ ...image, x: e.target.x(), y: e.target.y() });
       }}
@@ -158,7 +194,10 @@ export const CircleShape = ({ shape, onSelect, onChange, onChangeFinal, onDragMo
       draggable
       onDragStart={() => onActionStart?.()}
       onTransformStart={() => onActionStart?.()}
-      onDragMove={onDragMove}
+      onDragMove={(e: any) => {
+        onChange({ ...shape, x: e.target.x(), y: e.target.y() });
+        if (onDragMove) onDragMove(e);
+      }}
       onDragEnd={(e) => {
         onChangeFinal({ ...shape, x: e.target.x(), y: e.target.y() });
       }}
@@ -195,7 +234,10 @@ export const RectangleShape = ({ shape, onSelect, onChange, onChangeFinal, onDra
       draggable
       onDragStart={() => onActionStart?.()}
       onTransformStart={() => onActionStart?.()}
-      onDragMove={onDragMove}
+      onDragMove={(e: any) => {
+        onChange({ ...shape, x: e.target.x(), y: e.target.y() });
+        if (onDragMove) onDragMove(e);
+      }}
       onDragEnd={(e) => {
         onChangeFinal({ ...shape, x: e.target.x(), y: e.target.y() });
       }}
@@ -235,7 +277,10 @@ export const EditableText = ({ text, onSelect, onDblClick, onChange, onChangeFin
       id={text.id}
       onDragStart={() => onActionStart?.()}
       onTransformStart={() => onActionStart?.()}
-      onDragMove={onDragMove}
+      onDragMove={(e: any) => {
+        onChange({ ...text, x: e.target.x(), y: e.target.y() });
+        if (onDragMove) onDragMove(e);
+      }}
       onDragEnd={(e) => {
         onChangeFinal({ ...text, x: e.target.x(), y: e.target.y() });
       }}

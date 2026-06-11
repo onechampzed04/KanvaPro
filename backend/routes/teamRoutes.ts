@@ -14,6 +14,7 @@ import {
   getTeamMembersPaginated,
   getTeamAuditLogs,
   updateTeamAvatar,
+  getTeamStorageBreakdown,
 } from '../controllers/teamController';
 import { authenticate } from '../middleware/authMiddleware';
 
@@ -73,6 +74,9 @@ router.post('/:id/transfer-ownership',   transferOwnership);
 // ─── Audit Logs ───────────────────────────────────────────────────────────────
 // [FIX 3c] Lịch sử hành động (chỉ Owner/Admin xem)
 router.get('/:id/audit-logs',            getTeamAuditLogs);
+
+// ─── Storage Breakdown ────────────────────────────────────────────────────────
+router.get('/:id/storage-breakdown',     getTeamStorageBreakdown);
 
 // ─── Design Clone ─────────────────────────────────────────────────────────────
 // [FIX 2a] Quota cá nhân được kiểm tra trực tiếp trong controller (không cần middleware)

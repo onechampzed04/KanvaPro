@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Zap, MousePointer2, PenTool, Shapes, Minus, StickyNote, Type } from 'lucide-react';
 import ShareModal from '../components/editor/ShareModal';
@@ -7,11 +7,12 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import pptxgen from 'pptxgenjs';
 import { motion, AnimatePresence } from 'framer-motion';
-import { fetchDesignVersions, restoreDesignVersion, updateDesignFull, createDesignVersion, uploadVideoForExport, uploadImageFile, uploadPageThumbnail, cloneAssetForDesign } from '../api/api';
+import { fetchDesignVersions, restoreDesignVersion, updateDesignFull, createDesignVersion, uploadVideoForExport, uploadImageFile, uploadPageThumbnail } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../hooks/useSubscription';
 import { useCollaboration } from '../hooks/useCollaboration';
 
-// Components Ä‘Ã£ tÃ¡ch sáºµn
+// Components đã tách sẵn
 import EditorSidebar from '../components/editor/EditorSidebar';
 import DocEditor, { DocEditorHandle } from '../components/editor/DocEditor';
 import SheetEditor from '../components/editor/SheetEditor';
@@ -19,7 +20,7 @@ import CanvasEditor from '../components/editor/CanvasEditor';
 import BottomTimeline from '../components/editor/BottomTimeline';
 import ElementToolbar from '../components/ElementToolbar';
 
-// Components má»›i tÃ¡ch
+// Components mới tách
 import EditorTopBar from '../components/editor/EditorTopBar';
 import SidebarDrawer from '../components/editor/SidebarDrawer';
 import TransitionBox from '../components/editor/TransitionBox';
@@ -31,12 +32,12 @@ import BrushEraserModal from '../components/editor/BrushEraserModal';
 import CropOverlay from '../components/editor/CropOverlay';
 import ProUpgradeModal from '../components/editor/ProUpgradeModal';
 import ExportProBlockModal, { type ProElement } from '../components/editor/ExportProBlockModal';
-import { isSubscriptionActive } from '../context/AuthContext';
 import AnimationPanel from '../components/editor/AnimationPanel';
-import LayerPanel from '../components/editor/LayerPanel';
 import { useCommandHistory } from '../hooks/useCommandHistory';
 import { useLazyPageLoader } from '../hooks/useLazyPageLoader';
+import { useAutoThumbnail } from '../hooks/useAutoThumbnail';
 import { useCollabStore } from '../store/useCollabStore';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 export default function EditorPage() {
   const activeUsers = useCollabStore((state) => state.activeUsers);
@@ -46,8 +47,21 @@ export default function EditorPage() {
   const isRemoteUpdateRef = useRef(false);
   const { id } = useParams();
   const lazyPageLoader = useLazyPageLoader(id);
-  const navigate = useNavigate(); // === FIX #6: DÃ¹ng navigate thay vÃ¬ tháº» <a> ===
-  const { user, refreshUser } = useAuth(); // Láº¥y current user Ä‘á»ƒ truyá»n cho collaboration
+  const { generateAllPagesThumbnails } = useAutoThumbnail({
+    lazyPageLoader,
+    onThumbnailUpdated: (pageId, url) => {
+      setPages(prev => prev.map(p => p.id === pageId ? { ...p, thumbnail: url, _lastThumbAt: Date.now() } : p));
+    },
+    emitPageThumbnailUpdated: (pageId, url) => {
+      // emitPageThumbnailUpdated được khai báo bên dưới qua useCollaboration
+      // Dùng ref để tránh circular dependency
+      emitThumbRef.current?.(pageId, url);
+    },
+  });
+  const navigate = useNavigate(); // === FIX #6: Dùng navigate thay vì thẻ <a> ===
+  const { user, refreshUser } = useAuth(); // Lấy current user để truyền cho collaboration
+  const { currentWorkspace, switchWorkspace, workspaces } = useWorkspace();
+  const { isPro } = useSubscription();
   const [design, setDesign] = useState<any>(null);
   const [elements, setElements] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -56,54 +70,56 @@ export default function EditorPage() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState('');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
-  // === FIX #6: Ref Ä‘á»ƒ beforeunload khÃ´ng bá»‹ stale closure ===
+  // === FIX #6: Ref để beforeunload không bị stale closure ===
   const saveStatusRef = useRef<'saved' | 'saving' | 'unsaved'>('saved');
   useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
-  // Overlay state khi Ä‘ang force-save trÆ°á»›c khi navigate vá» Dashboard
+  // Overlay state khi đang force-save trước khi navigate về Dashboard
   const [isSavingBeforeNav, setIsSavingBeforeNav] = useState(false);
   const [collabNotification, setCollabNotification] = useState<string>('');
   const isInitialMount = useRef(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  // === FIX #2 PATCH: Ref lÆ°u version má»›i nháº¥t tá»« server â€” tuyá»‡t Ä‘á»‘i khÃ´ng bá»‹ stale closure ===
-  // KhÃ¡c vá»›i design state (cÃ³ thá»ƒ cÅ©), ref nÃ y luÃ´n ghi ngay sau má»—i save thÃ nh cÃ´ng
+  // === FIX #2 PATCH: Ref lưu version mới nhất từ server — tuyệt đối không bị stale closure ===
+  // Khác với design state (có thể cũ), ref này luôn ghi ngay sau mỗi save thành công
   const designVersionRef = useRef<string | null>(null);
 
 
-  // â”€â”€ UNDO / REDO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // === FIX #3: DÃ¹ng Command Diff Pattern â€” khÃ´ng cÃ²n JSON.parse(JSON.stringify) ===
+  // ── UNDO / REDO ────────────────────────────────────────────────────
+  // === FIX #3: Dùng Command Diff Pattern — không còn JSON.parse(JSON.stringify) ===
   const commandHistory = useCommandHistory();
   const syncElementsImmediateRef = useRef<(els: any[], skipEmit?: boolean) => void>(() => { });
 
-  // Wrapper tuong thich nguoc: pushUndoSnapshot(elements) -> commandHistory REORDER
-  // Giai quyet 16 cho code cu con goi ham nay ma khong can refactor toan bo.
+  const pendingUndoSnapshotRef = useRef<any[] | null>(null);
+
+  // Wrapper tuong thich nguoc: pushUndoSnapshot(elements)
   const pushUndoSnapshot = useCallback((snapshot: any[]) => {
     if (commandHistory.isApplyingRef.current) return;
-    commandHistory.pushCommand({ type: 'REORDER', before: snapshot, after: snapshot });
+    pendingUndoSnapshotRef.current = JSON.parse(JSON.stringify(snapshot));
   }, [commandHistory]);
 
-  // LÆ°u snapshot BEFORE cá»§a element trÆ°á»›c khi báº¯t Ä‘áº§u phÃªn chá»‰nh sá»­a text
+  // Lưu snapshot BEFORE của element trước khi bắt đầu phên chỉnh sửa text
   const originalElementsBeforeTextEditRef = useRef<any[] | null>(null);
 
-  // Callback khi báº¯t Ä‘áº§u báº¥t ká»³ hÃ nh Ä‘á»™ng nÃ o â€” push ADD command cho element má»›i
-  // (cÃ¡c UPDATE/DELETE Ä‘Æ°á»£c push tá»«ng nÆ¡i tÆ°Æ¡ng á»©ng)
   const handleActionStart = useCallback((beforeElements?: any[]) => {
-    // Náº¿u cÃ³ beforeElements thÃ¬ Ä‘Ã¢y lÃ  snapshot trÆ°á»›c khi drag/resize: push BATCH UPDATE
-    // Logic chi tiáº¿t Ä‘Æ°á»£c xá»­ lÃ½ táº¡i nÆ¡i push cá»¥ thá»ƒ (CanvasEditor, toolbar)
-  }, []);
+    if (commandHistory.isApplyingRef.current) return;
+    if (!pendingUndoSnapshotRef.current) {
+      // Capture the before state, falling back to current elements
+      pendingUndoSnapshotRef.current = JSON.parse(JSON.stringify(beforeElements || elements));
+    }
+  }, [commandHistory, elements]);
 
-  // Callback khi káº¿t thÃºc phÃªn edit text
+  // Callback khi kết thúc phên edit text
   const handleTextEditEnd = useCallback((_finalText: string, _elementId: string) => {
-    // Text Ä‘Ã£ Ä‘Æ°á»£c push UPDATE command táº¡i Ä‘Ãºng Ä‘iá»ƒm thay Ä‘á»•i trong CanvasEditor
+    // Text đã được push UPDATE command tại đúng điểm thay đổi trong CanvasEditor
     originalElementsBeforeTextEditRef.current = null;
   }, []);
 
-  // Undo Handler: láº¥y command cuá»‘i tá»« stack, Ã¡p dá»¥ng ngÆ°á»£c láº¡i lÃªn elements
+  // Undo Handler: lấy command cuối từ stack, áp dụng ngược lại lên elements
   const handleUndo = useCallback(() => {
     const newElements = commandHistory.undo(elements);
     if (newElements !== null) {
       commandHistory.isApplyingRef.current = true;
-      syncElementsImmediateRef.current(newElements, true);
+      syncElementsImmediateRef.current(newElements, false);
       commandHistory.isApplyingRef.current = false;
     }
   }, [elements, commandHistory]);
@@ -113,35 +129,36 @@ export default function EditorPage() {
     const newElements = commandHistory.redo(elements);
     if (newElements !== null) {
       commandHistory.isApplyingRef.current = true;
-      syncElementsImmediateRef.current(newElements, true);
+      syncElementsImmediateRef.current(newElements, false);
       commandHistory.isApplyingRef.current = false;
     }
   }, [elements, commandHistory]);
 
-  // â”€â”€ SIDEBAR VISIBLE TOGGLE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── SIDEBAR VISIBLE TOGGLE ──────────────────────────────────────────────────
   const [sidebarVisible, setSidebarVisible] = useState(true);
 
-  // â”€â”€ LINK POPUP (Ctrl+K) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── LINK POPUP (Ctrl+K) ────────────────────────────────────────────────────
   const [showLinkPopup, setShowLinkPopup] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
 
-  // â”€â”€ GRID VIEW (inline, replaces canvas area) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── GRID VIEW (inline, replaces canvas area) ─────────────────────────────
   const [showGridView, setShowGridView] = useState(false);
   const [gridDragIdx, setGridDragIdx] = useState<number | null>(null);
   const [copiedPageData, setCopiedPageData] = useState<any | null>(null);
+  const [copiedElementsData, setCopiedElementsData] = useState<any[] | null>(null);
   const [gridSelectedPages, setGridSelectedPages] = useState<Set<string>>(new Set());
 
-  // â”€â”€ DEBOUNCED AUTOSAVE (2.5s sau khi ngÆ°á»i dÃ¹ng ngá»«ng thao tÃ¡c hoÃ n toÃ n) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── DEBOUNCED AUTOSAVE (1.0s sau khi người dùng ngừng thao tác hoàn toàn) ──────────
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleAutosave = useCallback(() => {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       autosaveTimerRef.current = null;
-      // handleSave Ä‘Æ°á»£c Ä‘á»‹nh nghÄ©a sau, dÃ¹ng ref Ä‘á»ƒ trÃ¡nh stale closure
+      // handleSave được định nghĩa sau, dùng ref để tránh stale closure
       handleSaveRef.current?.(true);
-    }, 2500); // 2.5 giÃ¢y debounce
+    }, 2500); // 2.5 giây debounce
   }, []);
-  // Ref Ä‘á»ƒ gá»i handleSave mÃ  khÃ´ng cáº§n nÃ³ trong dependency array
+  // Ref để gọi handleSave mà không cần nó trong dependency array
   const handleSaveRef = useRef<((silent: boolean) => void) | null>(null);
 
   // RBAC States
@@ -164,15 +181,14 @@ export default function EditorPage() {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [showAnimateBox, setShowAnimateBox] = useState(false);
   const [animTab, setAnimTab] = useState<'in' | 'out'>('in');
-  // NEW: Right-side Animation Panel + Layer Panel
+  // NEW: Right-side Animation Panel
   const [showAnimPanel, setShowAnimPanel] = useState(false);
-  const [showLayerPanel, setShowLayerPanel] = useState(false);
   const [highlightedAnimId, setHighlightedAnimId] = useState<string | null>(null);
   // Preview animation: -1 = not previewing; >0 = current step being shown
   const [animPreviewStep, setAnimPreviewStep] = useState(-1);
   // Which step is CURRENTLY animating in (to apply the correct effect)
   const [animPreviewCurrentStep, setAnimPreviewCurrentStep] = useState(-1);
-  // Progress 0â†’1 of current step's entry animation
+  // Progress 0→1 of current step's entry animation
   const [animPreviewProgress, setAnimPreviewProgress] = useState(1);
   const animPreviewRafRef = useRef<number | null>(null);
   const animPreviewStartTimeRef = useRef<number>(0);
@@ -264,10 +280,18 @@ export default function EditorPage() {
 
   // State cho UI Sidebar
   const [activeTab, setActiveTab] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeTab !== 'tools') {
+      setActiveTool('select');
+      setShowShapePopover(false);
+    }
+  }, [activeTab]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [customFonts, setCustomFonts] = useState<string[]>(['Arial', 'Verdana', 'Roboto', 'Oswald', 'Inter']);
+  const [customFonts, setCustomFonts] = useState<{ id: string; name: string; url: string; is_premium: boolean }[]>([]);
   const [recentStickers, setRecentStickers] = useState<any[]>([]);
+  const [defaultStickers, setDefaultStickers] = useState<any[]>([]);
   const [recentPage, setRecentPage] = useState(1);
   const [totalRecentPages, setTotalRecentPages] = useState(1);
 
@@ -298,13 +322,18 @@ export default function EditorPage() {
   const layerRef = useRef<any>(null);
   const trRef = useRef<any>(null);
   const selectionRectRef = useRef<any>(null);
+  // Ref cho emitPageThumbnailUpdated để useAutoThumbnail dùng mà không bị stale
+  const emitThumbRef = useRef<((pageId: string, url: string) => void) | null>(null);
 
   // Constants
   const currentPage = pages.find(p => p.id === currentPageId);
   const stageWidth = currentPage?.width || 1920;
   const stageHeight = currentPage?.height || 1080;
   const currentPageType = currentPage?.type || 'canvas';
-  const selectedElement = selectedIds.length === 1 ? elements.find(el => el.id === selectedIds[0]) : null;
+  let selectedElement = selectedIds.length === 1 ? elements.find(el => el.id === selectedIds[0]) : null;
+  if (selectedIds.length === 1 && selectedIds[0] === 'bg') {
+    selectedElement = { id: 'bg', type: 'bg', fill: currentPage?.background_color || '#ffffff' };
+  }
   const docEditorRef = useRef<DocEditorHandle | null>(null);
 
   const [uploadedImages, setUploadedImages] = useState<any[]>([]);
@@ -318,34 +347,43 @@ export default function EditorPage() {
   // ── PRO UPGRADE MODAL ────────────────────────────────────────────────────
   const [showProModal, setShowProModal] = useState<{ feature: string; desc?: string } | null>(null);
 
-  // â”€â”€â”€ REAL-TIME COLLABORATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── REAL-TIME COLLABORATION ──────────────────────────────────────────────
 
-  // Ref lÆ°u currentPageId Ä‘á»ƒ trÃ¡nh stale closure trong socket callbacks
+  // Ref lưu currentPageId để tránh stale closure trong socket callbacks
   const currentPageIdRef = useRef<string | null>(null);
   useEffect(() => { currentPageIdRef.current = currentPageId; }, [currentPageId]);
 
-  // Ref theo dÃµi elementId nÃ o Ä‘ang bá»‹ ngÆ°á»i dÃ¹ng NÃ€Y kÃ©o (khÃ´ng bá»‹ remote overwrite)
+  // Sync export format when page type changes to prevent canvas export error on document pages
+  useEffect(() => {
+    if (currentPageType === 'doc') {
+      setExportConfig(prev => ({ ...prev, format: 'docx' }));
+    } else {
+      setExportConfig(prev => ({ ...prev, format: 'png' }));
+    }
+  }, [currentPageType]);
+
+  // Ref theo dõi elementId nào đang bị người dùng NÀY kéo (không bị remote overwrite)
   const draggingElementIdsRef = useRef<Set<string>>(new Set());
 
-  // State con trá» chuá»™t cá»§a cÃ¡c collaborator khÃ¡c
+  // State con trỏ chuột của các collaborator khác
   const [remoteCursors, setRemoteCursors] = useState<Map<string, { name: string; color: string; x: number; y: number }>>(new Map());
 
   const handleRemoteElementsUpdate = useCallback((pageId: string, remoteElements: any[]) => {
     isRemoteUpdateRef.current = true;
     setTimeout(() => { isRemoteUpdateRef.current = false; }, 50);
     lazyPageLoader.updateCache(pageId, remoteElements);
-    // LuÃ´n cáº­p nháº­t pages store
+    // Luôn cập nhật pages store
     setPages(prev => prev.map(p =>
       p.id === pageId ? { ...p, elements: remoteElements } : p
     ));
-    // Chá»‰ cáº­p nháº­t elements state náº¿u Ä‘ang á»Ÿ Ä‘Ãºng trang
+    // Chỉ cập nhật elements state nếu đang ở đúng trang
     if (currentPageIdRef.current === pageId) {
       setElements(prev => {
-        // Náº¿u khÃ´ng cÃ³ element nÃ o Ä‘ang bá»‹ kÃ©o: thay toÃ n bá»™
+        // Nếu không có element nào đang bị kéo: thay toàn bộ
         if (draggingElementIdsRef.current.size === 0) {
           return remoteElements;
         }
-        // Náº¿u cÃ³ element Ä‘ang kÃ©o: báº£o vá»‡ local version cá»§a chÃºng
+        // Nếu có element đang kéo: bảo vệ local version của chúng
         return remoteElements.map(remoteEl => {
           if (draggingElementIdsRef.current.has(remoteEl.id)) {
             const localEl = prev.find(el => el.id === remoteEl.id);
@@ -365,7 +403,7 @@ export default function EditorPage() {
       const updated = [...prev, { ...newPage, elements: newPage.elements || [], thumbnail: newPage.thumbnail || '' }];
       return updated.sort((a: any, b: any) => a.page_order - b.page_order);
     });
-    setCollabNotification(`${addedByName} Ä‘Ã£ thÃªm má»™t trang má»›i`);
+    setCollabNotification(`${addedByName} đã thêm một trang mới`);
     setTimeout(() => setCollabNotification(''), 3000);
   }, []);
 
@@ -385,7 +423,7 @@ export default function EditorPage() {
       });
       return null;
     });
-    setCollabNotification(`${deletedByName} Ä‘Ã£ xÃ³a má»™t trang`);
+    setCollabNotification(`${deletedByName} đã xóa một trang`);
     setTimeout(() => setCollabNotification(''), 3000);
   }, []);
 
@@ -410,7 +448,7 @@ export default function EditorPage() {
     }
   }, []);
 
-  // â”€â”€ Xá»­ lÃ½ Delta Update tá»« remote â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Xử lý Delta Update từ remote ──────────────────────────────────────────
   // ─── Xử lý Delta Update từ remote ──────────────────────────────────────────
   const handleRemoteDelta = useCallback((delta: { pageId: string; elementId: string; action: string; changes?: any }) => {
     isRemoteUpdateRef.current = true;
@@ -422,7 +460,7 @@ export default function EditorPage() {
       setPages(prev => {
         const updated = prev.map(p =>
           p.id === delta.pageId
-            ? { ...p, elements: p.elements.map((el: any) => el.id === delta.elementId ? { ...el, ...delta.changes } : el) }
+            ? { ...p, elements: p.elements ? p.elements.map((el: any) => el.id === delta.elementId ? { ...el, ...delta.changes } : el) : undefined }
             : p
         );
         const updatedPage = updated.find(p => p.id === delta.pageId);
@@ -437,6 +475,11 @@ export default function EditorPage() {
   const handleRemotePageThumbnailUpdated = useCallback((pageId: string, thumbUrl: string) => {
     setPages(prev => prev.map(p => p.id === pageId ? { ...p, thumbnail: thumbUrl } : p));
   }, []);
+  const handleRemotePageBackgroundUpdated = useCallback((pageId: string, background_color: string, userName: string) => {
+    isRemoteUpdateRef.current = true;
+    setTimeout(() => { isRemoteUpdateRef.current = false; }, 50);
+    setPages(prev => prev.map(p => p.id === pageId ? { ...p, background_color } : p));
+  }, []);
 
   const {
     emitElementsUpdate,
@@ -448,6 +491,7 @@ export default function EditorPage() {
     emitCursorMove,
     emitPageResize,
     emitPageThumbnailUpdated,
+    emitPageBackgroundUpdated,
     emitElementLock,
     emitElementUnlock,
   } = useCollaboration({
@@ -459,7 +503,22 @@ export default function EditorPage() {
     onRemotePageResized: handleRemotePageResized,
     onRemoteDelta: handleRemoteDelta,
     onRemotePageThumbnailUpdated: handleRemotePageThumbnailUpdated,
+    onRemotePageBackgroundUpdated: handleRemotePageBackgroundUpdated,
   });
+
+  // Gán vào ref để useAutoThumbnail emit realtime cho collaborators
+  emitThumbRef.current = emitPageThumbnailUpdated;
+
+
+  // Lấy danh sách trang hoạt động của từng user từ store
+  const userPageMap = useCollabStore(state => state.userPageMap);
+
+  // Phát event mỗi khi chuyển trang
+  useEffect(() => {
+    if (currentPageId) {
+      emitPageChanged(currentPageId);
+    }
+  }, [currentPageId, emitPageChanged]);
 
   const addImageOriginal = (src: string, originalWidth: number, originalHeight: number, flags?: { createdByAi?: boolean; isPro?: boolean }) => {
     let finalW = originalWidth;
@@ -508,24 +567,18 @@ export default function EditorPage() {
   };
 
   /**
-   * [NEW] Thêm ảnh từ sidebar Uploads vào Canvas + tạo Bản ghi B ngầm.
-   * Đảm bảo xóa ảnh khỏi Uploads (Bản ghi A) không làm mất ảnh trên canvas.
+   * Thêm ảnh từ sidebar Uploads vào Canvas
    */
   const addUploadedImageToCanvas = useCallback((imgItem: { id: string; url: string; width?: number; height?: number }) => {
     addImageOriginal(imgItem.url, imgItem.width || 800, imgItem.height || 600);
-    if (imgItem.id && id) {
-      cloneAssetForDesign(imgItem.id, id).catch((err: any) => {
-        console.warn('[CloneAsset] Background clone failed (non-critical):', err?.message);
-      });
-    }
-  }, [id, addImageOriginal]);
+  }, [addImageOriginal]);
 
   // --- 2. Data Fetching ---
   useEffect(() => {
     if (design?.title) setTempTitle(design.title);
   }, [design?.title]);
 
-  // === FIX #4: Khá»Ÿi táº¡o Lazy Page Loader ===
+  // === FIX #4: Khởi tạo Lazy Page Loader ===
   // lazyPageLoader hoisted to top
 
   // Cập nhật LRU cache khi elements của trang hiện tại thay đổi để tránh stale cache khi chuyển trang
@@ -535,7 +588,7 @@ export default function EditorPage() {
     }
   }, [currentPageId, elements, lazyPageLoader]);
 
-  // HÃ m load elements khi ngÆ°á»i dÃ¹ng chuyá»ƒn trang (hoáº·c láº§n Ä‘áº§u)
+  // Hàm load elements khi người dùng chuyển trang (hoặc lần đầu)
   const loadPageElements = useCallback(async (pageId: string, pagesState?: any[]) => {
     const elements = await lazyPageLoader.loadPageElements(pageId);
     setElements(elements);
@@ -545,14 +598,14 @@ export default function EditorPage() {
     });
   }, [lazyPageLoader]);
 
-  // === FIX #4: DÃ¹ng Shallow API /meta Ä‘á»ƒ load nhanh, lazy load elements theo trang ===
+  // === FIX #4: Dùng Shallow API /meta để load nhanh, lazy load elements theo trang ===
   useEffect(() => {
     fetch(`/api/designs/${id}/meta`, {
       headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
     })
       .then(res => {
         if (res.status === 403) {
-          alert('Báº¡n khÃ´ng cÃ³ quyá»n truy cáº­p báº£n váº½ nÃ y.');
+          alert('Bạn không có quyền truy cập bản vẽ này.');
           window.location.href = '/';
           throw new Error('403 Forbidden');
         }
@@ -560,31 +613,34 @@ export default function EditorPage() {
       })
       .then(data => {
         setDesign(data);
-        // === FIX #2 PATCH: Ghi version ngay khi fetch, khÃ´ng dá»±a vÃ o state cycle ===
+        // === FIX #2 PATCH: Ghi version ngay khi fetch, không dựa vào state cycle ===
         if (data.updated_at) {
           designVersionRef.current = data.updated_at;
         }
         if (data.current_user_role) {
           setCurrentRole(data.current_user_role);
         }
+        
+        // (Workspace switching logic moved to a separate useEffect to avoid stale closures)
+
         if (data.pages && data.pages.length > 0) {
-          // Shallow API tráº£ vá» pages KHÃ”NG cÃ³ elements (chá»‰ cÃ³ metadata)
+          // Shallow API trả về pages KHÔNG có elements (chỉ có metadata)
           const loadedPages = data.pages.map((p: any) => {
             let parsedContent = p.content || '';
             if (typeof parsedContent === 'string' && parsedContent.startsWith('"')) {
-              try { parsedContent = JSON.parse(parsedContent); } catch { /* giá»¯ nguyÃªn */ }
+              try { parsedContent = JSON.parse(parsedContent); } catch { /* giữ nguyên */ }
             }
             return {
               ...p,
               content: parsedContent,
               duration: Number(p.duration) || 5,
-              elements: p.elements || [],
+              elements: p.elements, // Không fallback về [] nếu chưa load
               thumbnail: p.thumbnail || ''
             };
           });
           setPages(loadedPages);
           setCurrentPageId(loadedPages[0].id);
-          // === FIX #4: Lazy load elements trang Ä‘áº§u, prefetch trang 2 Ã¢m tháº§m ===
+          // === FIX #4: Lazy load elements trang đầu, prefetch trang 2 âm thầm ===
           // === FIX #4: Lazy load elements trang đầu, prefetch trang 2 âm thầm ===
           // Pending image is handled AFTER loadPageElements completes to avoid race condition:
           // loadPageElements sets elements from DB; .then() appends the pending image on top.
@@ -618,13 +674,25 @@ export default function EditorPage() {
       .catch(err => console.error(err));
   }, [id]);
 
+  // === FIX #7: Separate useEffect for workspace sync to avoid stale closures ===
+  useEffect(() => {
+    if (!design) return;
+    if (design.team_id && currentWorkspace?.id !== design.team_id) {
+      switchWorkspace(design.team_id);
+    } else if (!design.team_id && currentWorkspace !== null) {
+      switchWorkspace(null); // Switch to Personal workspace (represented by null)
+    }
+  }, [design?.team_id, currentWorkspace, switchWorkspace]);
+
+
   // pending_import_image: được xử lý trong loadPageElements để tránh race condition
   // (Không dùng useEffect riêng nữa)
 
-  const fetchRecentStickers = async (page = 1, limit = 10) => {
+  const fetchRecentStickers = async (page = 1, limit = 50) => {
     try {
       const res = await fetch(`/api/designs/recent-stickers?page=${page}&limit=${limit}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        cache: 'no-store'
       });
       const data = await res.json();
       setRecentStickers(data.data || []);
@@ -633,29 +701,52 @@ export default function EditorPage() {
     } catch (error) { console.error(error); }
   };
 
-  useEffect(() => { fetchRecentStickers(1, 10); }, []);
-
-  const loadUserFonts = async () => {
+  const fetchDefaultStickers = async () => {
     try {
-      const res = await fetch('/api/assets/user-fonts', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      if (!res.ok) return;
+      const res = await fetch(`/api/assets/search?type=sticker&limit=100`);
       const data = await res.json();
-      const fontList: { name: string; url: string }[] = data.fonts || [];
-      for (const font of fontList) {
-        try {
-          const buffer = await (await fetch(font.url)).arrayBuffer();
-          const face = new FontFace(font.name, buffer);
-          const loaded = await face.load();
-          (document.fonts as any).add(loaded);
-          setCustomFonts(prev => prev.includes(font.name) ? prev : [...prev, font.name]);
-        } catch { }
-      }
-    } catch (error) { console.error('Load user fonts error:', error); }
+      setDefaultStickers(data.assets || []);
+    } catch (error) { console.error(error); }
   };
 
-  useEffect(() => { loadUserFonts(); }, []);
+  const fetchUserUploads = async () => {
+    try {
+      const res = await fetch(`/api/assets/user-images?ignoreWorkspace=true`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await res.json();
+      setUploadedImages(data.images || []);
+    } catch (error) { console.error(error); }
+  };
+
+  useEffect(() => { 
+    fetchRecentStickers(1, 50); 
+    fetchDefaultStickers();
+    fetchUserUploads();
+  }, []);
+
+  // Load system fonts (admin-uploaded) — không cần auth
+  const loadSystemFonts = async () => {
+    try {
+      const res = await fetch('/api/assets/fonts');
+      if (!res.ok) return;
+      const data = await res.json();
+      const fontList: { id: string; name: string; url: string; is_premium: boolean }[] = data.fonts || [];
+
+      // Inject @font-face vào document để trình duyệt tự load
+      for (const font of fontList) {
+        try {
+          const fontUrl = font.url.startsWith('http') ? font.url : `http://localhost:3000${font.url}`;
+          const style = document.createElement('style');
+          style.textContent = `@font-face { font-family: ${JSON.stringify(font.name)}; src: url(${JSON.stringify(fontUrl)}); }`;
+          document.head.appendChild(style);
+        } catch { /* lỗi tải 1 font không ảnh hưởng font khác */ }
+      }
+      setCustomFonts(fontList);
+    } catch (error) { console.error('Load system fonts error:', error); }
+  };
+
+  useEffect(() => { loadSystemFonts(); }, []);
 
   const getStagePointerPos = useCallback((e: any) => {
     const stage = stageRef.current;
@@ -703,7 +794,7 @@ export default function EditorPage() {
       }
       if (e.evt) e.evt.preventDefault();
       setSelectionRect({ visible: true, startX: pos.x, startY: pos.y, x: pos.x, y: pos.y, width: 0, height: 0 });
-      setSelectedIds([]);
+      setSelectedIds(['bg']);
       return;
     }
 
@@ -767,7 +858,7 @@ export default function EditorPage() {
     else if (typeof e.preventDefault === 'function') e.preventDefault();
     setTimeout(() => { setSelectionRect(prev => ({ ...prev, visible: false })); });
 
-    // Chá»‰ thá»±c hiá»‡n quÃ©t chá»n nhiá»u váº­t thá»ƒ náº¿u ngÆ°á»i dÃ¹ng kÃ©o rÃª chuá»™t táº¡o vÃ¹ng chá»n rÃµ rá»‡t (> 5px)
+    // Chỉ thực hiện quét chọn nhiều vật thể nếu người dùng kéo rê chuột tạo vùng chọn rõ rệt (> 5px)
     if (selectionRect.width > 5 && selectionRect.height > 5) {
       const selBox = selectionRectRef.current.getClientRect();
       const newSelectedIds = elements.filter(el => {
@@ -789,7 +880,7 @@ export default function EditorPage() {
     handleMouseUpRef.current = handleMouseUp;
   });
 
-  // â”€â”€ GLOBAL WINDOW MOUSE LISTENERS FOR SELECTION AND GROUP DRAG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── GLOBAL WINDOW MOUSE LISTENERS FOR SELECTION AND GROUP DRAG ────────────────
   useEffect(() => {
     if (!selectionRect.visible && !groupDrag.isDragging) return;
 
@@ -814,7 +905,7 @@ export default function EditorPage() {
   const handlePageChange = (newPageId: string) => {
     if (newPageId === currentPageId) return;
 
-    // === FIX #1: DÃ¹ng toBlob() upload thumbnail Ã¢m tháº§m thay vÃ¬ nhá»“i base64 vÃ o state ===
+    // === FIX #1: Dùng toBlob() upload thumbnail âm thầm thay vì nhồi base64 vào state ===
     if (stageRef.current && currentPageType === 'canvas' && currentPageId) {
       setSelectedIds([]);
       const capturedPageId = currentPageId;
@@ -885,13 +976,13 @@ export default function EditorPage() {
     setElements([]);
     setCurrentPageId(newPageId);
     setCurrentTime(totalDuration);
-    // PhÃ¡t sá»± kiá»‡n real-time cho cÃ¡c collaborator
+    // Phát sự kiện real-time cho các collaborator
     emitPageAdded(newPage);
   };
 
-  // XÃ³a trang: lá»c khá»i máº£ng + chuyá»ƒn sang trang lÃ¢n cáº­n
+  // Xóa trang: lọc khỏi mảng + chuyển sang trang lân cận
   const handleDeletePage = (pageIdToDelete: string) => {
-    if (pages.length <= 1) return; // Giá»¯ láº¡i Ã­t nháº¥t 1 trang
+    if (pages.length <= 1) return; // Giữ lại ít nhất 1 trang
     const idx = pages.findIndex(p => p.id === pageIdToDelete);
     const newPages = pages
       .filter(p => p.id !== pageIdToDelete)
@@ -904,7 +995,7 @@ export default function EditorPage() {
         setElements(nextPage.elements || []);
       }
     }
-    // PhÃ¡t sá»± kiá»‡n real-time cho cÃ¡c collaborator
+    // Phát sự kiện real-time cho các collaborator
     emitPageDeleted(pageIdToDelete);
   };
 
@@ -986,7 +1077,7 @@ export default function EditorPage() {
 
   // --- 5. Element CRUD ---
 
-  // Throttled: dÃ¹ng cho sá»± kiá»‡n liÃªn tá»¥c (DragMove, live typing)
+  // Throttled: dùng cho sự kiện liên tục (DragMove, live typing)
   const syncElements = useCallback((newElements: any[], _skipEmit = false) => {
     setElements(newElements);
     setPages(prevPages => prevPages.map(p =>
@@ -995,25 +1086,61 @@ export default function EditorPage() {
     if (!_skipEmit && currentPageId) {
       emitElementsUpdate(currentPageId, newElements);
     }
-    scheduleAutosave(); // Äáº·t láº¡i bá»™ Ä‘áº¿m 2.5s má»—i khi cÃ³ thay Ä‘á»•i
+    scheduleAutosave(); // Đặt lại bộ đếm 2.5s mỗi khi có thay đổi
   }, [currentPageId, emitElementsUpdate, scheduleAutosave]);
 
-  // Immediate: dÃ¹ng cho DragEnd/TransformEnd Ä‘á»ƒ Ä‘áº£m báº£o state cuá»‘i cÃ¹ng luÃ´n Ä‘Æ°á»£c gá»­i
+  // Immediate: dùng cho DragEnd/TransformEnd để đảm bảo state cuối cùng luôn được gửi
   const syncElementsImmediate = useCallback((newElements: any[], _skipEmit = false) => {
     setElements(newElements);
     setPages(prevPages => prevPages.map(p =>
       p.id === currentPageId ? { ...p, elements: newElements } : p
     ));
+    if (pendingUndoSnapshotRef.current && !commandHistory.isApplyingRef.current) {
+      commandHistory.pushCommand({
+        type: 'REORDER',
+        before: pendingUndoSnapshotRef.current,
+        after: JSON.parse(JSON.stringify(newElements))
+      });
+      pendingUndoSnapshotRef.current = null;
+    }
+
     if (!_skipEmit && currentPageId) {
       emitElementsUpdateImmediate(currentPageId, newElements);
     }
-    scheduleAutosave(); // Äáº·t láº¡i bá»™ Ä‘áº¿m 2.5s sau má»—i DragEnd/TransformEnd
-  }, [currentPageId, emitElementsUpdateImmediate, scheduleAutosave]);
+    scheduleAutosave(); // Đặt lại bộ đếm 2.5s sau mỗi DragEnd/TransformEnd
+  }, [currentPageId, emitElementsUpdateImmediate, scheduleAutosave, commandHistory]);
 
-  // GÃ¡n ref Ä‘á»ƒ handleUndo/handleRedo dÃ¹ng mÃ  khÃ´ng bá»‹ stale/hoisting
+  // Gán ref để handleUndo/handleRedo dùng mà không bị stale/hoisting
   syncElementsImmediateRef.current = syncElementsImmediate;
 
-  const addText = () => { pushUndoSnapshot(elements); syncElementsImmediate([...elements, { id: crypto.randomUUID(), type: 'text', x: stageWidth / 2 - 150, y: stageHeight / 2 - 25, text: 'Double click to edit', fontSize: 32, fontFamily: 'Arial', fill: '#000000', width: 300, fontStyle: 'normal', timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'fadeIn' } }]); };
+  const addText = (textType: 'heading' | 'subheading' | 'body' = 'heading') => { 
+    pushUndoSnapshot(elements); 
+    let fontSize = 32;
+    let text = 'Double click to edit';
+    let fontStyle = 'normal';
+    
+    if (textType === 'heading') {
+      fontSize = 56;
+      fontStyle = 'bold';
+      text = 'Add a heading';
+    } else if (textType === 'subheading') {
+      fontSize = 28;
+      fontStyle = 'bold';
+      text = 'Add a subheading';
+    } else {
+      fontSize = 18;
+      fontStyle = 'normal';
+      text = 'Add a little bit of body text';
+    }
+
+    syncElementsImmediate([...elements, { 
+      id: crypto.randomUUID(), type: 'text', 
+      x: stageWidth / 2 - 150, y: stageHeight / 2 - (fontSize/2), 
+      text, fontSize, fontFamily: 'Arial', fill: '#000000', 
+      width: 300, fontStyle, 
+      timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'fadeIn' } 
+    }]); 
+  };
   const addRectangle = () => { pushUndoSnapshot(elements); syncElementsImmediate([...elements, { id: crypto.randomUUID(), type: 'rect', x: stageWidth / 2 - 100, y: stageHeight / 2 - 100, width: 200, height: 200, fill: '#6366f1', timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]); };
   const addCircle = () => { pushUndoSnapshot(elements); syncElementsImmediate([...elements, { id: crypto.randomUUID(), type: 'circle', x: stageWidth / 2, y: stageHeight / 2, width: 100, height: 100, fill: '#f97316', timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]); };
   const addLine = () => { pushUndoSnapshot(elements); syncElementsImmediate([...elements, { id: crypto.randomUUID(), type: 'line', tool: 'line', points: [stageWidth / 2 - 100, stageHeight / 2, stageWidth / 2 + 100, stageHeight / 2], stroke: '#334155', strokeWidth: 2, tension: 0, lineCap: 'round', lineJoin: 'round', x: 0, y: 0, timeline: { start: 0, duration: 5, lane: elements.length }, animation: { in: 'none' } }]); };
@@ -1028,7 +1155,7 @@ export default function EditorPage() {
       let h = img.naturalHeight;
       if (w > MAX || h > MAX) {
         if (ratio >= 1) { w = MAX; h = Math.round(MAX / ratio); }
-        else             { h = MAX; w = Math.round(MAX * ratio); }
+        else { h = MAX; w = Math.round(MAX * ratio); }
       }
       pushUndoSnapshot(elements);
       syncElementsImmediate([...elements, {
@@ -1036,14 +1163,14 @@ export default function EditorPage() {
         x: stageWidth / 2 - w / 2, y: stageHeight / 2 - h / 2,
         width: w, height: h, src,
         // Pro flags for export gate
-        ...(flags?.isPro     && { is_premium: true }),
+        ...(flags?.isPro && { is_premium: true }),
         ...(flags?.createdByAi && { createdByAi: true }),
         timeline: { start: 0, duration: 5, lane: elements.length },
         animation: { in: 'none' },
       }]);
       setRecentStickers(prev => {
         if (prev.some(s => s.url === src)) return prev;
-        return [{ url: src, last_used: new Date().toISOString() }, ...prev].slice(0, 10);
+        return [{ url: src, is_premium: !!flags?.isPro, last_used: new Date().toISOString() }, ...prev].slice(0, 10);
       });
     };
     img.onerror = () => {
@@ -1052,7 +1179,7 @@ export default function EditorPage() {
         id: crypto.randomUUID(), type: 'image',
         x: stageWidth / 2 - 100, y: stageHeight / 2 - 100,
         width: 200, height: 200, src,
-        ...(flags?.isPro     && { is_premium: true }),
+        ...(flags?.isPro && { is_premium: true }),
         ...(flags?.createdByAi && { createdByAi: true }),
         timeline: { start: 0, duration: 5, lane: elements.length },
         animation: { in: 'none' },
@@ -1062,19 +1189,29 @@ export default function EditorPage() {
   };
 
   const addElement = useCallback((newEl: any) => {
-    // Push undo trÆ°á»›c khi thÃªm element má»›i (tá»« toolbox draw/shape/text)
+    // Push undo trước khi thêm element mới (từ toolbox draw/shape/text)
     pushUndoSnapshot(elements);
     syncElementsImmediate([...elements, newEl]);
   }, [elements, syncElementsImmediate, pushUndoSnapshot]);
 
-  // updateElement: throttled, Ä‘Ã¡nh dáº¥u element Ä‘ang bá»‹ kÃ©o Ä‘á»ƒ trÃ¡nh remote overwrite
+  // updateElement: throttled, đánh dấu element đang bị kéo để tránh remote overwrite
   const updateElement = (newAttrs: any) => {
+    if (newAttrs.id === 'bg') {
+      setPages(prev => prev.map(p => p.id === currentPageId ? { ...p, background_color: newAttrs.fill } : p));
+      setSaveStatus('unsaved');
+      return;
+    }
     draggingElementIdsRef.current.add(newAttrs.id);
     syncElements(elements.map(el => el.id === newAttrs.id ? newAttrs : el));
   };
 
-  // updateElementImmediate: gá»­i ngay, bá» lock sau DragEnd/TransformEnd
+  // updateElementImmediate: gửi ngay, bỏ lock sau DragEnd/TransformEnd
   const updateElementImmediate = (newAttrs: any) => {
+    if (newAttrs.id === 'bg') {
+      setPages(prev => prev.map(p => p.id === currentPageId ? { ...p, background_color: newAttrs.fill } : p));
+      setSaveStatus('unsaved');
+      return;
+    }
     draggingElementIdsRef.current.delete(newAttrs.id);
     syncElementsImmediate(elements.map(el => el.id === newAttrs.id ? newAttrs : el));
   };
@@ -1087,27 +1224,33 @@ export default function EditorPage() {
 
   const deleteSelectedElement = () => {
     if (selectedIds.length === 0) return;
-    // Push undo TRÆ¯á»šC khi xÃ³a Ä‘á»ƒ cÃ³ thá»ƒ khÃ´i phá»¥c
+    // Push undo TRƯỚC khi xóa để có thể khôi phục
     pushUndoSnapshot(elements);
-    syncElements(elements.filter(el => !selectedIds.includes(el.id)));
+    syncElementsImmediate(elements.filter(el => !selectedIds.includes(el.id)));
     setSelectedIds([]);
   };
 
   const moveElement = (direction: 'up' | 'down') => {
     if (selectedIds.length !== 1) return;
-    pushUndoSnapshot(elements); // Push undo trÆ°á»›c khi Ä‘á»•i z-index
+    pushUndoSnapshot(elements); // Push undo trước khi đổi z-index
     const index = elements.findIndex(el => el.id === selectedIds[0]);
     const newElements = [...elements];
     if (direction === 'up' && index < elements.length - 1) [newElements[index], newElements[index + 1]] = [newElements[index + 1], newElements[index]];
     else if (direction === 'down' && index > 0) [newElements[index], newElements[index - 1]] = [newElements[index - 1], newElements[index]];
-    syncElements(newElements);
+    syncElementsImmediate(newElements);
   };
 
-  // updateElement dÃ¹ng cho Toolbar (mÃ u, font, style) â€” cáº§n undo trÆ°á»›c khi Ä‘á»•i
+  // updateElement dùng cho Toolbar (màu, font, style) — cần undo trước khi đổi
   const updateElementWithUndo = useCallback((newAttrs: any) => {
+    if (newAttrs.id === 'bg') {
+      setPages(prev => prev.map(p => p.id === currentPageId ? { ...p, background_color: newAttrs.fill } : p));
+      setSaveStatus('unsaved');
+      if (currentPageId) emitPageBackgroundUpdated(currentPageId, newAttrs.fill);
+      return;
+    }
     pushUndoSnapshot(elements);
     syncElementsImmediate(elements.map(el => el.id === newAttrs.id ? newAttrs : el));
-  }, [elements, pushUndoSnapshot, syncElementsImmediate]);
+  }, [elements, pushUndoSnapshot, syncElementsImmediate, currentPageId, emitPageBackgroundUpdated]);
 
   const handleLayerDragStart = (e: React.DragEvent, index: number) => {
     setDraggedLayerIdx(index);
@@ -1134,7 +1277,7 @@ export default function EditorPage() {
     setDragOverIdx(null);
 
     if (draggedLayerIdx !== null && draggedLayerIdx !== dropIndex) {
-      pushUndoSnapshot(elements); // Push undo trÆ°á»›c khi thay Ä‘á»•i thá»© tá»± layer
+      pushUndoSnapshot(elements); // Push undo trước khi thay đổi thứ tự layer
       const reversedElements = [...elements].reverse();
       const [draggedItem] = reversedElements.splice(draggedLayerIdx, 1);
       reversedElements.splice(dropIndex, 0, draggedItem);
@@ -1143,8 +1286,7 @@ export default function EditorPage() {
         ...el, z_index: idx
       }));
 
-      setElements(newElements);
-      setPages(pages.map(p => p.id === currentPageId ? { ...p, elements: newElements } : p));
+      syncElementsImmediate(newElements);
     }
     setDraggedLayerIdx(null);
   };
@@ -1161,46 +1303,12 @@ export default function EditorPage() {
     } catch (error) { console.error(error); }
   };
 
-  const handleFontUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-
-    const fontName = file.name.split('.')[0];
-    try {
-      const formData = new FormData();
-      formData.append('font', file);
-      const res = await fetch('/api/assets/upload-font', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        body: formData,
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        alert(`Lá»—i upload font: ${err.error || 'Unknown error'}`);
-        return;
-      }
-      const data = await res.json();
-      const fontUrl: string = data.url;
-      const savedName: string = data.name || fontName;
-
-      const buffer = await (await fetch(fontUrl)).arrayBuffer();
-      const fontFace = new FontFace(savedName, buffer);
-      const loadedFace = await fontFace.load();
-      (document.fonts as any).add(loadedFace);
-
-      setCustomFonts(prev => prev.includes(savedName) ? prev : [...prev, savedName]);
-      alert(`Font "${savedName}" Ä‘Ã£ Ä‘Æ°á»£c náº¡p vÃ  lÆ°u thÃ nh cÃ´ng!`);
-    } catch (err) {
-      console.error('Font upload error:', err);
-      alert('Lá»—i khi upload font!');
-    }
-  };
+  // handleFontUpload removed — fonts are now managed by Admin only
 
   const handleRemoveBackground = async (element: any) => {
     if (!element || !element.src) return;
     // ── PRO GATE ──
-    if (!isSubscriptionActive(user)) {
+    if (!isPro) {
       setShowProModal({ feature: 'Auto Remove Background', desc: 'Tự động xóa nền bằng AI chỉ dành cho tài khoản Pro!' });
       return;
     }
@@ -1219,7 +1327,7 @@ export default function EditorPage() {
       });
 
       if (!uploadRes.ok) {
-        throw new Error('Lá»—i tá»« server tÃ¡ch ná»n');
+        throw new Error('Lỗi từ server tách nền');
       }
 
       const data = await uploadRes.json();
@@ -1228,14 +1336,14 @@ export default function EditorPage() {
       updateElement({ ...element, src: backendUrl, hasRemovedBg: true });
 
     } catch (err) {
-      console.error('Lá»—i khi xÃ³a ná»n:', err);
-      alert('ÄÃ£ xáº£y ra lá»—i khi xÃ³a ná»n. Vui lÃ²ng kiá»ƒm tra láº¡i AI service.');
+      console.error('Lỗi khi xóa nền:', err);
+      alert('Đã xảy ra lỗi khi xóa nền. Vui lòng kiểm tra lại AI service.');
     } finally {
       setIsProcessingBg(false);
     }
   };
 
-  // â”€â”€â”€ Brush Background Eraser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── Brush Background Eraser ──────────────────────────────────────────────
   const [brushEraserElement, setBrushEraserElement] = useState<any>(null);
 
   const handleBrushErase = (element: any) => {
@@ -1244,7 +1352,7 @@ export default function EditorPage() {
 
   const handleBrushEraseResult = (newSrc: string) => {
     if (!brushEraserElement) return;
-    // Push undo trÆ°á»›c khi Ã¡p dá»¥ng káº¿t quáº£ xÃ³a ná»n báº±ng cá»
+    // Push undo trước khi áp dụng kết quả xóa nền bằng cọ
     pushUndoSnapshot(elements);
     updateElementImmediate({ ...brushEraserElement, src: newSrc });
     setBrushEraserElement(null);
@@ -1254,7 +1362,7 @@ export default function EditorPage() {
 
   const canEdit = currentRole === 'owner' || currentRole === 'editor';
 
-  // KhÃ³a phÃ­m táº¯t cho viewer/commenter
+  // Khóa phím tắt cho viewer/commenter
   useEffect(() => {
     if (!isReadOnly) return;
     const blockShortcuts = (e: KeyboardEvent) => {
@@ -1271,7 +1379,7 @@ export default function EditorPage() {
     return () => window.removeEventListener('keydown', blockShortcuts, true);
   }, [isReadOnly]);
 
-  // Trong file EditorPage.tsx -> hÃ m handleSave
+  // Trong file EditorPage.tsx -> hàm handleSave
   const handleSave = async (isSilent = false) => {
     if (isReadOnly) return;
 
@@ -1306,9 +1414,28 @@ export default function EditorPage() {
           transformers.forEach(tr => tr.hide());
           const guidelines = stageRef.current.find(node => node.name() === 'guideline');
           guidelines.forEach(g => g.hide());
+
+          // Temporarily reset scale and position to capture exact design frame
+          const oldScaleX = stageRef.current.scaleX();
+          const oldScaleY = stageRef.current.scaleY();
+          const oldX = stageRef.current.x();
+          const oldY = stageRef.current.y();
+
+          stageRef.current.scale({ x: 1, y: 1 });
+          stageRef.current.position({ x: 0, y: 0 });
           stageRef.current.batchDraw();
 
-          const dataUrl = stageRef.current.toDataURL({ pixelRatio: 0.25 });
+          const dataUrl = stageRef.current.toDataURL({
+            x: 0,
+            y: 0,
+            width: stageWidth,
+            height: stageHeight,
+            pixelRatio: 0.25
+          });
+
+          // Restore scale and position
+          stageRef.current.scale({ x: oldScaleX, y: oldScaleY });
+          stageRef.current.position({ x: oldX, y: oldY });
 
           // Hiện lại tất cả sau khi chụp xong
           transformers.forEach(tr => tr.show());
@@ -1343,64 +1470,73 @@ export default function EditorPage() {
 
       const payload = {
         title: design?.title || 'Untitled Design',
-        thumbnail_url: uploadedThumbnailUrl || design?.thumbnail_url || '', // đồng bộ thumbnail tông thể của thiết kế
+        thumbnail_url: (finalPages.length > 0 ? finalPages[0].thumbnail : '') || design?.thumbnail_url || '', // Luôn lấy thumbnail của trang đầu tiên
         // === FIX #2 PATCH: Đọc từ REF thay vì state — luôn là giá trị mới nhất, không stale ===
         version: (activeUsers && activeUsers.length > 1) ? undefined : designVersionRef.current,
         pages: finalPages.map((page, index) => ({
           id: page.id,
           page_order: index,
-          thumbnail: page.thumbnail || '', // DÃ¹ng URL tá»« DB, khÃ´ng pháº£i base64
+          thumbnail: page.thumbnail || '', // Dùng URL từ DB, không phải base64
           type: page.type || 'canvas',
           width: page.width || 1920,
           height: page.height || 1080,
           content: page.content || '',
           transition: page.transition || null,
           duration: page.duration || 5,
-          elements: (page.type === 'canvas') ? page.elements.map((el: any, idx: number) => {
-            let dbType = el.type || el.element_type || 'text';
-            if (dbType === 'rect') dbType = 'shape';
-            return {
-              id: el.id,
-              element_type: dbType,
-              z_index: idx,
-              properties: el,
-              visible: true,
-              locked: false
-            };
-          }) : []
+          background_color: page.background_color || null, // [FIX] Lưu background color của trang
+          elements: (page.type === 'canvas') 
+            ? (page.elements ? page.elements.map((el: any, idx: number) => {
+                let dbType = el.type || el.element_type || 'text';
+                if (dbType === 'rect') dbType = 'shape';
+                return {
+                  id: el.id,
+                  element_type: dbType,
+                  z_index: idx,
+                  properties: el,
+                  visible: true,
+                  locked: false
+                };
+              }) : undefined)
+            : undefined
         }))
       };
 
       const result = await updateDesignFull(id!, payload);
 
-      // === FIX #2 PATCH: Ghi version má»›i ngay láº­p tá»©c vÃ o ref (khÃ´ng chá»  React re-render) ===
+      // === FIX #2 PATCH: Ghi version mới ngay lập tức vào ref (không chá»  React re-render) ===
       if (result?.updated_at) {
-        designVersionRef.current = result.updated_at; // GHI VÃ€O REF TRÆ¯á»œC
+        designVersionRef.current = result.updated_at; // GHI VÀO REF TRƯỜC
         setDesign((prev: any) => prev ? { ...prev, updated_at: result.updated_at } : prev);
       }
 
       setSaveStatus('saved');
-      if (!isSilent) alert('Ä Ã£ lÆ°u thÃ nh cÃ´ng! ');
+      if (!isSilent) alert('Đã lưu thành công! ');
+
+      // === AUTO THUMBNAIL: render offscreen cho các trang chưa có thumb sau khi save ===
+      // Chạy bất đồng bộ ngầm — không ảnh hưởng UX
+      setTimeout(() => {
+        generateAllPagesThumbnails(pages, currentPageId);
+      }, 500); // Delay nhỏ để tránh tranh tài nguyên với write-behind flush
     } catch (error: any) {
-      // === FIX #2: OCC - Xá»­ lÃ½ 409 Conflict ===
+      // === FIX #2: OCC - Xử lý 409 Conflict ===
       if (error?.status === 409 || (error?.message && error.message.includes('409'))) {
         setSaveStatus('unsaved');
         const shouldReload = window.confirm(
-          'âš ï¸ Xung Ä‘á»™t dá»¯ liá»‡u! NgÆ°á»i dÃ¹ng khÃ¡c Ä‘Ã£ lÆ°u thay Ä‘á»•i má»›i hÆ¡n.\n\n' +
-          'Nháº¥n OK Ä‘á»ƒ táº£i láº¡i phiÃªn báº£n má»›i nháº¥t (máº¥t thay Ä‘á»•i hiá»‡n táº¡i).\n' +
-          'Nháº¥n Cancel Ä‘á»ƒ tiáº¿p tá»¥c lÃ m viá»‡c (cÃ³ thá»ƒ ghi Ä‘Ã¨ lÃªn thay Ä‘á»•i cá»§a ngÆ°á»i khÃ¡c).'
+          '⚠️ Xung đột dữ liệu! Người dùng khác đã lưu thay đổi mới hơn.\n\n' +
+          'Nhấn OK để tải lại phiên bản mới nhất (mất thay đổi hiện tại).\n' +
+          'Nhấn Cancel để tiếp tục làm việc (có thể ghi đè lên thay đổi của người khác).'
         );
         if (shouldReload) window.location.reload();
       } else {
         setSaveStatus('unsaved');
-        console.error('Lá»—i khi lÆ°u:', error);
+        console.error('Lỗi khi lưu:', error);
       }
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Gáº¯n handleSave vÃ o ref Ä‘á»ƒ scheduleAutosave dÃ¹ng mÃ  khÃ´ng bá»‹ stale closure
+  // Gắn handleSave vào ref để scheduleAutosave dùng mà không bị stale closure
   handleSaveRef.current = handleSave;
 
   // Cleanup autosave timer khi unmount
@@ -1408,39 +1544,39 @@ export default function EditorPage() {
     return () => { if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current); };
   }, []);
 
-  // === FIX #6: beforeunload - Cháº·n Ä‘Ã³ng tab khi cÃ³ unsaved changes ===
+  // === FIX #6: beforeunload - Chặn đóng tab khi có unsaved changes ===
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      // DÃ¹ng saveStatusRef Ä‘á»ƒ trÃ¡nh stale closure (khÃ´ng pháº£i saveStatus state)
+      // Dùng saveStatusRef để tránh stale closure (không phải saveStatus state)
       if (saveStatusRef.current === 'unsaved' || saveStatusRef.current === 'saving') {
         e.preventDefault();
-        // Popup cáº£nh bÃ¡o tiÃªu chuáº©n cá»§a trÃ¬nh duyá»‡t
-        e.returnValue = 'Báº¡n cÃ³ nhá»¯ng thay Ä‘á»•i chÆ°a Ä‘Æ°á»£c lÆ°u. Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n thoÃ¡t?';
+        // Popup cảnh báo tiêu chuẩn của trình duyệt
+        e.returnValue = 'Bạn có những thay đổi chưa được lưu. Bạn có chắc chắn muốn thoát?';
         return e.returnValue;
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []); // Chá»‰ mount 1 láº§n nhá» dÃ¹ng saveStatusRef thay vÃ¬ saveStatus
+  }, []); // Chỉ mount 1 lần nhờ dùng saveStatusRef thay vì saveStatus
 
-  // === FIX #6: Force save trÆ°á»›c khi navigate vá» Dashboard ===
-  // Thay vÃ¬ dÃ¹ng tháº» <a href="/"> (bá» qua unsaved), dÃ¹ng hÃ m nÃ y Ä‘á»ƒ:
-  // 1. Kiá»ƒm tra saveStatus, náº¿u unsaved â†’ hiá»‡n overlay "Äang lÆ°u..."
-  // 2. Await handleSave() thÃ nh cÃ´ng â†’ navigate vá» "/"
+  // === FIX #6: Force save trước khi navigate về Dashboard ===
+  // Thay vì dùng thẻ <a href="/"> (bỏ qua unsaved), dùng hàm này để:
+  // 1. Kiểm tra saveStatus, nếu unsaved → hiện overlay "Đang lưu..."
+  // 2. Await handleSave() thành công → navigate về "/"
   const handleGoBackToDashboard = useCallback(async () => {
     if (saveStatusRef.current === 'saved') {
       navigate('/');
       return;
     }
-    // CÃ³ unsaved changes: force save trÆ°á»›c
+    // Có unsaved changes: force save trước
     setIsSavingBeforeNav(true);
     try {
       await handleSaveRef.current?.(true); // isSilent = true
       navigate('/');
     } catch {
-      // Náº¿u save tháº¥t báº¡i, váº«n cho phÃ©p thoÃ¡t sau khi xÃ¡c nháº­n
+      // Nếu save thất bại, vẫn cho phép thoát sau khi xác nhận
       const forceLeave = window.confirm(
-        'KhÃ´ng thá»ƒ lÆ°u tá»± Ä‘á»™ng. Báº¡n cÃ³ muá»‘n thoÃ¡t mÃ  khÃ´ng lÆ°u khÃ´ng?'
+        'Không thể lưu tự động. Bạn có muốn thoát mà không lưu không?'
       );
       if (forceLeave) navigate('/');
     } finally {
@@ -1455,29 +1591,8 @@ export default function EditorPage() {
 
   const executeExport = async () => {
     if (exportStatus !== 'idle') return;
-    if (exportSelectedPages.length === 0) return alert("Vui lÃ²ng chá»n Ã­t nháº¥t 1 trang!");
 
-    // â”€â”€ DOCX export (doc pages) â”€â”€
-    // ── PRO ELEMENTS GATE ─────────────────────────────────────────────────────
-    if (!isSubscriptionActive(user)) {
-      const pagesToCheck = pages.filter((p: any) => exportSelectedPages.includes(p.id));
-      const allEls: any[] = pagesToCheck.flatMap((p: any) =>
-        p.id === currentPageId ? elements : (p.elements || [])
-      );
-      const proEls: ProElement[] = allEls
-        .filter((el: any) => el.is_premium || el.createdByAi || el.hasRemovedBg)
-        .map((el: any) => ({
-          id: el.id,
-          name: el.name || (el.type === 'image' ? 'Hinh anh' : 'Element'),
-          reason: el.is_premium ? 'is_premium' : el.createdByAi ? 'ai' : 'remove_bg',
-        }));
-      if (proEls.length > 0) {
-        setExportBlockElements(proEls);
-        return;
-      }
-    }
-    // ─────────────────────────────────────────────────────────────────────────
-
+    // ── DOCX / PDF export (bỏ qua check chọn trang và Pro gate vì đây là doc engine) ──
     if (exportConfig.format === 'docx') {
       if (docEditorRef.current) {
         await docEditorRef.current.exportDocx();
@@ -1486,6 +1601,49 @@ export default function EditorPage() {
       return;
     }
 
+    if (exportConfig.format === 'pdf' && currentPageType === 'doc') {
+      if (docEditorRef.current) {
+        docEditorRef.current.exportPdf();
+      }
+      setShowExportPopover(false);
+      return;
+    }
+
+    if (exportSelectedPages.length === 0) return alert("Vui lòng chọn ít nhất 1 trang!");
+
+    // ── PRO ELEMENTS GATE ─────────────────────────────────────────────────────
+    if (!isPro) {
+      const pagesToCheck = pages.filter((p: any) => exportSelectedPages.includes(p.id));
+      const allEls: any[] = pagesToCheck.flatMap((p: any) =>
+        p.id === currentPageId ? elements : (p.elements || [])
+      );
+
+      // Lấy tập hợp tên các font Pro để tra cứu nhanh O(1)
+      const proFontNames = new Set(
+        customFonts.filter(f => f.is_premium).map(f => f.name)
+      );
+
+      const proEls: ProElement[] = allEls
+        .filter((el: any) => {
+          if (el.is_premium || el.createdByAi || el.hasRemovedBg) return true;
+          // Text dùng font Pro
+          if (el.type === 'text' && el.fontFamily && proFontNames.has(el.fontFamily)) return true;
+          return false;
+        })
+        .map((el: any) => ({
+          id: el.id,
+          name: el.name || (el.type === 'image' ? 'Hinh anh' : el.type === 'text' ? `Text (${el.fontFamily || 'font'})` : 'Element'),
+          reason: el.is_premium ? 'is_premium'
+            : el.createdByAi ? 'ai'
+            : el.hasRemovedBg ? 'remove_bg'
+            : 'pro_font',
+        }));
+      if (proEls.length > 0) {
+        setExportBlockElements(proEls);
+        return;
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     setExportStatus('rendering');
     setExportProgress(5);
@@ -1541,7 +1699,7 @@ export default function EditorPage() {
               setExportStatus('completed');
               setTimeout(() => setExportStatus('idle'), 3000);
             } catch (err) {
-              alert("Lá»—i táº£i video tá»« Server!");
+              alert("Lỗi tải video từ Server!");
               setExportStatus('idle');
             }
           };
@@ -1572,14 +1730,22 @@ export default function EditorPage() {
           const pptx = new pptxgen();
           pptx.layout = 'LAYOUT_16x9';
 
-          pagesToExport.forEach(p => {
+          for (let i = 0; i < pagesToExport.length; i++) {
+            const p = pagesToExport[i];
             const slide = pptx.addSlide();
 
             if (p.background_color) {
               slide.background = { color: p.background_color.replace('#', '') };
             }
 
-            const pageElements = p.id === currentPageId ? elements : (p.elements || []);
+            let pageElements = p.id === currentPageId ? elements : (p.elements || []);
+            if (p.id !== currentPageId && pageElements.length === 0 && lazyPageLoader) {
+              try {
+                pageElements = await lazyPageLoader.loadPageElements(p.id) || [];
+              } catch (e) {
+                console.error("Lỗi lazy load PPTX elements", e);
+              }
+            }
 
             pageElements.forEach((el: any) => {
 
@@ -1635,11 +1801,11 @@ export default function EditorPage() {
                     rotate
                   });
                 } catch (e) {
-                  console.error("Lá»—i khi thÃªm áº£nh vÃ o PPTX:", e);
+                  console.error("Lỗi khi thêm ảnh vào PPTX:", e);
                 }
               }
             });
-          });
+          }
 
           await pptx.writeFile({ fileName: `${design?.title || 'Kanva_Export'}.pptx` });
         } else {
@@ -1652,17 +1818,186 @@ export default function EditorPage() {
 
           if (pagesToExport.length === 1) {
             const mimeType = exportConfig.format === 'jpeg' ? 'image/jpeg' : 'image/png';
-            const dataURL = stageRef.current.toDataURL({ pixelRatio: exportScale, mimeType, quality: exportQuality });
+
+            let oldScaleX = 1, oldScaleY = 1, oldX = 0, oldY = 0;
+            if (stageRef.current) {
+              oldScaleX = stageRef.current.scaleX(); oldScaleY = stageRef.current.scaleY();
+              oldX = stageRef.current.x(); oldY = stageRef.current.y();
+              stageRef.current.scale({ x: 1, y: 1 }); stageRef.current.position({ x: 0, y: 0 });
+              stageRef.current.batchDraw();
+            }
+
+            const dataURL = stageRef.current.toDataURL({ x: 0, y: 0, width: stageWidth, height: stageHeight, pixelRatio: exportScale, mimeType, quality: exportQuality });
+
+            if (stageRef.current) {
+              stageRef.current.scale({ x: oldScaleX, y: oldScaleY }); stageRef.current.position({ x: oldX, y: oldY });
+              stageRef.current.batchDraw();
+            }
+
             saveAs(dataURL, `${design?.title}.${exportConfig.format}`);
           } else {
             const zip = new JSZip();
-            pagesToExport.forEach((p, i) => {
+
+            // Hàm load ảnh cho offscreen canvas
+            const loadOffscreenImage = (url: string): Promise<HTMLImageElement> => {
+              return new Promise((resolve, reject) => {
+                const img = new window.Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+              });
+            };
+
+            for (let i = 0; i < pagesToExport.length; i++) {
+              const p = pagesToExport[i];
               const mimeType = exportConfig.format === 'jpeg' ? 'image/jpeg' : 'image/png';
-              const dataURL = p.id === currentPageId
-                ? stageRef.current.toDataURL({ pixelRatio: exportScale, mimeType, quality: exportQuality })
-                : p.thumbnail;
-              if (dataURL) zip.file(`Page_${i + 1}.${exportConfig.format}`, dataURL.split(',')[1], { base64: true });
-            });
+
+              if (p.id === currentPageId) {
+                let oldScaleX = 1, oldScaleY = 1, oldX = 0, oldY = 0;
+                if (stageRef.current) {
+                  oldScaleX = stageRef.current.scaleX(); oldScaleY = stageRef.current.scaleY();
+                  oldX = stageRef.current.x(); oldY = stageRef.current.y();
+                  stageRef.current.scale({ x: 1, y: 1 }); stageRef.current.position({ x: 0, y: 0 });
+                  stageRef.current.batchDraw();
+                }
+
+                const dataURL = stageRef.current.toDataURL({ x: 0, y: 0, width: stageWidth, height: stageHeight, pixelRatio: exportScale, mimeType, quality: exportQuality });
+
+                if (stageRef.current) {
+                  stageRef.current.scale({ x: oldScaleX, y: oldScaleY }); stageRef.current.position({ x: oldX, y: oldY });
+                  stageRef.current.batchDraw();
+                }
+
+                if (dataURL) zip.file(`Page_${i + 1}.${exportConfig.format}`, dataURL.split(',')[1], { base64: true });
+              } else {
+                // OFFSCREEN RENDERING FOR HIGH QUALITY MULTI-IMAGE EXPORT
+                try {
+                  const container = document.createElement('div');
+                  const stage = new Konva.Stage({ container, width: p.width || stageWidth, height: p.height || stageHeight });
+                  const layer = new Konva.Layer();
+                  stage.add(layer);
+
+                  const bgColor = p.background_color || '#ffffff';
+                  layer.add(new Konva.Rect({
+                    width: p.width || stageWidth,
+                    height: p.height || stageHeight,
+                    fill: bgColor
+                  }));
+
+                  let pageElements = p.elements || [];
+                  if (pageElements.length === 0 && lazyPageLoader) {
+                    try {
+                      pageElements = await lazyPageLoader.loadPageElements(p.id) || [];
+                    } catch (err) {
+                      console.error("Failed to load elements for page", p.id, err);
+                    }
+                  }
+                  const sortedElements = [...pageElements].sort((a: any, b: any) => (a.z_index || 0) - (b.z_index || 0));
+
+                  for (const el of sortedElements) {
+                    let node: any = null;
+                    const commonProps = {
+                      id: el.id,
+                      x: el.x || 0,
+                      y: el.y || 0,
+                      width: el.width || 0,
+                      height: el.height || 0,
+                      rotation: el.rotation || 0,
+                      opacity: el.opacity ?? 1,
+                      scaleX: el.scaleX || 1,
+                      scaleY: el.scaleY || 1,
+                    };
+
+                    if (el.type === 'text') {
+                      node = new Konva.Text({
+                        ...commonProps,
+                        text: el.text || el.content || '',
+                        fontSize: el.fontSize,
+                        fontFamily: el.fontFamily || 'Arial',
+                        fill: el.fill || '#000000',
+                        align: el.align || 'center',
+                        fontStyle: el.fontStyle || 'normal',
+                      });
+                    } else if (el.type === 'rect' || el.type === 'shape') {
+                      node = new Konva.Rect({
+                        ...commonProps,
+                        fill: el.fill || '#000000',
+                        cornerRadius: el.cornerRadius || 0,
+                      });
+                    } else if (el.type === 'circle') {
+                      node = new Konva.Circle({
+                        ...commonProps,
+                        fill: el.fill || '#000000',
+                        radius: el.radius || Math.min(el.width || 0, el.height || 0) / 2,
+                      });
+                    } else if (el.type === 'image' || el.type === 'sticker') {
+                      if (el.src) {
+                        try {
+                          const imgObj = await loadOffscreenImage(el.src);
+                          let cropProps = {};
+                          if (el.cropRect && el.cropRect.width > 0 && el.cropRect.height > 0) {
+                            const cr = el.cropRect;
+                            const natW = imgObj.naturalWidth || el.width;
+                            const natH = imgObj.naturalHeight || el.height;
+                            const sx = el.width > 0 ? natW / el.width : 1;
+                            const sy = el.height > 0 ? natH / el.height : 1;
+
+                            commonProps.x = (el.x || 0) + cr.x;
+                            commonProps.y = (el.y || 0) + cr.y;
+                            commonProps.width = cr.width;
+                            commonProps.height = cr.height;
+
+                            cropProps = {
+                              crop: {
+                                x: cr.x * sx,
+                                y: cr.y * sy,
+                                width: cr.width * sx,
+                                height: cr.height * sy,
+                              }
+                            };
+                          }
+                          node = new Konva.Image({
+                            ...commonProps,
+                            image: imgObj,
+                            ...cropProps
+                          });
+                        } catch (err) {
+                          console.error("Failed to load offscreen image for export", err);
+                        }
+                      }
+                    }
+
+                    if (node) {
+                      layer.add(node);
+                    }
+                  }
+
+                  layer.draw();
+                  const dataURL = stage.toDataURL({ pixelRatio: exportScale, mimeType, quality: exportQuality });
+                  if (dataURL) {
+                    zip.file(`Page_${i + 1}.${exportConfig.format}`, dataURL.split(',')[1], { base64: true });
+                  }
+                  stage.destroy();
+                  container.remove();
+                } catch (e) {
+                  console.error("Offscreen rendering failed for page", i + 1, e);
+                  if (p.thumbnail) {
+                    if (p.thumbnail.startsWith('data:')) {
+                      zip.file(`Page_${i + 1}.${exportConfig.format}`, p.thumbnail.split(',')[1], { base64: true });
+                    } else {
+                      try {
+                        const res = await fetch(p.thumbnail);
+                        if (res.ok) {
+                          const blob = await res.blob();
+                          zip.file(`Page_${i + 1}.${exportConfig.format}`, blob);
+                        }
+                      } catch (err) { }
+                    }
+                  }
+                }
+              }
+            }
             const content = await zip.generateAsync({ type: "blob" });
             saveAs(content, "export.zip");
           }
@@ -1678,11 +2013,15 @@ export default function EditorPage() {
       }
     } catch (error) {
       setExportStatus('idle');
-      alert("Lá»—i xuáº¥t file!");
+      alert("Lỗi xuất file!");
     }
   };
 
-  // --- 8. Side Effects ---
+  const contentHash = useMemo(() => {
+    const pHash = pages.map(p => ({ ...p, thumbnail: undefined, _lastThumbAt: undefined }));
+    return JSON.stringify({ elements, pages: pHash, title: design?.title });
+  }, [elements, pages, design?.title]);
+
   useEffect(() => {
     if (isInitialMount.current) {
       if (elements.length > 0 || pages.length > 0) isInitialMount.current = false;
@@ -1694,7 +2033,7 @@ export default function EditorPage() {
     setSaveStatus('unsaved');
     const timer = setTimeout(() => { handleSave(true); }, 3000);
     return () => clearTimeout(timer);
-  }, [elements, pages, design?.title]);
+  }, [contentHash]);
 
   useEffect(() => {
     if (trRef.current && layerRef.current) {
@@ -1704,7 +2043,7 @@ export default function EditorPage() {
     }
   }, [selectedIds, elements]);
 
-  // â”€â”€ COMPREHENSIVE KEYBOARD SHORTCUTS (Canva-style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── COMPREHENSIVE KEYBOARD SHORTCUTS (Canva-style) ──────────────────────────
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -1713,17 +2052,17 @@ export default function EditorPage() {
       const key = e.key.toLowerCase();
       const ctrl = e.ctrlKey || e.metaKey;
 
-      // â”€â”€ Ctrl + S: Save (luÃ´n cháº·n máº·c Ä‘á»‹nh) â”€â”€
+      // ── Ctrl + S: Save (luôn chặn mặc định) ──
       if (ctrl && key === 's') {
         e.preventDefault();
         handleSave(false);
         return;
       }
 
-      // â”€â”€ Náº¿u Ä‘ang á»Ÿ Ã´ input/textarea/contentEditable â†’ chá»‰ cho Ctrl+S, bá» qua phÃ­m táº¯t khÃ¡c â”€â”€
+      // ── Nếu đang ở ô input/textarea/contentEditable → chỉ cho Ctrl+S, bỏ qua phím tắt khác ──
       if (isTextInput) return;
 
-      // â”€â”€ GRID VIEW SPECIFIC SHORTCUTS â”€â”€
+      // ── GRID VIEW SPECIFIC SHORTCUTS ──
       if (showGridView) {
         // Ctrl+C: Copy current page or selected pages
         if (ctrl && key === 'c') {
@@ -1791,21 +2130,89 @@ export default function EditorPage() {
         return; // Block other shortcuts in grid view
       }
 
-      // â”€â”€ Ctrl + Z: Undo â”€â”€
+      // ── Ctrl + C: Copy elements or single page ──
+      if (ctrl && key === 'c') {
+        e.preventDefault();
+        const activeIds = selectedIds.filter(id => id !== 'bg');
+        if (activeIds.length > 0) {
+          const elementsToCopy = elements.filter(el => activeIds.includes(el.id));
+          setCopiedElementsData(JSON.parse(JSON.stringify(elementsToCopy)));
+          setCopiedPageData(null);
+          setCollabNotification(`Đã copy ${elementsToCopy.length} phần tử`);
+          setTimeout(() => setCollabNotification(''), 3000);
+        } else if (currentPageId) {
+          const cur = pages.find(p => p.id === currentPageId);
+          if (cur) {
+            setCopiedPageData([JSON.parse(JSON.stringify(cur))]);
+            setCopiedElementsData(null);
+            setCollabNotification('Đã copy toàn bộ trang hiện tại');
+            setTimeout(() => setCollabNotification(''), 3000);
+          }
+        }
+        return;
+      }
+
+      // ── Ctrl + V: Paste elements or single page ──
+      if (ctrl && key === 'v') {
+        if (copiedElementsData && copiedElementsData.length > 0) {
+          // Paste internal elements (Ctrl+C elements trong canvas)
+          e.preventDefault();
+          pushUndoSnapshot(elements);
+          const newElements = copiedElementsData.map((el: any) => ({
+            ...el,
+            id: crypto.randomUUID(),
+            x: el.x + 20,
+            y: el.y + 20
+          }));
+          syncElementsImmediate([...elements, ...newElements]);
+          setSelectedIds(newElements.map((el: any) => el.id));
+          setCollabNotification(`Đã dán ${newElements.length} phần tử`);
+          setTimeout(() => setCollabNotification(''), 3000);
+        } else if (copiedPageData && copiedPageData.length > 0) {
+          // Paste internal pages (Ctrl+C page trong grid view)
+          e.preventDefault();
+          const curIdx = pages.findIndex(p => p.id === currentPageId);
+          const insertIdx = curIdx >= 0 ? curIdx + 1 : pages.length;
+          const newPages = copiedPageData.map((p: any, index: number) => {
+            const newPageId = crypto.randomUUID();
+            const newPage = {
+              ...p,
+              id: newPageId,
+              page_order: insertIdx + index,
+              elements: (p.elements || []).map((el: any) => ({ ...el, id: crypto.randomUUID() })),
+            };
+            emitPageAdded(newPage);
+            return newPage;
+          });
+          setPages(prev => {
+            const updated = [...prev];
+            updated.splice(insertIdx, 0, ...newPages);
+            return updated.map((p, i) => ({ ...p, page_order: i }));
+          });
+          setCurrentPageId(newPages[0].id);
+          setCollabNotification('Đã dán trang mới');
+          setTimeout(() => setCollabNotification(''), 3000);
+        }
+        // [FIX] Không e.preventDefault() khi không có nội dung internal để paste
+        // → Để browser xử lý → paste event sẽ fire → handlePaste sẽ bắt ảnh từ clipboard
+        return;
+      }
+
+      // ── Ctrl + Z: Undo ──
       if (ctrl && key === 'z' && !e.shiftKey) {
         e.preventDefault();
         handleUndo();
         return;
       }
 
-      // â”€â”€ Ctrl + Y: Redo â”€â”€
+      // ── Ctrl + Y: Redo ──
       if (ctrl && key === 'y') {
         e.preventDefault();
         handleRedo();
         return;
       }
 
-      // â”€â”€ Ctrl + A: Select All elements â”€â”€
+      // ── Ctrl + A: Select All elements ──
       if (ctrl && key === 'a') {
         e.preventDefault();
         if (currentPageType === 'canvas' && elements.length > 0) {
@@ -1814,14 +2221,14 @@ export default function EditorPage() {
         return;
       }
 
-      // â”€â”€ Ctrl + /: Toggle Sidebar â”€â”€
+      // ── Ctrl + /: Toggle Sidebar ──
       if (ctrl && e.key === '/') {
         e.preventDefault();
         setSidebarVisible(prev => !prev);
         return;
       }
 
-      // â”€â”€ Ctrl + K: Add Link â”€â”€
+      // ── Ctrl + K: Add Link ──
       if (ctrl && key === 'k') {
         e.preventDefault();
         if (selectedIds.length > 0) {
@@ -1831,14 +2238,14 @@ export default function EditorPage() {
         return;
       }
 
-      // â”€â”€ Ctrl + Enter: Add empty page â”€â”€
+      // ── Ctrl + Enter: Add empty page ──
       if (ctrl && e.key === 'Enter') {
         e.preventDefault();
         handleAddPage();
         return;
       }
 
-      // â”€â”€ Ctrl + Backspace: Delete empty page â”€â”€
+      // ── Ctrl + Backspace: Delete empty page ──
       if (ctrl && e.key === 'Backspace') {
         e.preventDefault();
         if (currentPageId && pages.length > 1) {
@@ -1851,7 +2258,7 @@ export default function EditorPage() {
         return;
       }
 
-      // â”€â”€ Ctrl + F1: Focus to toolbar â”€â”€
+      // ── Ctrl + F1: Focus to toolbar ──
       if (ctrl && e.key === 'F1') {
         e.preventDefault();
         const toolbar = document.querySelector('[data-toolbar="top"]') as HTMLElement;
@@ -1859,7 +2266,7 @@ export default function EditorPage() {
         return;
       }
 
-      // â”€â”€ Ctrl + F2: Focus to canvas â”€â”€
+      // ── Ctrl + F2: Focus to canvas ──
       if (ctrl && e.key === 'F2') {
         e.preventDefault();
         const canvas = document.querySelector('.konvajs-content canvas') as HTMLElement;
@@ -1867,7 +2274,7 @@ export default function EditorPage() {
         return;
       }
 
-      // â”€â”€ Delete / Backspace: Delete selected elements â”€â”€
+      // ── Delete / Backspace: Delete selected elements ──
       if ((e.key === 'Delete' || e.key === 'Backspace') && !editingId && selectedIds.length > 0) {
         e.preventDefault();
         pushUndoSnapshot(elements);
@@ -1875,7 +2282,7 @@ export default function EditorPage() {
         return;
       }
 
-      // â”€â”€ PhÃ­m táº¯t thÃªm pháº§n tá»­ (chá»‰ 1 phÃ­m, chá»‰ khi á»Ÿ canvas mode) â”€â”€
+      // ── Phím tắt thêm phần tử (chỉ 1 phím, chỉ khi ở canvas mode) ──
       if (currentPageType !== 'canvas') return;
 
       // T: Add Text
@@ -1908,39 +2315,88 @@ export default function EditorPage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIds, elements, editingId, currentPageType, currentPageId, pages, handleUndo, handleRedo, sidebarVisible, showGridView, gridSelectedPages, copiedPageData]);
+  }, [selectedIds, elements, editingId, currentPageType, currentPageId, pages, handleUndo, handleRedo, sidebarVisible, showGridView, gridSelectedPages, copiedPageData, copiedElementsData]);
+
+  // Dùng ref để tránh stale closure trong paste handler (addImageOriginal thay đổi mỗi render)
+  const addImageRef = useRef<typeof addImageOriginal>(addImageOriginal);
+  addImageRef.current = addImageOriginal;
+  const isReadOnlyRef = useRef(isReadOnly);
+  isReadOnlyRef.current = isReadOnly;
 
   useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
+    const handlePaste = async (e: ClipboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) return;
+      if (isReadOnlyRef.current) return;
+
       const items = e.clipboardData?.items;
       if (!items) return;
+
       for (let i = 0; i < items.length; i++) {
         if (items[i].type.indexOf('image') !== -1) {
           const file = items[i].getAsFile();
           if (!file) continue;
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const base64Url = event.target?.result as string;
-            const img = new window.Image();
-            img.src = base64Url;
-            img.onload = () => {
-              addImageOriginal(base64Url, img.width, img.height);
-              setUploadedImages(prev => [{ id: crypto.randomUUID(), url: base64Url, width: img.width, height: img.height }, ...prev]);
-
-              setActiveTab('uploads');
-            };
-          };
-          reader.readAsDataURL(file);
           e.preventDefault();
+
+          // Upload lên server trước → nhận server URL → mới thêm vào canvas
+          setUploadProgress({ visible: true, percent: 10 });
+          try {
+            const pastedFile = new File(
+              [file],
+              `clipboard_${Date.now()}.png`,
+              { type: file.type || 'image/png' }
+            );
+            const data = await uploadImageFile(pastedFile);
+            setUploadProgress({ visible: true, percent: 80 });
+
+            // Tính quota
+            refreshUser().catch(console.error);
+
+            // Đọc kích thước ảnh từ server URL
+            const img = new window.Image();
+            img.src = data.url;
+            img.onload = () => {
+              // Thêm vào canvas với server URL (bền vững, Ctrl+C sang tab vẫn OK)
+              addImageRef.current(data.url, img.width, img.height);
+              // Thêm vào sidebar Uploads
+              setUploadedImages(prev => [{
+                id: data.assetId ?? crypto.randomUUID(),
+                url: data.url,
+                width: img.width,
+                height: img.height
+              }, ...prev]);
+              setActiveTab('uploads');
+              setUploadProgress({ visible: true, percent: 100 });
+              setTimeout(() => setUploadProgress({ visible: false, percent: 0 }), 500);
+            };
+            img.onerror = () => {
+              addImageRef.current(data.url, 800, 600);
+              setUploadedImages(prev => [{
+                id: data.assetId ?? crypto.randomUUID(),
+                url: data.url, width: 800, height: 600
+              }, ...prev]);
+              setUploadProgress({ visible: false, percent: 0 });
+            };
+          } catch (err: any) {
+            console.error('[Paste] Upload error:', err);
+            setUploadProgress({ visible: false, percent: 0 });
+            alert(err.message || 'Không thể tải ảnh lên. Vui lòng thử lại!');
+          }
           break;
         }
       }
     };
+
     window.addEventListener('paste', handlePaste as any);
     return () => window.removeEventListener('paste', handlePaste as any);
-  }, [stageWidth, stageHeight, elements]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
 
   // States cho Version History
   const [showVersionModal, setShowVersionModal] = useState(false);
@@ -1956,14 +2412,14 @@ export default function EditorPage() {
   };
 
   const handleRestore = async (versionId: string) => {
-    if (!window.confirm("Báº¡n thiáº¿t káº¿ hiá»‡n táº¡i sáº½ bá»‹ ghi Ä‘Ã¨. Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n khÃ´i phá»¥c?")) return;
+    if (!window.confirm("Bạn thiết kế hiện tại sẽ bị ghi đè. Bạn có chắc chắn muốn khôi phục?")) return;
     setIsRestoring(true);
     try {
       await restoreDesignVersion(id!, versionId);
-      alert("ÄÃ£ khÃ´i phá»¥c thÃ nh cÃ´ng!");
+      alert("Đã khôi phục thành công!");
       window.location.reload();
     } catch (error) {
-      alert("Lá»—i khi khÃ´i phá»¥c");
+      alert("Lỗi khi khôi phục");
     } finally {
       setIsRestoring(false);
     }
@@ -1973,9 +2429,9 @@ export default function EditorPage() {
     await handleSave(true);
     try {
       await createDesignVersion(id!);
-      alert("ÄÃ£ chá»¥p vÃ  lÆ°u thÃ nh 1 phiÃªn báº£n lá»‹ch sá»­!");
+      alert("Đã chụp và lưu thành 1 phiên bản lịch sử!");
     } catch (error) {
-      alert("Lá»—i khi lÆ°u phiÃªn báº£n");
+      alert("Lỗi khi lưu phiên bản");
     }
   };
 
@@ -1983,12 +2439,12 @@ export default function EditorPage() {
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-sky-50 via-white to-pink-50 overflow-hidden font-sans">
 
-      {/* === FIX #6: Overlay Force-Save khi navigate vá» Dashboard === */}
+      {/* === FIX #6: Overlay Force-Save khi navigate về Dashboard === */}
       {isSavingBeforeNav && (
         <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
           <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin" />
-          <p className="text-white font-bold text-lg tracking-wide">Äang lÆ°u dá»¯ liá»‡u cuá»‘i cÃ¹ng...</p>
-          <p className="text-white/60 text-sm">Vui lÃ²ng khÃ´ng Ä‘Ã³ng cá»­a sá»• nÃ y</p>
+          <p className="text-white font-bold text-lg tracking-wide">Đang lưu dữ liệu cuối cùng...</p>
+          <p className="text-white/60 text-sm">Vui lòng không đóng cửa sổ này</p>
         </div>
       )}
 
@@ -2000,7 +2456,7 @@ export default function EditorPage() {
           exit={{ opacity: 0, y: -20 }}
           className="fixed top-16 left-1/2 -translate-x-1/2 z-[999] bg-indigo-600 text-white px-5 py-2.5 rounded-full shadow-xl font-bold text-sm flex items-center gap-2"
         >
-          <span>ðŸ”„</span> {collabNotification}
+          <span>🔄</span> {collabNotification}
         </motion.div>
       )}
 
@@ -2046,7 +2502,7 @@ export default function EditorPage() {
       {/* 2. MAIN AREA */}
       <div className="flex-1 flex overflow-hidden relative">
 
-        {/* Icon Rail â€” hidden for doc pages, sidebar toggle off, or grid view */}
+        {/* Icon Rail — hidden for doc pages, sidebar toggle off, or grid view */}
         {canEdit && currentPageType !== 'doc' && sidebarVisible && !showGridView && (
           <EditorSidebar
             activeTab={activeTab}
@@ -2055,13 +2511,22 @@ export default function EditorPage() {
               if (tab) { setShowPositionBox(false); setShowAnimateBox(false); }
             }}
             currentPageType={currentPageType}
-            handleFontUpload={handleFontUpload}
-            showLayerPanel={showLayerPanel}
-            onToggleLayerPanel={() => { setShowLayerPanel(v => !v); setShowAnimPanel(false); }}
+            showPositionBox={showPositionBox}
+            onTogglePositionBox={() => {
+              setShowPositionBox(v => {
+                const newVal = !v;
+                if (newVal) {
+                  setActiveTab(null);
+                  setShowAnimateBox(false);
+                }
+                return newVal;
+              });
+              setShowAnimPanel(false);
+            }}
           />
         )}
 
-        {/* Sidebar Drawer â€” hidden for doc pages, sidebar toggle off, or grid view */}
+        {/* Sidebar Drawer — hidden for doc pages, sidebar toggle off, or grid view */}
         {canEdit && currentPageType !== 'doc' && sidebarVisible && !showGridView && (
           <SidebarDrawer
             activeTab={activeTab}
@@ -2077,6 +2542,7 @@ export default function EditorPage() {
             addRectangle={addRectangle}
             addImage={addImage}
             recentStickers={recentStickers}
+            defaultStickers={defaultStickers}
             uploadedImages={uploadedImages}
             uploadProgress={uploadProgress}
             handleImageUpload={handleImageUpload}
@@ -2084,7 +2550,6 @@ export default function EditorPage() {
             addUploadedImageToCanvas={addUploadedImageToCanvas}
             addText={addText}
             customFonts={customFonts}
-            handleFontUpload={handleFontUpload}
             elements={elements}
             selectedIds={selectedIds}
             setSelectedIds={setSelectedIds}
@@ -2098,17 +2563,12 @@ export default function EditorPage() {
             selectedElement={selectedElement}
             updateElement={updateElement}
             updateElements={updateElements}
-            showLayerPanel={showLayerPanel}
-            onLayerReorder={(newEls: any[]) => {
-              pushUndoSnapshot(elements);
-              syncElementsImmediate(newEls);
-            }}
-            onLayerUpdateElement={updateElementWithUndo}
             user={user}
           />
         )}
 
-        {/* RIGHT PANEL: Animation Panel */}
+
+        {/* LEFT PANEL: Animation Panel */}
         <AnimatePresence>
           {showAnimPanel && canEdit && currentPageType === 'canvas' && (
             <AnimationPanel
@@ -2130,9 +2590,11 @@ export default function EditorPage() {
 
         <div className="flex-1 flex flex-col relative overflow-hidden">
 
+
+
           <div className={`flex-1 flex relative ${currentPageType === 'canvas' ? 'overflow-hidden' : currentPageType === 'doc' ? 'overflow-hidden' : currentPageType === 'sheet' ? 'overflow-hidden' : 'overflow-auto items-center justify-center p-8'}`}>
 
-            {/* â”€â”€ GRID VIEW OVERLAY WITH PREMIUM ANIMATION â”€â”€ */}
+            {/* ── GRID VIEW OVERLAY WITH PREMIUM ANIMATION ── */}
             <AnimatePresence>
               {showGridView && (
                 <motion.div
@@ -2159,7 +2621,7 @@ export default function EditorPage() {
                         }}
                         className="text-[13px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline transition cursor-pointer"
                       >
-                        {gridSelectedPages.size === pages.length ? 'Bá» chá»n táº¥t cáº£' : 'Chá»n táº¥t cáº£'}
+                        {gridSelectedPages.size === pages.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                       </button>
                     </div>
 
@@ -2172,7 +2634,7 @@ export default function EditorPage() {
                         <line x1="19" y1="12" x2="5" y2="12" />
                         <polyline points="12 19 5 12 12 5" />
                       </svg>
-                      Quay láº¡i thiáº¿t káº¿
+                      Quay lại thiết kế
                     </button>
                   </div>
 
@@ -2241,7 +2703,7 @@ export default function EditorPage() {
                                   onClick={e => { e.stopPropagation(); handleDeletePage(page.id); }}
                                   className="absolute top-1.5 right-1.5 w-5 h-5 bg-white/90 hover:bg-red-50 text-red-400 hover:text-red-600 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-[10px] shadow-sm"
                                 >
-                                  Ã—
+                                  ×
                                 </button>
                               )}
                             </div>
@@ -2284,14 +2746,18 @@ export default function EditorPage() {
               </div>
             )}
 
+
+
+
+
             <AnimatePresence>
               {selectedIds.length > 0 && currentPageType === 'canvas' && (
                 <motion.div
-                  initial={{ opacity: 0, y: 15, scale: 0.9 }}
+                  initial={{ opacity: 0, y: 5, scale: 0.9 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                  exit={{ opacity: 0, y: 5, scale: 0.9 }}
                   transition={{ duration: 0.25, ease: 'easeOut' }}
-                  className="absolute top-6 left-1/2 -translate-x-1/2 z-[60]"
+                  className="absolute top-2 left-1/2 -translate-x-1/2 z-[60]"
                 >
                   {selectedIds.length === 1 && selectedElement ? (
                     <ElementToolbar
@@ -2299,12 +2765,33 @@ export default function EditorPage() {
                       onUpdate={updateElementWithUndo}
                       onDelete={deleteSelectedElement}
                       onMove={moveElement}
-                      fontList={customFonts}
-                      onTogglePosition={() => { setShowPositionBox(!showPositionBox); setShowAnimateBox(false); }}
+                      fontList={Array.from(new Set(customFonts.map(f => f.name)))}
+                      onTogglePosition={() => {
+                        setShowPositionBox(!showPositionBox);
+                        setShowAnimateBox(false);
+                        setShowAnimPanel(false);
+                      }}
                       onToggleAnimate={() => {
                         setShowAnimPanel(prev => !prev);
-                        setShowLayerPanel(false);
+                        setShowPositionBox(false);
+                        setShowAnimateBox(false);
                         setHighlightedAnimId(selectedElement?.id || null);
+                      }}
+                      onAlign={(alignment) => {
+                        let newX = selectedElement.x;
+                        let newY = selectedElement.y;
+                        const w = selectedElement.width || 0;
+                        const h = selectedElement.height || 0;
+                        const padding = 20;
+                        switch (alignment) {
+                          case 'left': newX = padding; break;
+                          case 'center': newX = (stageWidth - w) / 2; break;
+                          case 'right': newX = stageWidth - w - padding; break;
+                          case 'top': newY = padding; break;
+                          case 'middle': newY = (stageHeight - h) / 2; break;
+                          case 'bottom': newY = stageHeight - h - padding; break;
+                        }
+                        updateElementWithUndo({ ...selectedElement, x: newX, y: newY });
                       }}
                       onRemoveBackground={handleRemoveBackground}
                       onBrushErase={handleBrushErase}
@@ -2314,11 +2801,15 @@ export default function EditorPage() {
                       }}
                     />
                   ) : (
-                    <div className="bg-white rounded-xl shadow-lg border border-slate-200 px-3 py-2 flex items-center gap-4">
+                    <div className="bg-white rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-200/80 px-3 py-2 flex items-center gap-4">
                       <span className="text-sm font-bold text-slate-600 px-2 border-r border-slate-200">{selectedIds.length} elements</span>
                       <button
-                        onClick={() => { setShowAnimateBox(!showAnimateBox); setShowPositionBox(false); }}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition ${showAnimateBox ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                        onClick={() => {
+                          setShowAnimPanel(!showAnimPanel);
+                          setShowPositionBox(false);
+                          setShowAnimateBox(false);
+                        }}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition ${showAnimPanel ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}
                       >
                         <Zap size={16} /> Animate
                       </button>
@@ -2380,7 +2871,7 @@ export default function EditorPage() {
                   stageRef={stageRef} layerRef={layerRef} trRef={trRef} selectionRectRef={selectionRectRef}
                   stageWidth={stageWidth} stageHeight={stageHeight} currentPage={currentPage}
                   elements={elements} selectedIds={selectedIds} editingId={editingId} setEditingId={(id) => {
-                    // Khi báº¯t Ä‘áº§u edit text: lÆ°u snapshot elements vÃ o ref Ä‘á»ƒ push undo sau khi blur
+                    // Khi bắt đầu edit text: lưu snapshot elements vào ref để push undo sau khi blur
                     if (id !== null) {
                       originalElementsBeforeTextEditRef.current = JSON.parse(JSON.stringify(elements));
                     }
@@ -2412,22 +2903,21 @@ export default function EditorPage() {
                   }
                   animPreviewCurrentStep={animPreviewCurrentStep}
                   animPreviewProgress={animPreviewProgress}
-                  isFreeUser={!isSubscriptionActive(user)}
+                  isFreeUser={!isPro}
                 />
 
 
 
 
-                {/* FLOATING TOOLBOX (Infinite Canvas) */}
-                {canEdit && !isPlaying && (
-                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[60] flex items-center floating-toolbar rounded-full border border-white/50 p-1.5 gap-1 transition-all">
+                {/* VERTICAL TOOLBAR (replaces Floating Toolbox) */}
+                {canEdit && !isPlaying && activeTab === 'tools' && (
+                  <div className="absolute top-20 left-[80px] z-[60] flex flex-col items-center floating-toolbar bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200 p-2 gap-2 shadow-xl transition-all">
                     {[
-                      { id: 'select', icon: <MousePointer2 size={18} />, title: 'Chuá»™t (Select)' },
-                      { id: 'draw', icon: <PenTool size={18} />, title: 'BÃºt váº½' },
-                      { id: 'shape', icon: <Shapes size={18} />, title: 'Váº­t thá»ƒ' },
-                      { id: 'line', icon: <Minus size={18} className="rotate-45" />, title: 'ÄÆ°á»ng káº»' },
-                      { id: 'sticky', icon: <StickyNote size={18} />, title: 'Ghi chÃº' },
-                      { id: 'text', icon: <Type size={18} />, title: 'VÄƒn báº£n' },
+                      { id: 'select', icon: <MousePointer2 size={18} />, title: 'Chuột (Select)' },
+                      { id: 'draw', icon: <PenTool size={18} />, title: 'Bút vẽ' },
+                      { id: 'shape', icon: <Shapes size={18} />, title: 'Vật thể' },
+                      { id: 'line', icon: <Minus size={18} className="rotate-45" />, title: 'Đường kẻ' },
+                      { id: 'text', icon: <Type size={18} />, title: 'Văn bản' },
                     ].map((tool) => (
                       <div key={tool.id} className="relative">
                         <button
@@ -2447,15 +2937,15 @@ export default function EditorPage() {
 
                         {/* Shape Popover */}
                         {tool.id === 'shape' && showShapePopover && activeTool === 'shape' && (
-                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-white rounded-xl shadow-xl border border-slate-100 flex gap-2">
+                          <div className="absolute top-1/2 left-full -translate-y-1/2 ml-2 p-2 bg-white rounded-xl shadow-xl border border-slate-100 flex flex-col gap-2">
                             {['rect', 'circle', 'triangle'].map((type) => (
                               <button
                                 key={type}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  // Xá»­ lÃ½ thÃªm váº­t thá»ƒ sáº½ Ä‘Æ°á»£c trigger qua prop hoáº·c xá»­ lÃ½ trá»±c tiáº¿p (táº¡m thá»i Ä‘áº·t icon má»“i)
-                                  // Trong thá»±c táº¿, EditorPage cáº§n cÃ³ hÃ m `addElement` 
-                                  // Äá»ƒ gá»n, CanvasEditor sáº½ láº¯ng nghe sá»± kiá»‡n onClick/Drag
+                                  // Xử lý thêm vật thể sẽ được trigger qua prop hoặc xử lý trực tiếp (tạm thời đặt icon mồi)
+                                  // Trong thực tế, EditorPage cần có hàm `addElement` 
+                                  // Để gọn, CanvasEditor sẽ lắng nghe sự kiện onClick/Drag
                                   setShowShapePopover(false);
                                 }}
                                 className="w-10 h-10 flex justify-center items-center rounded-lg bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition"
@@ -2477,29 +2967,34 @@ export default function EditorPage() {
                 {/* Resize Badge Indicator */}
                 {collaboratorResizing && collaboratorResizing.targetPageId === currentPageId && (
                   <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-indigo-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 animate-pulse">
-                    <span>âœï¸</span> {collaboratorResizing.userName} Ä‘ang Ä‘á»•i kÃ­ch cá»¡ trang...
+                    <span>✍️</span> {collaboratorResizing.userName} đang đổi kích cỡ trang...
                   </div>
                 )}
                 {/* Remote Cursors Overlay */}
-                {Array.from(remoteCursors.entries()).map(([userId, cursor]) => (
-                  <div
-                    key={userId}
-                    className="pointer-events-none absolute z-50 flex items-center gap-1"
-                    style={{ left: cursor.x, top: cursor.y, transform: 'translate(8px, 8px)' }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill={cursor.color}>
-                      <path d="M0 0L0 14L4 10L7 16L9 15L6 9L12 9Z" />
-                    </svg>
-                    <span
-                      className="text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap shadow-md"
-                      style={{ backgroundColor: cursor.color }}
+                {Array.from(remoteCursors.entries())
+                  .filter(([userId]) => {
+                    const userPage = userPageMap.get(userId);
+                    return !userPage || userPage === currentPageId; // Fallback: nếu chưa rõ page, vẫn hiện
+                  })
+                  .map(([userId, cursor]) => (
+                    <div
+                      key={userId}
+                      className="pointer-events-none absolute z-50 flex items-center gap-1"
+                      style={{ left: cursor.x, top: cursor.y, transform: 'translate(8px, 8px)' }}
                     >
-                      {cursor.name}
-                    </span>
-                  </div>
-                ))}
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill={cursor.color}>
+                        <path d="M0 0L0 14L4 10L7 16L9 15L6 9L12 9Z" />
+                      </svg>
+                      <span
+                        className="text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap shadow-md"
+                        style={{ backgroundColor: cursor.color }}
+                      >
+                        {cursor.name}
+                      </span>
+                    </div>
+                  ))}
 
-                {/* â”€â”€ ANIMATION ORDER BADGES â”€â”€ visible only when AnimationPanel is open */}
+                {/* ── ANIMATION ORDER BADGES ── visible only when AnimationPanel is open */}
                 {showAnimPanel && (() => {
                   const stageEl = stageRef.current;
                   if (!stageEl) return null;
@@ -2551,6 +3046,8 @@ export default function EditorPage() {
                 currentPageId={currentPageId}
                 onChange={(id: string, data: any) => setPages(prev => prev.map(p => p.id === id ? { ...p, ...data } : p))}
                 onInsertPage={handleInsertDocPage}
+                designId={id}
+                currentUserEmail={user?.email}
               />
             )}
             {currentPageType === 'sheet' && (
@@ -2564,7 +3061,7 @@ export default function EditorPage() {
             )}
           </div>
 
-          {/* 4. TIMELINE / PAGE SELECTOR â€” hidden for doc pages and grid view */}
+          {/* 4. TIMELINE / PAGE SELECTOR — hidden for doc pages and grid view */}
           {currentPageType !== 'doc' && !showGridView && (
             <div className="relative">
               {exportStatus === 'rendering' && exportConfig.format === 'mp4' && (
@@ -2598,18 +3095,21 @@ export default function EditorPage() {
                 totalDuration={totalDuration}
                 showGridView={showGridView}
                 setShowGridView={setShowGridView}
+                activeUsers={activeUsers}
+                userPageMap={userPageMap}
                 onOpenTransition={(targetPageId: string) => {
                   setTransitionTargetId(targetPageId);
                   setShowTransitionBox(true);
                   setShowAnimateBox(false);
                   setShowPositionBox(false);
+                  setShowAnimPanel(false);
                   setActiveTab(null);
                 }}
               />
             </div>
           )}
 
-          {/* 5. INFO BAR â€” hidden for doc pages and grid view */}
+          {/* 5. INFO BAR — hidden for doc pages and grid view */}
           {currentPageType !== 'doc' && !showGridView && (
             <div className="h-8 bg-white/60 backdrop-blur-md border-t border-white flex items-center justify-between px-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest shrink-0">
               <div className="flex gap-4">
@@ -2653,7 +3153,7 @@ export default function EditorPage() {
         exportFormat={exportConfig.format}
       />
 
-      {/* READ-ONLY OVERLAY (viewer/commenter): KhÃ³a toÃ n bá»™ tÆ°Æ¡ng tÃ¡c trÃªn Canvas */}
+      {/* READ-ONLY OVERLAY (viewer/commenter): Khóa toàn bộ tương tác trên Canvas */}
       {isReadOnly && (
         <div
           className="fixed inset-0 z-[15] pointer-events-auto"
@@ -2680,7 +3180,7 @@ export default function EditorPage() {
               autoFocus
               onKeyDown={e => {
                 if (e.key === 'Enter' && linkUrl.trim()) {
-                  // Ãp dá»¥ng link lÃªn element Ä‘Æ°á»£c chá»n
+                  // Áp dụng link lên element được chọn
                   const updatedEls = elements.map(el =>
                     selectedIds.includes(el.id) ? { ...el, link: linkUrl.trim() } : el
                   );
@@ -2754,6 +3254,12 @@ export default function EditorPage() {
 
   );
 }
-// helo chÃ o cÃ¡c con vá»£
-// helo chÃ o cÃ¡c con vá»£
+// helo chào các con vợ
+// helo chào các con vợ
+
+
+
+
+
+
 

@@ -50,16 +50,18 @@ export const uploadImage = async (req: Request, res: Response) => {
     // ─── [WORKSPACE] Lấy workspaceId từ context (nếu có) ────────────────────
     const workspace = (req as any).workspace;
     const workspaceId: string | undefined = workspace?.id;
+    const workspaceType = workspace?.type;
 
     // Ghi vào DB assets, kèm team_id để phân biệt tài sản của Workspace nào
     // RETURNING id để frontend lấy assetId gọi cloneAssetForDesign
     let assetId: string | null = null;
+    const assetTeamId = (workspaceId && workspaceType !== 'personal') ? workspaceId : null;
     try {
       const insertResult = await db.query(
         `INSERT INTO assets (name, type, url, uploaded_by, team_id, is_premium, file_size, created_at)
          VALUES ($1, $2, $3, $4, $5, false, $6, NOW())
          RETURNING id`,
-        [file.originalname, 'image', imageUrl, user.id, workspaceId ?? null, file.size]
+        [file.originalname, 'image', imageUrl, user.id, assetTeamId, file.size]
       );
       assetId = insertResult.rows[0]?.id ?? null;
       console.log(`[Upload] Asset inserted: id=${assetId}, user=${user.id}, workspace=${workspaceId ?? 'personal'}, file=${file.originalname}`);
@@ -68,7 +70,7 @@ export const uploadImage = async (req: Request, res: Response) => {
     }
 
     // ─── [WORKSPACE] Trừ dung lượng vào Workspace (không phải User cá nhân) ─
-    await incrementStorageUsage(user.id, file.size, workspaceId).catch((e) => {
+    await incrementStorageUsage(user.id, file.size, workspaceId, workspaceType).catch((e) => {
       console.error('[Upload] Failed to increment storage:', e);
     });
 
@@ -309,6 +311,27 @@ export const getUserFonts = async (req: Request, res: Response) => {
 };
 
 /**
+ * GET /api/assets/fonts
+ * [PUBLIC] Trả về danh sách font hệ thống do Admin upload.
+ * Bao gồm cả is_premium để frontend biết cần gói Pro hay không.
+ * Không cần authenticate — Editor cần load fonts trước khi user login.
+ */
+export const getSystemFonts = async (_req: Request, res: Response) => {
+  try {
+    const result = await db.query(
+      `SELECT id, name, url, is_premium
+       FROM assets
+       WHERE type = 'font' AND uploaded_by IS NULL
+       ORDER BY name ASC`
+    );
+    res.json({ fonts: result.rows });
+  } catch (error) {
+    console.error('Get System Fonts Error:', error);
+    res.status(500).json({ error: 'Failed to fetch system fonts' });
+  }
+};
+
+/**
    * GET /api/assets/user-images
    * Trả về danh sách hình ảnh đã upload của user hiện tại.
    * Luôn lọc theo uploaded_by để đảm bảo privacy.
@@ -318,21 +341,211 @@ export const getUserImages = async (req: Request, res: Response) => {
     const user = (req as any).user;
     if (!user?.id) return res.status(401).json({ error: 'Unauthorized' });
 
-    // CHỈ lấy Bản ghi A (ảnh user upload), KHÔNG lấy design_clone (Bản ghi B)
-    const result = await db.query(
-      `SELECT id, name, url, file_size, created_at
-       FROM assets
-       WHERE type = 'image'
-         AND uploaded_by = $1
-         AND (metadata->>'design_clone' IS NULL OR metadata->>'design_clone' = 'false')
-       ORDER BY created_at DESC`,
-      [user.id]
-    );
+    const workspace = (req as any).workspace;
+    const workspaceId = workspace?.id;
+    const workspaceType = workspace?.type;
+
+    const personalOnly = req.query.personalOnly === 'true';
+
+    const ignoreWorkspace = req.query.ignoreWorkspace === 'true';
+
+    let result;
+    if (ignoreWorkspace) {
+      // ─── Lấy tất cả ảnh của user không phân biệt workspace ───
+      result = await db.query(
+        `SELECT a.id, a.name, a.type, 
+                CASE WHEN a.type = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
+                a.file_size, a.created_at
+         FROM assets a
+         LEFT JOIN designs d ON a.metadata->>'design_id' = d.id::text
+         WHERE a.type IN ('image', 'pptx')
+           AND a.uploaded_by = $1
+           AND (a.metadata->>'design_clone' IS NULL OR a.metadata->>'design_clone' = 'false')
+         ORDER BY a.created_at DESC`,
+        [user.id]
+      );
+    } else if (workspaceId && workspaceType !== 'personal') {
+      const queryParams: any[] = [workspaceId];
+      let uploadedByFilter = '';
+      if (personalOnly) {
+        uploadedByFilter = `AND uploaded_by = $2`;
+        queryParams.push(user.id);
+      }
+
+      // ─── [WORKSPACE] Filter by team_id if inside a Team ───
+      result = await db.query(
+        `SELECT a.id, a.name, a.type, 
+                CASE WHEN a.type = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
+                a.file_size, a.created_at
+         FROM assets a
+         LEFT JOIN designs d ON a.metadata->>'design_id' = d.id::text
+         WHERE a.type IN ('image', 'pptx')
+           AND a.team_id = $1
+           ${uploadedByFilter.replace('uploaded_by', 'a.uploaded_by')}
+           AND (a.metadata->>'design_clone' IS NULL OR a.metadata->>'design_clone' = 'false')
+         ORDER BY a.created_at DESC`,
+        queryParams
+      );
+    } else {
+      // ─── [WORKSPACE] Filter by personal (team_id IS NULL) ───
+      result = await db.query(
+        `SELECT a.id, a.name, a.type, 
+                CASE WHEN a.type = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
+                a.file_size, a.created_at
+         FROM assets a
+         LEFT JOIN designs d ON a.metadata->>'design_id' = d.id::text
+         WHERE a.type IN ('image', 'pptx')
+           AND a.uploaded_by = $1
+           AND a.team_id IS NULL
+           AND (a.metadata->>'design_clone' IS NULL OR a.metadata->>'design_clone' = 'false')
+         ORDER BY a.created_at DESC`,
+        [user.id]
+      );
+    }
 
     res.json({ images: result.rows });
   } catch (error) {
     console.error('Get User Images Error:', error);
-    res.status(500).json({ error: 'Failed to fetch user images' });
+    res.status(500).json({ error: 'Không thể lấy danh sách hình ảnh' });
+  }
+};
+
+export const getAssetUsages = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const user = (req as any).user;
+    if (!user?.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    // [SECURITY FIX - IDOR] Chỉ cho phép xem usages của asset do chính user upload.
+    // Ngăn user A dùng API này để liệt kê các design của user B đang dùng ảnh của user B.
+    const asset = await db.getOne(
+      'SELECT url FROM assets WHERE id = $1 AND uploaded_by = $2',
+      [id, user.id]
+    );
+    if (!asset) return res.status(404).json({ error: 'Asset không tồn tại hoặc bạn không có quyền xem' });
+    
+    const usages = await db.query(
+      `SELECT DISTINCT d.id, d.title, d.thumbnail_url
+       FROM designs d
+       JOIN design_pages dp ON d.id = dp.design_id
+       JOIN design_elements de ON dp.id = de.page_id
+       WHERE (
+         de.properties->>'src' = $1
+         OR de.properties->>'src' = $2
+       ) AND d.is_deleted = false`,
+      [asset.url, `http://localhost:3000${asset.url}`]
+    );
+
+    // [FIX PPTX] Nếu asset là PPTX, cũng tìm designs đang dùng các ảnh con
+    const fullAsset = await db.getOne(
+      'SELECT type, metadata FROM assets WHERE id = $1',
+      [id]
+    );
+    if (fullAsset?.type === 'pptx') {
+      const metadata = typeof fullAsset.metadata === 'string'
+        ? JSON.parse(fullAsset.metadata)
+        : fullAsset.metadata;
+      const extractedImages: string[] = metadata?.extracted_images || [];
+      if (extractedImages.length > 0) {
+        // Tìm tất cả designs dùng bất kỳ ảnh con nào của PPTX này
+        const extraUsages = await db.query(
+          `SELECT DISTINCT d.id, d.title, d.thumbnail_url
+           FROM designs d
+           JOIN design_pages dp ON d.id = dp.design_id
+           JOIN design_elements de ON dp.id = de.page_id
+           WHERE (
+             de.properties->>'src' = ANY($1::text[])
+             OR de.properties->>'src' = ANY($2::text[])
+           ) AND d.is_deleted = false`,
+          [
+            extractedImages,
+            extractedImages.map((url: string) => `http://localhost:3000${url}`)
+          ]
+        );
+        // Merge, dedup by id
+        const seen = new Set(usages.rows.map((r: any) => r.id));
+        for (const row of extraUsages.rows) {
+          if (!seen.has(row.id)) {
+            usages.rows.push(row);
+            seen.add(row.id);
+          }
+        }
+      }
+    }
+
+    res.json({ usages: usages.rows });
+  } catch (err) {
+    console.error('getAssetUsages error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+export const forceDeleteUserAsset = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const user = (req as any).user;
+    if (!user?.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    // [SECURITY FIX - IDOR] Luôn lọc theo uploaded_by để chặn user A xóa ảnh của user B.
+    // Nếu không có check này, bất kỳ user đăng nhập nào cũng có thể xóa asset của người khác
+    // chỉ bằng cách đoán/brute-force UUID của asset đó.
+    const asset = await db.getOne(
+      'SELECT id, url, file_size, uploaded_by, team_id, type, metadata FROM assets WHERE id = $1 AND uploaded_by = $2',
+      [id, user.id]
+    );
+    if (!asset) return res.status(404).json({ error: 'Asset not found' });
+
+    // Xóa các elements trong tất cả các designs đang sử dụng ảnh này
+    // [FIX] Search cả URL tương đối và URL tuyệt đối (có http://localhost:3000 prefix)
+    await db.execute(
+      `DELETE FROM design_elements WHERE properties->>'src' = $1 OR properties->>'src' = $2`,
+      [asset.url, `http://localhost:3000${asset.url}`]
+    );
+
+    // Xóa mọi Bản ghi (A và B) trỏ tới file này
+    await db.execute('DELETE FROM assets WHERE url = $1', [asset.url]);
+
+    // Xóa file vật lý
+    const filePath = path.join(__dirname, '..', 'public', asset.url);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    // Nếu là PPTX, xóa các ảnh con và design_elements tham chiếu đến chúng
+    if (asset.type === 'pptx') {
+      const metadata = typeof asset.metadata === 'string' ? JSON.parse(asset.metadata) : asset.metadata;
+      if (metadata && Array.isArray(metadata.extracted_images)) {
+        for (const imgUrl of metadata.extracted_images) {
+          try {
+            // [FIX 404] Xóa design_elements đang tham chiếu đến ảnh con này
+            // Search cả URL tương đối và tuyệt đối (có prefix http://localhost:3000)
+            await db.execute(
+              `DELETE FROM design_elements WHERE properties->>'src' = $1 OR properties->>'src' = $2`,
+              [imgUrl, `http://localhost:3000${imgUrl}`]
+            );
+
+            const imgPath = path.join(__dirname, '..', 'public', imgUrl);
+            if (fs.existsSync(imgPath)) {
+              fs.unlinkSync(imgPath);
+            }
+          } catch (err) {
+            console.warn(`[forceDeleteUserAsset] Lỗi xóa ảnh con PPTX: ${imgUrl}`, err);
+          }
+        }
+      }
+    }
+
+    // Trừ dung lượng quota
+    const { decrementStorageUsage } = await import('../middleware/checkStorageQuota.js');
+    const fileSizeBytes = Number(asset.file_size ?? 0);
+    if (fileSizeBytes > 0) {
+       await decrementStorageUsage(asset.uploaded_by, fileSizeBytes, asset.team_id).catch(() => {});
+    }
+
+    res.json({ success: true, message: 'Ảnh đã được xóa khỏi hệ thống và tất cả dự án.' });
+  } catch (err) {
+    console.error('forceDeleteUserAsset error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
@@ -443,97 +656,6 @@ export const removeBgBrush = async (req: Request, res: Response) => {
 
 /**
  * POST /api/assets/clone-for-design
- * Khi user kéo ảnh từ Thư viện Uploads vào Canvas, Frontend gọi API này.
- * Hệ thống tạo Bản ghi B trỏ cùng URL với Bản ghi A (không copy file vật lý).
- * Bản ghi B gán với design_id → ảnh tồn tại độc lập khỏi thư viện cá nhân.
- *
- * Body: { assetId: string, designId: string }
- * Response: { clonedAssetId: string, url: string }
- */
-export const cloneAssetForDesign = async (req: Request, res: Response) => {
-  try {
-    const user = (req as any).user;
-    if (!user?.id) return res.status(401).json({ error: 'Unauthorized' });
-
-    const { assetId, designId } = req.body;
-    if (!assetId || !designId) {
-      return res.status(400).json({ error: 'assetId và designId là bắt buộc' });
-    }
-
-    // [SECURITY FIX - BOLA/IDOR] 1. Kiểm tra quyền của User đối với Design (Phải là owner hoặc editor)
-    const designRes = await db.query('SELECT user_id, team_id FROM designs WHERE id = $1 AND is_deleted = false', [designId]);
-    if (designRes.rows.length === 0) return res.status(404).json({ error: 'Design không tồn tại' });
-    
-    const design = designRes.rows[0];
-    let hasEditAccess = design.user_id === user.id;
-
-    if (!hasEditAccess) {
-      const shareRes = await db.query(
-        "SELECT role FROM design_shares WHERE design_id = $1 AND user_id = $2 AND role IN ('owner', 'editor')", 
-        [designId, user.id]
-      );
-      if (shareRes.rows.length > 0) hasEditAccess = true;
-    }
-    if (!hasEditAccess) {
-      return res.status(403).json({ error: 'Bạn không có quyền chỉnh sửa bản thiết kế này' });
-    }
-
-    // Lấy thông tin Bản ghi A (asset gốc)
-    const original = await db.getOne(
-      `SELECT id, name, type, url, file_size, width, height, metadata, uploaded_by, team_id
-       FROM assets WHERE id = $1`,
-      [assetId]
-    );
-    if (!original) {
-      return res.status(404).json({ error: 'Asset không tồn tại' });
-    }
-
-    // [SECURITY FIX - BOLA/IDOR] 2. Kiểm tra quyền của User đối với Asset gốc
-    const isPublicAsset = !original.uploaded_by || original.uploaded_by === 'admin' || (original.metadata && original.metadata.is_public);
-    if (!isPublicAsset && original.uploaded_by !== user.id) {
-      // Nếu là asset của team, kiểm tra xem user có nằm trong team_id đó không
-      if (original.team_id) {
-        const teamCheck = await db.query('SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2', [original.team_id, user.id]);
-        if (teamCheck.rows.length === 0) {
-          return res.status(403).json({ error: 'Bạn không có quyền truy cập tài nguyên của team này' });
-        }
-      } else {
-        return res.status(403).json({ error: 'Bạn không có quyền sử dụng tài nguyên này' });
-      }
-    }
-
-    // Tạo Bản ghi B: trỏ cùng URL, gán design_id, đánh dấu là design_clone
-    const { v4: uuidv4 } = await import('uuid');
-    const cloneId = uuidv4();
-
-    await db.execute(
-      `INSERT INTO assets (id, name, type, url, uploaded_by, team_id, is_premium, file_size, width, height, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5, NULL, false, $6, $7, $8,
-         COALESCE($9::jsonb, '{}'::jsonb) || $10::jsonb,
-         NOW())`,
-      [
-        cloneId,
-        original.name,
-        original.type,
-        original.url,
-        user.id,
-        original.file_size ?? 0,
-        original.width ?? null,
-        original.height ?? null,
-        JSON.stringify(original.metadata ?? {}),
-        // Ghi metadata đặc biệt: đây là bản clone cho design, không hiện trong Uploads
-        JSON.stringify({ design_clone: true, design_id: designId, source_asset_id: assetId }),
-      ]
-    );
-
-    console.log(`[CloneAsset] Bản ghi B created: clone=${cloneId}, source=${assetId}, design=${designId}`);
-
-    res.status(201).json({ clonedAssetId: cloneId, url: original.url });
-  } catch (error) {
-    console.error('Clone Asset For Design Error:', error);
-    res.status(500).json({ error: 'Không thể nhân bản tài nguyên cho design' });
-  }
-};
 
 /**
  * DELETE /api/assets/:id
@@ -550,7 +672,7 @@ export const deleteUserAsset = async (req: Request, res: Response) => {
 
     // Chỉ cho phép xóa asset do chính user upload (và không phải design_clone)
     const asset = await db.getOne(
-      `SELECT id, url, file_size, uploaded_by, metadata, team_id
+      `SELECT id, url, file_size, uploaded_by, metadata, team_id, type
        FROM assets
        WHERE id = $1 AND uploaded_by = $2
          AND (metadata->>'design_clone' IS NULL OR metadata->>'design_clone' = 'false')`,
@@ -592,6 +714,29 @@ export const deleteUserAsset = async (req: Request, res: Response) => {
             console.error('[DeleteAsset] Failed to decrement storage:', e);
           });
         }
+        // Xử lý xóa thêm cho Asset loại PPTX
+        if (asset.type === 'pptx') {
+          const metadata = typeof asset.metadata === 'string' ? JSON.parse(asset.metadata) : asset.metadata;
+          if (metadata && Array.isArray(metadata.extracted_images)) {
+            for (const imgUrl of metadata.extracted_images) {
+              try {
+                // [FIX] Xóa design_elements tham chiếu đến ảnh con (cả URL tương đối và tuyệt đối)
+                await db.execute(
+                  `DELETE FROM design_elements WHERE properties->>'src' = $1 OR properties->>'src' = $2`,
+                  [imgUrl, `http://localhost:3000${imgUrl}`]
+                );
+                const imgPath = path.join(__dirname, '..', 'public', imgUrl);
+                if (fs.existsSync(imgPath)) {
+                  fs.unlinkSync(imgPath);
+                  console.log(`[DeleteAsset] File ảnh con của PPTX đã xóa: ${imgUrl}`);
+                }
+              } catch (err) {
+                console.warn('[DeleteAsset] Lỗi xóa file con PPTX:', err);
+              }
+            }
+          }
+        }
+
       } catch (e) {
         // Không chặn response nếu xóa file thất bại — GC sẽ dọn sau
         console.warn(`[DeleteAsset] Không xóa được file vật lý (GC sẽ dọn): ${asset.url}`, e);

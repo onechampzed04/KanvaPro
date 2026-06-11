@@ -23,6 +23,7 @@ export interface CollaboratorInfo {
   avatarColor: string;
   socketId: string;
   joinedAt: number;
+  activePageId?: string;
 }
 
 export interface ElementDelta {
@@ -52,6 +53,7 @@ interface UseCollaborationOptions {
   onInitialRevision?: (revision: number) => void;
   // [FIX 6] Callback khi nhận thumbnail mới từ collaborator khác
   onRemotePageThumbnailUpdated?: (pageId: string, thumbUrl: string) => void;
+  onRemotePageBackgroundUpdated?: (pageId: string, background_color: string, userName: string) => void;
 }
 
 interface UseCollaborationReturn {
@@ -69,6 +71,7 @@ interface UseCollaborationReturn {
   emitPageResize: (pageId: string, width: number, height: number, isLive: boolean) => void;
   // [FIX 6] Emitter broadcast thumbnail mới cho tất cả collaborator
   emitPageThumbnailUpdated: (pageId: string, thumbUrl: string) => void;
+  emitPageBackgroundUpdated: (pageId: string, background_color: string) => void;
   // [FIX #8] Emitters cho element locking (text edit)
   emitElementLock: (designId: string, pageId: string, elementId: string) => void;
   emitElementUnlock: (designId: string, elementId: string) => void;
@@ -86,6 +89,7 @@ export function useCollaboration({
   onRemoteDelta,
   onInitialRevision,
   onRemotePageThumbnailUpdated,
+  onRemotePageBackgroundUpdated,
 }: UseCollaborationOptions): UseCollaborationReturn {
 
   const socketRef = useRef<Socket | null>(null);
@@ -103,6 +107,7 @@ export function useCollaboration({
     onRemoteDelta,
     onInitialRevision,
     onRemotePageThumbnailUpdated,
+    onRemotePageBackgroundUpdated,
   });
   // Đồng bộ tất cả callbacks trong 1 useEffect duy nhất — tránh dependency hell
   useEffect(() => {
@@ -115,6 +120,7 @@ export function useCollaboration({
       onRemoteDelta,
       onInitialRevision,
       onRemotePageThumbnailUpdated,
+      onRemotePageBackgroundUpdated,
     };
   }); // Không có dependency array → chạy mỗi render để luôn sync mới nhất
 
@@ -180,6 +186,11 @@ export function useCollaboration({
     // ── Presence Events ────────────────────────────────────────────────────
     socket.on('presence-sync', ({ users, revision }: { users: CollaboratorInfo[]; revision?: number }) => {
       useCollabStore.getState().setActiveUsers(users);
+      users.forEach(u => {
+        if (u.activePageId) {
+          useCollabStore.getState().setUserPage(u.userId, u.activePageId);
+        }
+      });
       if (typeof revision === 'number') {
         // [FIX]: callbacksRef.current luôn là hàm mới nhất — không bao giờ stale
         callbacksRef.current.onInitialRevision?.(revision);
@@ -188,6 +199,11 @@ export function useCollaboration({
 
     socket.on('user-joined', ({ activeUsers: users }: { user: CollaboratorInfo; activeUsers: CollaboratorInfo[] }) => {
       useCollabStore.getState().setActiveUsers(users);
+      users.forEach(u => {
+        if (u.activePageId) {
+          useCollabStore.getState().setUserPage(u.userId, u.activePageId);
+        }
+      });
     });
 
     socket.on('user-left', ({ activeUsers: users }: { userId: string; socketId: string; activeUsers: CollaboratorInfo[] }) => {
@@ -246,6 +262,10 @@ export function useCollaboration({
       callbacksRef.current.onRemoteCursorMove?.(userId, name, avatarColor, x, y);
     });
 
+    socket.on('user-page-changed', ({ userId, pageId }: { userId: string; pageId: string }) => {
+      useCollabStore.getState().setUserPage(userId, pageId);
+    });
+
     // ── Page Resize Event ──────────────────────────────────────────────────
     socket.on('page-resized', ({ pageId, width, height, isLive, userName }: {
       pageId: string; width: number; height: number; isLive: boolean; userName: string;
@@ -253,10 +273,29 @@ export function useCollaboration({
       callbacksRef.current.onRemotePageResized?.(pageId, width, height, isLive, userName);
     });
 
+    socket.on('page-background-updated', ({ pageId, background_color, userName }: {
+      pageId: string; background_color: string; userName: string;
+    }) => {
+      callbacksRef.current.onRemotePageBackgroundUpdated?.(pageId, background_color, userName);
+    });
+
     // ── [FIX 6] Page Thumbnail Updated Event ──────────────────────────────
     // Khi collaborator khác upload thumbnail mới, server broadcast về cho tất cả
     socket.on('page-thumbnail-updated', ({ pageId, thumbUrl }: { pageId: string; thumbUrl: string }) => {
       callbacksRef.current.onRemotePageThumbnailUpdated?.(pageId, thumbUrl);
+    });
+
+    // ── [FIX] Permissions Revoked Events (Real-time Kick) ────────────────
+    socket.on('design:access_revoked', ({ designId: dId }: { designId: string }) => {
+      if (dId === designId) {
+        alert('Quyền truy cập của bạn vào bản vẽ này đã bị thay đổi hoặc thu hồi.');
+        window.location.href = '/dashboard';
+      }
+    });
+
+    socket.on('design:public_link_revoked', () => {
+      alert('Chủ sở hữu đã tắt tính năng chia sẻ công khai cho bản vẽ này.');
+      window.location.href = '/dashboard';
     });
 
     // ── Cleanup ────────────────────────────────────────────────────
@@ -366,6 +405,12 @@ export function useCollaboration({
     }
   }, [designId]);
 
+  const emitPageBackgroundUpdated = useCallback((pageId: string, background_color: string) => {
+    if (socketRef.current?.connected && designId) {
+      socketRef.current.emit('update-page-background', { designId, pageId, background_color });
+    }
+  }, [designId]);
+
   // [FIX #8] emitElementLock — định một element cho người hiện tại để edit text
   const emitElementLock = useCallback((dId: string, pageId: string, elementId: string) => {
     if (socketRef.current?.connected) {
@@ -391,6 +436,7 @@ export function useCollaboration({
     emitCursorMove,
     emitPageResize,
     emitPageThumbnailUpdated,
+    emitPageBackgroundUpdated,
     emitElementLock,
     emitElementUnlock,
   }), [
@@ -403,6 +449,7 @@ export function useCollaboration({
     emitCursorMove,
     emitPageResize,
     emitPageThumbnailUpdated,
+    emitPageBackgroundUpdated,
     emitElementLock,
     emitElementUnlock,
   ]);

@@ -87,20 +87,21 @@ export const checkStorageQuota = async (req: Request, res: Response, next: NextF
 // [FIX Vấn đề 21] Wrap cả 2 UPDATE vào 1 transaction để tránh desync.
 // TRƯỚC: 2 UPDATE độc lập → nếu UPDATE thứ 2 fail, 2 counter lệch nhau.
 // SAU:   Atomic transaction → cả 2 thành công hoặc cả 2 rollback.
-export const incrementStorageUsage = async (userId: string, fileSizeBytes: number, workspaceId?: string) => {
+export const incrementStorageUsage = async (userId: string, fileSizeBytes: number, workspaceId?: string, workspaceType?: string) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    if (workspaceId) {
+    if (workspaceId && workspaceType !== 'personal') {
       await client.query(
-        `UPDATE teams SET used_storage_bytes = GREATEST(0, used_storage_bytes + $1) WHERE id = $2`,
+        `UPDATE teams SET used_storage_bytes = GREATEST(0, COALESCE(used_storage_bytes, 0) + $1) WHERE id = $2`,
         [fileSizeBytes, workspaceId]
       );
+    } else {
+      await client.query(
+        `UPDATE users SET storage_used_bytes = GREATEST(0, COALESCE(storage_used_bytes, 0) + $1) WHERE id = $2`,
+        [fileSizeBytes, userId]
+      );
     }
-    await client.query(
-      `UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes + $1) WHERE id = $2`,
-      [fileSizeBytes, userId]
-    );
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -113,20 +114,21 @@ export const incrementStorageUsage = async (userId: string, fileSizeBytes: numbe
 
 // ─── Helper: Trừ dung lượng khi xóa file ─────────────────────────────────────
 // [FIX Vấn đề 21] Tương tự — atomic transaction để không lệch counter.
-export const decrementStorageUsage = async (userId: string, fileSizeBytes: number, workspaceId?: string) => {
+export const decrementStorageUsage = async (userId: string, fileSizeBytes: number, workspaceId?: string, workspaceType?: string) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    if (workspaceId) {
+    if (workspaceId && workspaceType !== 'personal') {
       await client.query(
-        `UPDATE teams SET used_storage_bytes = GREATEST(0, used_storage_bytes - $1) WHERE id = $2`,
+        `UPDATE teams SET used_storage_bytes = GREATEST(0, COALESCE(used_storage_bytes, 0) - $1) WHERE id = $2`,
         [fileSizeBytes, workspaceId]
       );
+    } else {
+      await client.query(
+        `UPDATE users SET storage_used_bytes = GREATEST(0, COALESCE(storage_used_bytes, 0) - $1) WHERE id = $2`,
+        [fileSizeBytes, userId]
+      );
     }
-    await client.query(
-      `UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes - $1) WHERE id = $2`,
-      [fileSizeBytes, userId]
-    );
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');

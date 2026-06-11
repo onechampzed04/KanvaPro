@@ -206,13 +206,27 @@ function PlansTab({ showToast }: { showToast: Function }) {
 
   const handleSavePlan = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validation
+    if (!editingPlan.name?.trim()) return showToast('Vui lòng nhập tên gói', 'error');
+    if (!editingPlan.slug?.trim()) return showToast('Vui lòng nhập slug', 'error');
+    if (editingPlan.monthly_price === undefined || editingPlan.monthly_price < 0) return showToast('Giá tháng không hợp lệ', 'error');
+    if (editingPlan.yearly_price === undefined || editingPlan.yearly_price < 0) return showToast('Giá năm không hợp lệ', 'error');
+
+    // Force default values for unused fields
+    const payload = {
+      ...editingPlan,
+      max_storage_gb: 0,
+      max_team_members: 0,
+    };
+
     try {
       if (editingPlan.id) {
         if (!confirm('Thay đổi giá sẽ tạo ra một gói cước mới. Những người dùng cũ đang gia hạn tự động sẽ không bị ảnh hưởng.\nBạn có tiếp tục không?')) return;
-        await updatePlan(editingPlan.id, editingPlan);
+        await updatePlan(editingPlan.id, payload);
         showToast('Đã lưu thành phiên bản mới');
       } else {
-        await createPlan(editingPlan);
+        await createPlan(payload);
         showToast('Plan created');
       }
       setEditingPlan(null);
@@ -235,10 +249,8 @@ function PlansTab({ showToast }: { showToast: Function }) {
         <form onSubmit={handleSavePlan} style={{ display: 'flex', flexDirection: 'column', gap: 15, maxWidth: 400, marginTop: 20 }}>
           <input className="admin-input" placeholder="Name (e.g. Pro)" required value={editingPlan.name || ''} onChange={e => setEditingPlan({ ...editingPlan, name: e.target.value })} />
           <input className="admin-input" placeholder="Slug (e.g. pro)" required value={editingPlan.slug || ''} onChange={e => setEditingPlan({ ...editingPlan, slug: e.target.value })} />
-          <input className="admin-input" type="number" placeholder="Monthly Price" required value={editingPlan.monthly_price || ''} onChange={e => setEditingPlan({ ...editingPlan, monthly_price: Number(e.target.value) })} />
-          <input className="admin-input" type="number" placeholder="Yearly Price" required value={editingPlan.yearly_price || ''} onChange={e => setEditingPlan({ ...editingPlan, yearly_price: Number(e.target.value) })} />
-          <input className="admin-input" type="number" placeholder="Max Storage GB" value={editingPlan.max_storage_gb || ''} onChange={e => setEditingPlan({ ...editingPlan, max_storage_gb: Number(e.target.value) })} />
-          <input className="admin-input" type="number" placeholder="Max Team Members" value={editingPlan.max_team_members || ''} onChange={e => setEditingPlan({ ...editingPlan, max_team_members: Number(e.target.value) })} />
+          <input className="admin-input" type="number" placeholder="Monthly Price" required value={editingPlan.monthly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, monthly_price: Number(e.target.value) })} />
+          <input className="admin-input" type="number" placeholder="Yearly Price" required value={editingPlan.yearly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, yearly_price: Number(e.target.value) })} />
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
             <input type="checkbox" checked={editingPlan.is_active !== false} onChange={e => setEditingPlan({ ...editingPlan, is_active: e.target.checked })} /> Active
           </label>
@@ -269,20 +281,18 @@ function PlansTab({ showToast }: { showToast: Function }) {
               <th>Name</th>
               <th>Monthly</th>
               <th>Yearly</th>
-              <th>Storage</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr> :
-              plans.length === 0 ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: 20 }}>No plans found</td></tr> :
+            {loading ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr> :
+              plans.length === 0 ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 20 }}>No plans found</td></tr> :
                 plans.map(p => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: 600 }}>{p.name} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({p.slug})</span></td>
                     <td>{formatCurrency(p.monthly_price)}</td>
                     <td>{formatCurrency(p.yearly_price)}</td>
-                    <td>{p.max_storage_gb} GB</td>
                     <td>{p.is_active ? <span className="badge badge-active">Active</span> : <span className="badge badge-banned">Inactive</span>}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 5 }}>

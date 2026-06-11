@@ -27,9 +27,9 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
 
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  // Nếu không có X-Workspace-Id, cố tìm Personal Workspace của user
+  // Nếu không có X-Workspace-Id hoặc là 'personal', cố tìm Personal Workspace của user
   // để không break các client cũ chưa gửi header này
-  const effectiveWorkspaceId = workspaceId || null;
+  const effectiveWorkspaceId = (workspaceId && workspaceId !== 'personal') ? workspaceId : null;
 
   try {
     let workspace: any = null;
@@ -63,7 +63,8 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
            t.name,
            t.owner_id,
            t.max_members,
-           t.used_storage_bytes,
+           CASE WHEN t.max_members = 1 THEN u.storage_used_bytes ELSE t.used_storage_bytes END AS used_storage_bytes,
+           COALESCE(sp.max_storage_gb, 5) AS max_storage_gb,
            CASE WHEN t.max_members = 1 AND t.owner_id = $2 THEN 'personal' ELSE 'team' END AS workspace_type,
            tm.role AS my_role,
            us.id   AS sub_id,
@@ -77,6 +78,7 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
              ELSE false
            END AS is_pro
          FROM teams t
+         JOIN users u ON u.id = t.owner_id
          JOIN team_members tm ON tm.team_id = t.id AND tm.user_id = $2
          LEFT JOIN user_subscriptions us ON us.user_id = t.owner_id AND us.status = 'active'
            AND (us.cancel_at IS NULL OR us.cancel_at > NOW())
@@ -106,7 +108,8 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
            t.name,
            t.owner_id,
            t.max_members,
-           t.used_storage_bytes,
+           u.storage_used_bytes AS used_storage_bytes,
+           COALESCE(sp.max_storage_gb, 5) AS max_storage_gb,
            'personal' AS workspace_type,
            'owner' AS my_role,
            us.id   AS sub_id,
@@ -120,6 +123,7 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
              ELSE false
            END AS is_pro
          FROM teams t
+         JOIN users u ON u.id = t.owner_id
          LEFT JOIN user_subscriptions us ON us.user_id = t.owner_id AND us.status = 'active'
            AND (us.cancel_at IS NULL OR us.cancel_at > NOW())
          LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
@@ -138,10 +142,8 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
       ownerId: workspace?.owner_id ?? userId,
       // Dung lượng của chính Workspace (đếm riêng theo từng Workspace)
       usedStorageBytes: Number(workspace?.used_storage_bytes ?? 0),
-      // Hạn mức theo gói cước của Workspace (Free = 5GB, Pro = theo plan)
-      maxStorageGb: workspace?.is_pro
-        ? Number(workspace?.plan_storage_gb ?? 5)
-        : 5,
+      // Hạn mức theo gói cước của Workspace (Free = 5GB, Pro = theo plan, Custom = db)
+      maxStorageGb: Number(workspace?.max_storage_gb ?? 5),
       isPro: workspace?.is_pro ?? false,
       planFeatures: workspace?.plan_features ?? [],
       maxMembers: workspace?.is_pro

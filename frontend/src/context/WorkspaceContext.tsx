@@ -31,7 +31,7 @@ export interface Workspace {
 interface WorkspaceContextType {
   workspaces: Workspace[];
   currentWorkspace: Workspace | null;
-  switchWorkspace: (workspaceId: string) => void;
+  switchWorkspace: (workspaceId: string | null) => void;
   setWorkspaces: (ws: Workspace[]) => void;
   refreshWorkspaces: () => Promise<void>;
 }
@@ -51,6 +51,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return;
     }
     const savedId = localStorage.getItem(STORAGE_KEY);
+    
+    // Nếu người dùng đang ở Personal mode (được set bởi EditorPage cho bản vẽ cá nhân)
+    if (savedId === 'personal') {
+      setCurrentWorkspace(null);
+      return;
+    }
+
     const saved = list.find(w => w.id === savedId);
     const personal = list.find(w => w.workspace_type === 'personal');
     const selected = saved ?? personal ?? list[0];
@@ -89,7 +96,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [applyWorkspaces]);
 
-  const switchWorkspace = useCallback((workspaceId: string) => {
+  const switchWorkspace = useCallback((workspaceId: string | null) => {
+    if (workspaceId === null) {
+      setCurrentWorkspace(null);
+      localStorage.setItem(STORAGE_KEY, 'personal');
+      return;
+    }
     const target = workspaces.find(w => w.id === workspaceId);
     if (!target) return;
     setCurrentWorkspace(target);

@@ -13,6 +13,8 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../config/db';
 import { parsePptx, validateMagicBytes, PptxPage } from '../services/pptxService';
 import path from 'path';
+import fs from 'fs';
+import { incrementStorageUsage } from '../middleware/checkStorageQuota';
 
 // Extension whitelist — từ chối .ppt (nhị phân), .pptm (macro)
 const ALLOWED_EXT = ['.pptx'];
@@ -40,9 +42,9 @@ export const importPptx = async (req: Request, res: Response) => {
   }
 
   // ── 3. Giới hạn kích thước file gốc ──────────────────────────────────────
-  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
   if (file.size > MAX_FILE_SIZE) {
-    return res.status(400).json({ error: 'File vượt quá giới hạn 20 MB.' });
+    return res.status(400).json({ error: 'File vượt quá giới hạn 100 MB.' });
   }
 
   console.log(`[PPTX Import] User ${userId} uploading "${file.originalname}" (${(file.size / 1024).toFixed(0)} KB)`);
@@ -61,14 +63,20 @@ export const importPptx = async (req: Request, res: Response) => {
   const designTitle = path.basename(file.originalname, '.pptx');
   const client = await db.connect();
 
+  const workspaceId = req.headers['x-workspace-id'] as string;
+  const teamId = workspaceId && workspaceId !== 'personal' ? workspaceId : null;
+
+  let totalImageSize = 0;
+  const extractedImages: string[] = [];
+
   try {
     await client.query('BEGIN');
 
     // Tạo design
     await client.query(
-      `INSERT INTO designs (id, user_id, title, design_type, is_public)
-       VALUES ($1, $2, $3, 'presentation', false)`,
-      [designId, userId, designTitle]
+      `INSERT INTO designs (id, user_id, title, design_type, is_public, team_id)
+       VALUES ($1, $2, $3, 'presentation', false, $4)`,
+      [designId, userId, designTitle, teamId]
     );
 
     // Tạo từng page + elements
@@ -106,6 +114,20 @@ export const importPptx = async (req: Request, res: Response) => {
         } else if (el.type === 'image') {
           // Prepend server URL so canvas can load the image
           props.src = el.src?.startsWith('http') ? el.src : `http://localhost:3000${el.src}`;
+
+          // Tính dung lượng file ảnh vật lý và gom vào danh sách
+          if (el.src && !el.src.startsWith('http')) {
+            const imagePath = path.join(__dirname, '..', 'public', el.src);
+            try {
+              if (fs.existsSync(imagePath)) {
+                const stats = fs.statSync(imagePath);
+                totalImageSize += stats.size;
+                extractedImages.push(el.src);
+              }
+            } catch (err) {
+              console.warn('[PPTX Import] Không thể lấy dung lượng ảnh:', el.src, err);
+            }
+          }
         }
 
         await client.query(
@@ -118,6 +140,31 @@ export const importPptx = async (req: Request, res: Response) => {
 
     await client.query('COMMIT');
     console.log(`[PPTX Import] ✅ Design ${designId} created with ${pages.length} pages`);
+
+    // [QUOTA] Ghi nhận dung lượng của file PPTX vào Workspace/User
+    // Lấy workspaceId từ header được gửi bởi client
+    const usageContext = teamId ? 'workspace' : 'personal';
+    if (totalImageSize > 0) {
+      // Lưu một Asset duy nhất đại diện cho toàn bộ Project PPTX này
+      await client.query(
+        `INSERT INTO assets (id, name, type, url, uploaded_by, team_id, is_premium, file_size, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, NOW())`,
+        [
+          uuidv4(), 
+          `${designTitle}.pptx`, 
+          'pptx', 
+          extractedImages.length > 0 ? extractedImages[0] : '/pptx-placeholder.png', // Lấy ảnh đầu tiên làm thumbnail, nếu không có thì dùng placeholder
+          userId, 
+          teamId, 
+          totalImageSize, 
+          JSON.stringify({ design_id: designId, extracted_images: extractedImages })
+        ]
+      );
+
+      await incrementStorageUsage(userId, totalImageSize, teamId || undefined, usageContext).catch(e => {
+        console.error('[PPTX Import] Lỗi cập nhật Quota:', e);
+      });
+    }
 
     res.status(201).json({
       success: true,
