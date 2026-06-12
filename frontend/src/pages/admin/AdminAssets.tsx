@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AdminSelect from './AdminSelect';
 import {
-  fetchAdminAssets, bulkUploadAssets, updateAsset, deleteAsset
+  fetchAdminAssets, bulkUploadAssets, updateAsset, toggleAssetActive
 } from '../../api/adminApi';
 import {
-  Search, Upload, Crown, Trash2, Edit3, X,
-  Image, Type, Sticker, CheckCircle, CheckSquare, Square
+  Search, Upload, Crown, Edit3, X,
+  Image, Type, Sticker, CheckCircle, CheckSquare, Square, EyeOff, Eye
 } from 'lucide-react';
 
 type Asset = {
   id: string; name: string; type: string; url: string;
-  is_premium: boolean; tags: string[];
+  is_premium: boolean; is_active: boolean; tags: string[];
   file_size: number; created_at: string;
 };
 type Toast = { msg: string; type: 'success' | 'error' } | null;
@@ -24,12 +24,13 @@ export default function AdminAssets() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [premiumFilter, setPremiumFilter] = useState('');
+  const [activeFilter, setActiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<Toast>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [editAsset, setEditAsset] = useState<Asset | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', tags: '', is_premium: false });
+  const [editForm, setEditForm] = useState({ name: '', is_premium: false });
 
   // ── Multi-select state ──────────────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -41,7 +42,7 @@ export default function AdminAssets() {
 
   // Upload form
   const [uploadForm, setUploadForm] = useState({
-    type: 'image', tags: '', is_premium: false
+    type: 'image', is_premium: false
   });
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -56,15 +57,23 @@ export default function AdminAssets() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchAdminAssets({ page, limit: LIMIT, type: typeFilter, search, is_premium: premiumFilter });
+      const data = await fetchAdminAssets({ page, limit: LIMIT, type: typeFilter, search, is_premium: premiumFilter, is_active: activeFilter });
       setAssets(data.assets || []);
       setTotal(data.total || 0);
     } catch { showToast('Failed to load assets', 'error'); }
     finally { setLoading(false); }
-  }, [page, search, typeFilter, premiumFilter]);
+  }, [page, search, typeFilter, premiumFilter, activeFilter]);
+
+  const handleToggleActive = async (id: string, currentState: boolean) => {
+    try {
+      await toggleAssetActive(id);
+      showToast(currentState ? '🔕 Asset đã bị ẩn khỏi editor' : '✅ Asset đã được kích hoạt lại');
+      load();
+    } catch { showToast('Toggle failed', 'error'); }
+  };
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [search, typeFilter, premiumFilter]);
+  useEffect(() => { setPage(1); setSelectedIds(new Set()); }, [search, typeFilter, premiumFilter, activeFilter]);
 
   // Load @font-face cho font assets để preview được tên thật
   useEffect(() => {
@@ -110,7 +119,6 @@ export default function AdminAssets() {
       const fd = new FormData();
       pendingFiles.forEach(f => fd.append('files', f));
       fd.append('type', uploadForm.type);
-      fd.append('tags', uploadForm.tags);
       fd.append('is_premium', String(uploadForm.is_premium));
       const result = await bulkUploadAssets(fd);
       showToast(`✅ Uploaded ${result.inserted} assets!`);
@@ -124,7 +132,7 @@ export default function AdminAssets() {
   const openEdit = (a: Asset) => {
     setEditAsset(a);
     setEditForm({
-      name: a.name, tags: (a.tags || []).join(', '),
+      name: a.name,
       is_premium: a.is_premium
     });
   };
@@ -134,7 +142,6 @@ export default function AdminAssets() {
     try {
       await updateAsset(editAsset.id, {
         name: editForm.name,
-        tags: editForm.tags,
         is_premium: editForm.is_premium,
       });
       showToast('Asset updated!');
@@ -143,15 +150,6 @@ export default function AdminAssets() {
     } catch { showToast('Update failed', 'error'); }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this asset permanently?')) return;
-    try {
-      await deleteAsset(id);
-      showToast('Asset deleted');
-      setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
-      load();
-    } catch { showToast('Delete failed', 'error'); }
-  };
 
   /* ── Multi-select helpers ── */
   const allIds = assets.map(a => a.id);
@@ -216,19 +214,6 @@ export default function AdminAssets() {
     finally { setBulkLoading(false); }
   };
 
-  const bulkDelete = async () => {
-    if (selectedIds.size === 0) return;
-    if (!confirm(`Delete ${selectedIds.size} selected asset(s)? This cannot be undone.`)) return;
-    setBulkLoading(true);
-    try {
-      await Promise.all(Array.from(selectedIds).map(id => deleteAsset(id)));
-      showToast(`🗑️ Deleted ${selectedIds.size} asset(s)`);
-      setSelectedIds(new Set());
-      load();
-    } catch { showToast('Bulk delete failed', 'error'); }
-    finally { setBulkLoading(false); }
-  };
-
   const totalPages = Math.ceil(total / LIMIT);
 
   return (
@@ -263,12 +248,6 @@ export default function AdminAssets() {
                 { value: 'font', label: '🔤 Font' },
               ]}
             />
-          </div>
-          <div style={{ flex: '1', minWidth: 200 }}>
-            <label className="admin-label">Tags (comma separated)</label>
-            <input className="admin-input" placeholder="nature, summer, blue…"
-              value={uploadForm.tags}
-              onChange={e => setUploadForm(f => ({ ...f, tags: e.target.value }))} />
           </div>
           <div style={{ paddingBottom: 8 }}>
             <label className="admin-toggle">
@@ -347,6 +326,15 @@ export default function AdminAssets() {
               { value: 'false', label: 'Free' },
             ]}
           />
+          <AdminSelect
+            value={activeFilter}
+            onChange={setActiveFilter}
+            options={[
+              { value: '', label: 'All Status' },
+              { value: 'true', label: '✅ Active' },
+              { value: 'false', label: '🔕 Deactivated' },
+            ]}
+          />
         </div>
 
         {/* ── Bulk Action Bar (animated) ── */}
@@ -391,19 +379,6 @@ export default function AdminAssets() {
               Set Free
             </button>
             <button
-              onClick={bulkDelete}
-              disabled={bulkLoading}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                background: 'rgba(239,68,68,0.12)', color: '#ef4444',
-                fontSize: 12, fontWeight: 700,
-                opacity: bulkLoading ? 0.6 : 1,
-              }}
-            >
-              <Trash2 size={12} /> Delete
-            </button>
-            <button
               onClick={() => setSelectedIds(new Set())}
               style={{
                 marginLeft: 'auto', background: 'none', border: 'none',
@@ -437,8 +412,8 @@ export default function AdminAssets() {
                 <th>Preview</th>
                 <th>Name</th>
                 <th>Type</th>
-                <th>Tags</th>
                 <th>Tier</th>
+                <th>Status</th>
                 <th>Size</th>
                 <th>Actions</th>
               </tr>
@@ -465,9 +440,12 @@ export default function AdminAssets() {
                     style={{
                       background: isSelected
                         ? 'rgba(99,102,241,0.08)'
-                        : undefined,
+                        : !a.is_active
+                          ? 'rgba(239,68,68,0.04)'
+                          : undefined,
                       cursor: 'default',
                       transition: 'background 0.1s',
+                      opacity: a.is_active ? 1 : 0.55,
                     }}
                   >
                     {/* Checkbox cell — drag starts here */}
@@ -522,22 +500,19 @@ export default function AdminAssets() {
                       </div>
                     </td>
                     <td>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        {(a.tags || []).slice(0, 3).map(t => (
-                          <span key={t} style={{
-                            fontSize: 10, padding: '2px 6px', borderRadius: 4,
-                            background: 'var(--bg-hover)', color: 'var(--text-muted)'
-                          }}>{t}</span>
-                        ))}
-                        {(a.tags || []).length > 3 && (
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>+{a.tags.length - 3}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td>
                       {a.is_premium
                         ? <span className="badge badge-premium"><Crown size={10} /> Pro</span>
                         : <span className="badge badge-free">Free</span>
+                      }
+                    </td>
+                    <td>
+                      {a.is_active
+                        ? <span className="badge badge-free" style={{ color: '#10b981', borderColor: 'rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)' }}>
+                            <Eye size={10} /> Active
+                          </span>
+                        : <span className="badge badge-free" style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)' }}>
+                            <EyeOff size={10} /> Deactivated
+                          </span>
                       }
                     </td>
                     <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -545,11 +520,16 @@ export default function AdminAssets() {
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="admin-btn admin-btn-ghost admin-btn-sm"
+                          onClick={() => handleToggleActive(a.id, a.is_active)}
+                          title={a.is_active ? 'Deactivate (ẩn khỏi editor)' : 'Activate (hiện lại)'}
+                          style={{ color: a.is_active ? '#f59e0b' : '#10b981' }}
+                        >
+                          {a.is_active ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
                         <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => openEdit(a)}>
                           <Edit3 size={13} />
-                        </button>
-                        <button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => handleDelete(a.id)}>
-                          <Trash2 size={13} />
                         </button>
                       </div>
                     </td>
@@ -580,11 +560,6 @@ export default function AdminAssets() {
               <label className="admin-label">Name</label>
               <input className="admin-input" value={editForm.name}
                 onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div className="admin-form-group">
-              <label className="admin-label">Tags (comma separated)</label>
-              <input className="admin-input" value={editForm.tags}
-                onChange={e => setEditForm(f => ({ ...f, tags: e.target.value }))} />
             </div>
             <div className="admin-form-group">
               <label className="admin-toggle">

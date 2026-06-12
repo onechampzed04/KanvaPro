@@ -38,7 +38,8 @@ export const banUserV2 = async (userId: string, status: string, reason: string) 
 
 // ── Assets ─────────────────────────────────────────────────────────────────
 export const fetchAdminAssets = async (params: {
-  page?: number; limit?: number; type?: string; search?: string; is_premium?: string;
+  page?: number; limit?: number; type?: string; search?: string;
+  is_premium?: string; is_active?: string;
 }) => {
   const q = new URLSearchParams(params as any).toString();
   const res = await fetch(`/api/admin/assets?${q}`, { headers: getHeaders() });
@@ -70,12 +71,15 @@ export const updateAsset = async (id: string, data: UpdateAssetData) => {
   return res.json();
 };
 
-export const deleteAsset = async (id: string) => {
-  const res = await fetch(`/api/admin/assets/${id}`, {
-    method: 'DELETE', headers: getHeaders(),
+
+
+// Toggle is_active cho asset (Admin deactivate/reactivate)
+export const toggleAssetActive = async (id: string) => {
+  const res = await fetch(`/api/admin/assets/${id}/toggle-active`, {
+    method: 'PUT', headers: getHeaders(),
   });
-  if (!res.ok) throw new Error('Failed to delete asset');
-  return res.json();
+  if (!res.ok) throw new Error('Failed to toggle asset active state');
+  return res.json(); // { success: true, is_active: boolean }
 };
 
 // ── Designs & Templates ────────────────────────────────────────────────────

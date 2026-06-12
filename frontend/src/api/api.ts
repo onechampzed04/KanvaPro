@@ -52,10 +52,10 @@ export const uploadImageFile = async (file: File): Promise<{ url: string; assetI
     const err = await response.json().catch(() => ({}));
     throw new Error(err.message || err.error || 'Failed to upload image');
   }
-  
+
   // Phát sự kiện để cập nhật thanh dung lượng ở frontend (real-time không cần F5)
   window.dispatchEvent(new Event('storage:updated'));
-  
+
   return response.json(); // Trả về { url, assetId, name, width, height }
 };
 
@@ -600,4 +600,27 @@ export const createTeamCheckout = async (data: {
   if (!res.ok) throw new Error('Lỗi khởi tạo thanh toán Team');
   return res.json();
 };
+
+// ==========================================
+// TEMPLATE APIs
+// ==========================================
+
+/** Lấy danh sách tất cả template công khai đã được Admin publish */
+export const fetchTemplates = async () => {
+  const res = await fetch(`${BASE_URL}/designs/templates`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Lỗi lấy danh sách template');
+  return res.json(); // { templates: [...] }
+};
+
+/** Clone template thành design của user hiện tại. Trả về { designId } */
+export const useTemplate = async (templateId: string) => {
+  const res = await fetch(`${BASE_URL}/designs/templates/${templateId}/use`, {
+    method: 'POST',
+    headers: getWorkspaceHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Không thể sử dụng template');
+  return data; // { success, designId, message }
+};
+
 

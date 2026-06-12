@@ -28,13 +28,13 @@ export default function StoragePanel() {
   const [storageBreakdown, setStorageBreakdown] = useState<any[]>([]);
 
   const { currentWorkspace } = useWorkspace();
-  
+
   let maxGb = Number(currentWorkspace?.max_storage_gb || 5);
-    
+
   if (isNaN(maxGb) || maxGb === 0) {
     maxGb = 5;
   }
-  
+
   const maxBytes = maxGb * 1024 ** 3;
 
   // [Storage Quota Display]
@@ -73,7 +73,7 @@ export default function StoragePanel() {
       })
         .then(r => r.json())
         .then(d => setStorageBreakdown(d.breakdown || []))
-        .catch(() => {});
+        .catch(() => { });
     } else {
       setStorageBreakdown([]);
     }
@@ -164,7 +164,7 @@ export default function StoragePanel() {
               <span className={`text-xs font-extrabold ${pct > 90 ? 'text-rose-500' : 'text-indigo-600'}`}>{pct.toFixed(1)}%</span>
             </div>
           </div>
-          
+
           {storageBreakdown.length > 0 && (
             <div className="mt-6 pt-4 border-t border-slate-100">
               <h4 className="text-xs font-extrabold text-slate-500 uppercase mb-3">Chi tiết thành viên</h4>
@@ -232,7 +232,7 @@ export default function StoragePanel() {
                 <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden border-b border-slate-100/50">
                   <img src={img.url?.startsWith('http') ? img.url : `http://localhost:3000${img.url}`}
                     alt={img.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                  
+
                   {img.type === 'pptx' && (
                     <div className="absolute top-2 right-2 bg-indigo-500/90 backdrop-blur text-white px-2 py-1 rounded-md shadow-sm flex items-center gap-1 z-10">
                       <Presentation size={12} />
@@ -277,7 +277,7 @@ export default function StoragePanel() {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
               <button onClick={() => setDeleteModal(p => ({ ...p, isOpen: false }))} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={20} /></button>
-              
+
               <div className="flex items-center gap-4 mb-4">
                 <div className="w-12 h-12 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center shrink-0">
                   <AlertTriangle size={24} />
@@ -303,7 +303,7 @@ export default function StoragePanel() {
                       <div className="max-h-64 overflow-y-auto bg-slate-50 rounded-xl border border-slate-100 p-2 space-y-2">
                         {deleteModal.usages.map(u => (
                           <a key={u.id} href={`/design/${u.id}`} target="_blank" rel="noreferrer"
-                             className="flex items-center gap-3 p-2 bg-white rounded-lg shadow-sm hover:shadow-md hover:border-indigo-200 border border-transparent transition">
+                            className="flex items-center gap-3 p-2 bg-white rounded-lg shadow-sm hover:shadow-md hover:border-indigo-200 border border-transparent transition">
                             <div className="w-16 h-12 bg-slate-100 rounded overflow-hidden shrink-0">
                               {u.thumbnail_url ? <img src={u.thumbnail_url} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs text-slate-400">Trống</div>}
                             </div>

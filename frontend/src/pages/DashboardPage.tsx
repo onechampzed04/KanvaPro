@@ -7,11 +7,11 @@ import {
   FileText, Monitor, Table, UploadCloud, Crown, Receipt, Shield,
   MoreVertical, Trash2, Camera, AlertTriangle, Users, HardDrive,
   Home, Folder, Settings, Search, Menu, X, UserCircle2,
-  Filter, ArrowUpDown, Layers, FileSliders
+  Filter, ArrowUpDown, Layers, FileSliders, Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import CustomSelect from '../components/dashboard/CustomSelect';
-import { fetchDesigns, createDesign, bulkDeleteDesigns } from '../api/api';
+import { fetchDesigns, createDesign, bulkDeleteDesigns, fetchTemplates, useTemplate } from '../api/api';
 import { useSubscription } from '../hooks/useSubscription';
 import StoragePanel from '../components/dashboard/StoragePanel';
 import TrashPanel from '../components/dashboard/TrashPanel';
@@ -116,6 +116,14 @@ export default function DashboardPage() {
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
   const [cloningId, setCloningId] = useState<string | null>(null);
 
+  // ── Template Gallery ──────────────────────────────────────────────────────
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [previewTemplate, setPreviewTemplate] = useState<any | null>(null);
+  const [usingTemplateId, setUsingTemplateId] = useState<string | null>(null);
+  const [showTemplateGallery, setShowTemplateGallery] = useState(false);
+  const [templatePage, setTemplatePage] = useState(1);
+  const templatesPerPage = 10;
+
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarToast, setAvatarToast] = useState('');
 
@@ -131,6 +139,26 @@ export default function DashboardPage() {
     };
     loadData();
   }, [currentWorkspace?.id]);
+
+  // Load templates một lần duy nhất khi mount
+  useEffect(() => {
+    fetchTemplates()
+      .then(data => setTemplates(data.templates || []))
+      .catch(() => setTemplates([]));
+  }, []);
+
+  const handleUseTemplate = async (template: any) => {
+    setUsingTemplateId(template.id);
+    try {
+      const data = await useTemplate(template.id);
+      setPreviewTemplate(null);
+      navigate(`/design/${data.designId}`);
+    } catch (err: any) {
+      alert(`Lỗi: ${err.message}`);
+    } finally {
+      setUsingTemplateId(null);
+    }
+  };
 
   const filteredDesigns = useMemo(() => {
     let result = [...designs];
@@ -866,7 +894,6 @@ export default function DashboardPage() {
               </motion.div>
             </section>
 
-            {/* Templates Carousel */}
             <section className="mb-14 relative z-10">
               <div className="flex overflow-x-auto pt-4 pb-6 -mx-6 px-6 gap-6 md:gap-8 justify-start md:justify-center custom-scrollbar">
 
@@ -907,6 +934,16 @@ export default function DashboardPage() {
                     <FileSliders size={22} className="text-orange-500 group-hover:text-rose-600" />
                   </div>
                   <span className="text-[11px] font-medium text-slate-600 text-center leading-tight group-hover:text-slate-900 transition-colors whitespace-nowrap">Import PPTX</span>
+                </motion.button>
+
+                {/* Use template */}
+                <motion.button initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8 }}
+                  onClick={() => { setShowTemplateGallery(true); setTemplatePage(1); }}
+                  className="flex flex-col items-center gap-2 group shrink-0 w-[72px]">
+                  <div className="w-[52px] h-[52px] rounded-full flex items-center justify-center bg-gradient-to-br from-violet-100 to-fuchsia-100 border border-violet-200 shadow-sm group-hover:shadow-md transition-all duration-300 group-hover:-translate-y-1">
+                    <Sparkles size={22} className="text-violet-500 group-hover:text-fuchsia-600" />
+                  </div>
+                  <span className="text-[11px] font-medium text-slate-600 text-center leading-tight group-hover:text-slate-900 transition-colors whitespace-nowrap">Use template</span>
                 </motion.button>
               </div>
 
@@ -1167,6 +1204,211 @@ export default function DashboardPage() {
           </div>
         </>}
       </main>
+
+      {/* ── TEMPLATE GALLERY MODAL ──────────────────────────────────────── */}
+      <AnimatePresence>
+        {showTemplateGallery && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[110] flex items-center justify-center p-4 md:p-8"
+            onClick={() => setShowTemplateGallery(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-[1000px] max-h-[90vh] flex flex-col overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center">
+                    <Sparkles size={20} className="text-violet-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-slate-800">Template Sẵn Có</h3>
+                    <p className="text-sm text-slate-500 font-medium">Chọn một mẫu thiết kế để bắt đầu</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTemplateGallery(false)}
+                  className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-50 text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-slate-50/50">
+                {templates.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-slate-400">
+                    <Layout size={48} strokeWidth={1} className="mb-4 text-slate-300" />
+                    <p className="font-medium">Chưa có template nào.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+                    {templates.slice((templatePage - 1) * templatesPerPage, templatePage * templatesPerPage).map((tpl) => (
+                      <div
+                        key={tpl.id}
+                        onClick={() => { setPreviewTemplate(tpl); setShowTemplateGallery(false); }}
+                        className="group cursor-pointer bg-white rounded-2xl overflow-hidden border border-slate-200 hover:border-violet-400 shadow-sm hover:shadow-xl hover:shadow-violet-500/10 transition-all duration-300 hover:-translate-y-1"
+                      >
+                        <div className="aspect-[4/3] bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center overflow-hidden relative">
+                          {tpl.thumbnail_url ? (
+                            <img
+                              src={tpl.thumbnail_url}
+                              alt={tpl.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center gap-2 text-slate-300">
+                              <Layout size={24} strokeWidth={1.5} />
+                              <span className="text-[10px] font-semibold uppercase tracking-widest">Template</span>
+                            </div>
+                          )}
+                          <div className="absolute inset-0 bg-violet-900/0 group-hover:bg-violet-900/10 transition-colors duration-300" />
+                          {tpl.uses > 0 && (
+                            <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                              {tpl.uses} dùng
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-3">
+                          <p className="text-[13px] font-bold text-slate-700 truncate group-hover:text-violet-600 transition-colors">{tpl.title}</p>
+                          <p className="text-[11px] font-semibold text-slate-400 capitalize mt-0.5">{tpl.design_type?.replace('_', ' ')}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {templates.length > templatesPerPage && (
+                <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-center gap-2 bg-white shrink-0">
+                  {Array.from({ length: Math.ceil(templates.length / templatesPerPage) }).map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setTemplatePage(idx + 1)}
+                      className={`w-8 h-8 rounded-full text-sm font-bold transition-all ${
+                        templatePage === idx + 1
+                          ? 'bg-violet-600 text-white shadow-md'
+                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      }`}
+                    >
+                      {idx + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── TEMPLATE PREVIEW MODAL ──────────────────────────────────────── */}
+      <AnimatePresence>
+        {previewTemplate && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[120] flex items-center justify-center p-4"
+            onClick={() => setPreviewTemplate(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 24 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 24 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+              className="bg-white rounded-[28px] shadow-2xl max-w-lg w-full overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header gradient strip */}
+              <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-indigo-500 to-sky-500" />
+
+              {/* Thumbnail preview */}
+              <div className="relative bg-gradient-to-br from-slate-50 to-indigo-50 flex items-center justify-center" style={{ minHeight: 220 }}>
+                {previewTemplate.thumbnail_url ? (
+                  <img
+                    src={previewTemplate.thumbnail_url}
+                    alt={previewTemplate.title}
+                    className="w-full object-contain max-h-64"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-3 py-12 text-slate-300">
+                    <Layout size={52} strokeWidth={1.2} />
+                    <span className="text-sm font-semibold text-slate-400">Không có ảnh xem trước</span>
+                  </div>
+                )}
+                {/* Close button */}
+                <button
+                  onClick={() => setPreviewTemplate(null)}
+                  className="absolute top-3 right-3 w-9 h-9 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center shadow-sm hover:bg-white transition border border-slate-100"
+                >
+                  <X size={16} className="text-slate-500" />
+                </button>
+                {/* Uses badge */}
+                {previewTemplate.uses > 0 && (
+                  <div className="absolute bottom-3 left-3 bg-black/50 backdrop-blur-sm text-white text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                    <Users size={10} />
+                    {previewTemplate.uses} lượt sử dụng
+                  </div>
+                )}
+              </div>
+
+              {/* Content */}
+              <div className="p-6">
+                {/* Sparkle badge */}
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="inline-flex items-center gap-1.5 bg-violet-50 text-violet-600 text-[11px] font-bold px-3 py-1 rounded-full border border-violet-100">
+                    <Sparkles size={11} /> Template Chính Thức
+                  </span>
+                  {previewTemplate.category_name && (
+                    <span className="inline-flex items-center gap-1.5 bg-slate-50 text-slate-500 text-[11px] font-bold px-3 py-1 rounded-full border border-slate-100">
+                      {previewTemplate.category_name}
+                    </span>
+                  )}
+                </div>
+
+                <h2 className="text-xl font-extrabold text-slate-800 leading-tight mb-1">
+                  {previewTemplate.title}
+                </h2>
+                <p className="text-sm text-slate-500 font-medium mb-1 capitalize">
+                  {previewTemplate.design_type?.replace('_', ' ')}
+                  {previewTemplate.width && previewTemplate.height ? ` · ${previewTemplate.width} × ${previewTemplate.height}px` : ''}
+                </p>
+                {previewTemplate.description && (
+                  <p className="text-sm text-slate-400 mt-2 mb-4 leading-relaxed">{previewTemplate.description}</p>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex gap-3 mt-5">
+                  <button
+                    onClick={() => setPreviewTemplate(null)}
+                    className="flex-1 py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200 transition-colors"
+                  >
+                    Đóng
+                  </button>
+                  <button
+                    onClick={() => handleUseTemplate(previewTemplate)}
+                    disabled={usingTemplateId === previewTemplate.id}
+                    className="flex-[2] py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold text-sm shadow-lg shadow-violet-500/30 transition-all hover:-translate-y-0.5 disabled:opacity-60 disabled:translate-y-0 flex items-center justify-center gap-2"
+                  >
+                    {usingTemplateId === previewTemplate.id ? (
+                      <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Đang tạo bản sao...</>
+                    ) : (
+                      <><Sparkles size={15} /> Sử dụng Template này</>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* FLOATING TOOLBAR for Bulk Selection */}
       <AnimatePresence>

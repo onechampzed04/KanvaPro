@@ -51,7 +51,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return;
     }
     const savedId = localStorage.getItem(STORAGE_KEY);
-    
+
     // Nếu người dùng đang ở Personal mode (được set bởi EditorPage cho bản vẽ cá nhân)
     if (savedId === 'personal') {
       setCurrentWorkspace(null);
@@ -69,7 +69,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const cached = localStorage.getItem('kanva_workspaces');
     if (cached) {
-      try { applyWorkspaces(JSON.parse(cached)); } catch {}
+      try { applyWorkspaces(JSON.parse(cached)); } catch { }
     }
   }, [applyWorkspaces]);
 
@@ -93,7 +93,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         applyWorkspaces(data.workspaces ?? []);
       }
-    } catch {}
+    } catch { }
   }, [applyWorkspaces]);
 
   const switchWorkspace = useCallback((workspaceId: string | null) => {
