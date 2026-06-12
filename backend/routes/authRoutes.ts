@@ -50,17 +50,17 @@ const avatarUpload = multer({
   limits: { fileSize: MAX_AVATAR_MB * 1024 * 1024 },
 }).single('avatar');
 
-router.post('/register',         loginLimiter, register);
-router.post('/login',            loginLimiter, login);
-router.post('/verify-otp',       otpLimiter,   verifyOtp);
-router.post('/admin-verify-2fa', otpLimiter,   verifyAdmin2FA); // [FIX 5] Admin 2FA step 2
+router.post('/register', loginLimiter, register);
+router.post('/login', loginLimiter, login);
+router.post('/verify-otp', otpLimiter, verifyOtp);
+router.post('/admin-verify-2fa', otpLimiter, verifyAdmin2FA); // [FIX 5] Admin 2FA step 2
 router.get('/me', getMe);
 router.post('/logout', logout);
 
 // Forgot Password flow
-router.post('/forgot-password',    forgotPasswordLimiter, forgotPassword);
-router.post('/verify-forgot-otp',  otpLimiter,            verifyForgotOtp);
-router.post('/reset-password',     otpLimiter,            resetPassword);
+router.post('/forgot-password', forgotPasswordLimiter, forgotPassword);
+router.post('/verify-forgot-otp', otpLimiter, verifyForgotOtp);
+router.post('/reset-password', otpLimiter, resetPassword);
 
 // Update Avatar: xác thực → multer (giới hạn 5MB) → validate magic bytes → handler
 // Multer LIMIT_FILE_SIZE phải được bắt bằng error-handler 4-arg riêng
@@ -88,9 +88,9 @@ router.post(
 router.patch('/update-profile', authenticate, updateProfile);
 
 // Change Password flow (authenticated – 3 bước: gửi OTP → xác thực OTP → đổi mật khẩu)
-router.post('/change-password/send-otp',    authenticate, sendChangePasswordOtp);
-router.post('/change-password/verify-otp',  authenticate, verifyChangePasswordOtp);
-router.patch('/change-password',            authenticate, changePassword);
+router.post('/change-password/send-otp', authenticate, sendChangePasswordOtp);
+router.post('/change-password/verify-otp', authenticate, verifyChangePasswordOtp);
+router.patch('/change-password', authenticate, changePassword);
 
 export default router;
 

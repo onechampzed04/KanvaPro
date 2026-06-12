@@ -203,16 +203,10 @@ export const removeMember = async (req: Request, res: Response) => {
 
     // ── Case 1: Owner tự rời (tự đá bản thân) ──────────────────────────────
     if (memberId === userId && myRole === 'owner') {
-      const count = await teamService.getTeamMemberCount(id);
-      if (count > 1) {
-        return res.status(400).json({
-          error: 'OwnerCannotLeave',
-          message: 'Bạn là Chủ nhóm. Hãy chuyển quyền Owner cho thành viên khác trước khi rời nhóm.',
-        });
-      }
-      // Owner là thành viên duy nhất → Soft Delete team
-      await teamService.softDeleteTeam(id, userId, ip);
-      return res.json({ message: 'Đã giải tán nhóm. Dữ liệu sẽ được lưu giữ trong 30 ngày.' });
+      return res.status(400).json({
+        error: 'OwnerCannotLeave',
+        message: 'Hệ thống hiện không hỗ trợ việc giải tán/xóa Đội nhóm. Bạn là Chủ nhóm nên không thể tự rời nhóm.',
+      });
     }
 
     // ── Case 2: Thành viên thường tự rời ────────────────────────────────────

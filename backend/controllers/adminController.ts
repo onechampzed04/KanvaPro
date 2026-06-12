@@ -351,7 +351,7 @@ export const toggleUserBan = async (req: Request, res: Response) => {
 // ─── GET /api/admin/assets ───────────────────────────────────────────────────
 export const getAdminAssets = async (req: Request, res: Response) => {
   try {
-    const { page = 1, limit = 30, type = '', search = '', is_premium = '' } = req.query;
+    const { page = 1, limit = 30, type = '', search = '', is_premium = '', is_active = '' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
 
     let where = 'WHERE a.uploaded_by IS NULL';
@@ -368,6 +368,12 @@ export const getAdminAssets = async (req: Request, res: Response) => {
     if (is_premium !== '') {
       params.push(is_premium === 'true');
       where += ` AND a.is_premium = $${params.length}`;
+    }
+    // Admin mặc định thấy TẤT CẢ asset (cả active lẫn deactive).
+    // Chỉ filter khi admin chủ động chọn Active/Deactive trong dropdown.
+    if (is_active !== '') {
+      params.push(is_active === 'true');
+      where += ` AND a.is_active = $${params.length}`;
     }
 
     params.push(Number(limit), offset);
@@ -505,36 +511,34 @@ export const updateAsset = async (req: Request, res: Response) => {
   }
 };
 
-// ─── DELETE /api/admin/assets/:id ─── Soft Delete ───────────────────────────
-export const deleteAsset = async (req: Request, res: Response) => {
+// ─── PUT /api/admin/assets/:id/toggle-active ─────────────────────────────────
+// Admin bật/tắt trạng thái hiển thị của asset đối với người dùng.
+// Asset bị deactive sẽ KHÔNG xuất hiện trong sidebar/search của editor,
+// nhưng vẫn render bình thường trong các design đã dùng chúng (URL không thay đổi).
+export const toggleAssetActive = async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     const asset = await db.getOne(
-      'SELECT url, file_size, uploaded_by FROM assets WHERE id = $1 AND is_deleted = false',
+      'SELECT id, is_active, name FROM assets WHERE id = $1 AND uploaded_by IS NULL',
       [id]
     );
-    if (!asset) return res.status(404).json({ error: 'Asset not found or already deleted' });
+    if (!asset) return res.status(404).json({ error: 'Asset not found or not a system asset' });
 
-    // Phase 1: Soft Delete — file vật lý sẽ được Cron GC dọn sau (>7 ngày)
+    const newState = !asset.is_active;
     await db.execute(
-      'UPDATE assets SET is_deleted = true, deleted_at = NOW() WHERE id = $1',
-      [id]
+      'UPDATE assets SET is_active = $1 WHERE id = $2',
+      [newState, id]
     );
 
-    // Hoàn lại dung lượng ngay lập tức để User thấy quota được giải phóng
-    if (asset.uploaded_by && asset.file_size) {
-      await db.execute(
-        'UPDATE users SET storage_used_bytes = GREATEST(0, storage_used_bytes - $1) WHERE id = $2',
-        [asset.file_size, asset.uploaded_by]
-      );
-    }
-
-    res.json({ success: true });
+    console.log(`[Admin] Asset "${asset.name}" (${id}) → is_active=${newState}`);
+    res.json({ success: true, is_active: newState });
   } catch (err) {
-    console.error('[deleteAsset]', err);
+    console.error('[toggleAssetActive]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+
 
 
 // ─── GET /api/admin/designs ──────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import {
   getDesignMeta, getPageElements, // === FIX #4: Lazy Loading ===
   createVideoJob, getVideoJobStatus, // === FIX #5: Server-side Video ===
   renameDesign,
+  getPublicTemplates, useTemplate, // === Templates ===
 } from '../controllers/designController';
 import { importPptx } from '../controllers/pptxController';
 import {
@@ -30,6 +31,7 @@ router.post('/import/pptx', authenticate, resolveWorkspace, checkStorageQuota, u
 
 router.use(authenticate);
 
+
 router.post('/', createDesign);
 router.get('/my', getUserDesigns);
 router.get('/recent-stickers', getRecentStickers);
@@ -44,6 +46,10 @@ router.delete('/trash/:id/permanent', checkTrashedDesignAccess, requireRole('own
 
 // Bulk actions
 router.post('/bulk-delete', bulkDeleteDesigns);
+
+// ── TEMPLATES (phải đặt TRƯỚC route /:id để tránh 'templates' bị match như design ID) ──
+router.get('/templates', getPublicTemplates);
+router.post('/templates/:templateId/use', useTemplate);
 
 // viewer+ được xem (checkDesignAccess cho phép public viewer)
 router.get('/:id', checkDesignAccess, getDesignById);

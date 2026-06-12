@@ -3,7 +3,7 @@ import { authenticate } from '../middleware/authMiddleware';
 import { isAdmin } from '../middleware/isAdmin';
 import {
   getMetrics, getUsers, updateUserRole, toggleUserBan,
-  getAdminAssets, bulkUploadAssets, updateAsset, deleteAsset,
+  getAdminAssets, bulkUploadAssets, updateAsset, toggleAssetActive,
   getDesigns, publishTemplate, unpublishTemplate, adminUpload, validateMagicNumber,
   getAdminSubscriptions, createManualSubscription,
   updateSubscriptionStatus, terminateSubscription,
@@ -34,7 +34,7 @@ router.put('/users/:id/ban', toggleUserBan);
 router.get('/assets', getAdminAssets);
 router.post('/assets/bulk', adminUpload.array('files', 100), validateMagicNumber, bulkUploadAssets);
 router.patch('/assets/:id', updateAsset);
-router.delete('/assets/:id', deleteAsset);
+router.put('/assets/:id/toggle-active', toggleAssetActive);
 
 // Designs & Templates
 router.get('/designs', getDesigns);

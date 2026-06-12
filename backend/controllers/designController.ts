@@ -738,3 +738,145 @@ export const getVideoJobStatus = async (req: Request, res: Response) => {
         error: job.error,
     });
 };
+
+// ── GET /api/templates ─────────────────────────────────────────────────────────
+// Trả về danh sách tất cả design đã được Admin publish thành template công khai.
+export const getPublicTemplates = async (_req: Request, res: Response) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                d.id, d.title, d.description, d.design_type,
+                d.width, d.height, d.thumbnail_url,
+                pt.uses, pt.likes, pt.created_at AS published_at,
+                tc.name AS category_name,
+                u.name AS author_name
+            FROM public_templates pt
+            JOIN designs d ON d.id = pt.design_id
+            JOIN users u ON u.id = d.user_id
+            LEFT JOIN template_categories tc ON tc.id = pt.category_id
+            WHERE d.is_deleted = false AND d.is_template = true
+            ORDER BY pt.uses DESC, pt.created_at DESC
+        `);
+        res.json({ templates: result.rows });
+    } catch (error) {
+        console.error('[getPublicTemplates]', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+// ── POST /api/templates/:id/use ────────────────────────────────────────────────
+// Clone toàn bộ template (design + pages + elements) sang user hiện tại.
+// Template gốc KHÔNG thay đổi. User nhận được bản sao độc lập để chỉnh sửa.
+export const useTemplate = async (req: Request, res: Response) => {
+    const { templateId } = req.params;
+    const userId = (req as any).user?.id;
+    const workspaceId = req.headers['x-workspace-id'] as string;
+    const teamId = workspaceId && workspaceId !== 'personal' ? workspaceId : null;
+
+    try {
+        // 1. Kiểm tra template tồn tại và đã được publish
+        const template = await db.getOne(
+            `SELECT d.* FROM designs d
+             JOIN public_templates pt ON pt.design_id = d.id
+             WHERE d.id = $1 AND d.is_deleted = false AND d.is_template = true`,
+            [templateId]
+        );
+        if (!template) return res.status(404).json({ error: 'Template không tồn tại' });
+
+        // 2. Clone design — đổi user_id, xóa template flags
+        const newDesignId = uuidv4();
+        await db.execute(`
+            INSERT INTO designs
+                (id, user_id, team_id, folder_id, title, description, design_type,
+                 width, height, thumbnail_url, is_public, is_template, is_deleted,
+                 total_duration, created_at, updated_at)
+            VALUES
+                ($1, $2, $3, NULL, $4, $5, $6,
+                 $7, $8, $9, false, false, false,
+                 $10, NOW(), NOW())
+        `, [
+            newDesignId,
+            userId,
+            teamId,
+            `${template.title} (Template)`,
+            template.description,
+            template.design_type,
+            template.width,
+            template.height,
+            template.thumbnail_url,
+            template.total_duration,
+        ]);
+        // 3. Clone từng trang (design_pages)
+        const pages = await db.query(
+            `SELECT * FROM design_pages WHERE design_id = $1 ORDER BY page_order`,
+            [templateId]
+        );
+
+        const pageIdMap = new Map<string, string>(); // oldPageId → newPageId
+
+        for (const page of pages.rows) {
+            const newPageId = uuidv4();
+            pageIdMap.set(page.id, newPageId);
+
+            await db.execute(`
+                INSERT INTO design_pages
+                    (id, design_id, page_order, title, background_color,
+                     duration, transition, thumbnail, type, width, height, content,
+                     created_at, updated_at)
+                VALUES
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+            `, [
+                newPageId,
+                newDesignId,
+                page.page_order,
+                page.title,
+                page.background_color,
+                page.duration,
+                page.transition,
+                page.thumbnail,
+                page.type,
+                page.width,
+                page.height,
+                page.content,
+            ]);
+
+            // 4. Clone elements cho từng trang
+            const elements = await db.query(
+                `SELECT * FROM design_elements WHERE page_id = $1`,
+                [page.id]
+            );
+            for (const el of elements.rows) {
+                const newElId = uuidv4();
+                await db.execute(`
+                    INSERT INTO design_elements
+                        (id, page_id, element_type, z_index, locked, visible, properties, created_at, updated_at)
+                    VALUES
+                        ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+                `, [
+                    newElId,
+                    newPageId,
+                    el.element_type,
+                    el.z_index,
+                    el.locked,
+                    el.visible,
+                    el.properties,
+                ]);
+            }
+        }
+
+        // 5. Tăng bộ đếm uses
+        await db.execute(
+            `UPDATE public_templates SET uses = uses + 1 WHERE design_id = $1`,
+            [templateId]
+        );
+
+        res.status(201).json({
+            success: true,
+            designId: newDesignId,
+            message: 'Template đã được sao chép vào thiết kế của bạn!',
+        });
+    } catch (error) {
+        console.error('[useTemplate]', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};

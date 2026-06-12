@@ -51,10 +51,22 @@ async function sweepDirectory(dir: string, urlBase: string): Promise<{ deleted: 
       [fileUrl]
     );
 
+    let isUsedInElements = false;
     if (!assetMeta) {
-      // Không còn bản ghi nào trỏ tới file → đây là orphan thực sự
+      // PPTX import does not create an asset record for every extracted image.
+      // So check if this URL is referenced inside any design element.
+      const elementCheck = await db.getOne(
+        `SELECT id FROM design_elements WHERE properties::text LIKE $1 LIMIT 1`,
+        [`%${fileUrl}%`]
+      );
+      if (elementCheck) {
+        isUsedInElements = true;
+      }
+    }
+
+    if (!assetMeta && !isUsedInElements) {
+      // Không còn bản ghi nào trỏ tới file và không được dùng trong design_elements
       // File không còn owner trong DB → không có ai để hoàn trả quota
-      // (Trường hợp này: bản ghi đã bị xóa đúng luồng, quota đã được trừ rồi)
       try {
         fs.unlinkSync(path.join(dir, fileName));
         console.log(`[GC] Deleted orphan file (no DB record): ${fileUrl}`);

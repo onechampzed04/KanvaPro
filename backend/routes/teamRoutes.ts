@@ -32,10 +32,10 @@ const avatarUpload = multer({
 }).single('avatar');
 
 // ─── Team CRUD ────────────────────────────────────────────────────────────────
-router.post('/',           createTeam);         // [FIX 2d] Giới hạn số team
-router.get('/my-teams',    getMyTeams);
-router.get('/:id',         getTeamById);
-router.put('/:id',         updateTeam);
+router.post('/', createTeam);         // [FIX 2d] Giới hạn số team
+router.get('/my-teams', getMyTeams);
+router.get('/:id', getTeamById);
+router.put('/:id', updateTeam);
 
 router.post(
   '/:id/update-avatar',
@@ -57,26 +57,26 @@ router.post(
 
 // ─── Member Management ────────────────────────────────────────────────────────
 // [FIX 3b] Pagination + Search
-router.get('/:id/members',               getTeamMembersPaginated);
+router.get('/:id/members', getTeamMembersPaginated);
 // [FIX 1b] Atomic Invite (Row-level Lock) | [FIX 2c] Role Validation
-router.post('/:id/members',              inviteMember);
+router.post('/:id/members', inviteMember);
 // [FIX 2b] RBAC: Admin không đá Admin | [FIX 1c] Soft Delete khi Owner rời
-router.delete('/:id/members/:memberId',  removeMember);
+router.delete('/:id/members/:memberId', removeMember);
 // [FIX 2c] RBAC: Owner/Admin có thể thay đổi role
 router.put('/:id/members/:memberId/role', updateMemberRole);
 
 // ─── Ownership Transfer ───────────────────────────────────────────────────────
 // [BILLING] Preview: workspace sẽ downgrade/upgrade sau khi chuyển? (Frontend dùng để hiện cảnh báo)
-router.get('/:id/preview-transfer',      previewTransferOwnership);
+router.get('/:id/preview-transfer', previewTransferOwnership);
 // [BILLING: Owner-based] Workspace tự động theo gói của Owner mới
-router.post('/:id/transfer-ownership',   transferOwnership);
+router.post('/:id/transfer-ownership', transferOwnership);
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────
 // [FIX 3c] Lịch sử hành động (chỉ Owner/Admin xem)
-router.get('/:id/audit-logs',            getTeamAuditLogs);
+router.get('/:id/audit-logs', getTeamAuditLogs);
 
 // ─── Storage Breakdown ────────────────────────────────────────────────────────
-router.get('/:id/storage-breakdown',     getTeamStorageBreakdown);
+router.get('/:id/storage-breakdown', getTeamStorageBreakdown);
 
 // ─── Design Clone ─────────────────────────────────────────────────────────────
 // [FIX 2a] Quota cá nhân được kiểm tra trực tiếp trong controller (không cần middleware)

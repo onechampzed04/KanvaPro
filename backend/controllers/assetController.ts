@@ -423,7 +423,7 @@ export const getAssetUsages = async (req: Request, res: Response) => {
       [id, user.id]
     );
     if (!asset) return res.status(404).json({ error: 'Asset không tồn tại hoặc bạn không có quyền xem' });
-    
+
     const usages = await db.query(
       `SELECT DISTINCT d.id, d.title, d.thumbnail_url
        FROM designs d
@@ -539,7 +539,7 @@ export const forceDeleteUserAsset = async (req: Request, res: Response) => {
     const { decrementStorageUsage } = await import('../middleware/checkStorageQuota.js');
     const fileSizeBytes = Number(asset.file_size ?? 0);
     if (fileSizeBytes > 0) {
-       await decrementStorageUsage(asset.uploaded_by, fileSizeBytes, asset.team_id).catch(() => {});
+      await decrementStorageUsage(asset.uploaded_by, fileSizeBytes, asset.team_id).catch(() => { });
     }
 
     res.json({ success: true, message: 'Ảnh đã được xóa khỏi hệ thống và tất cả dự án.' });

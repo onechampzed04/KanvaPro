@@ -4,10 +4,13 @@ import { Asset } from '../models/Asset';
 
 export const assetService = {
     searchAssets: async (q?: string, type?: string): Promise<Asset[]> => {
-        let sql = 'SELECT * FROM assets WHERE 1=1';
+        // [DEACTIVE ASSET] Chỉ trả về asset đang active (is_active = true).
+        // Admin có thể deactive asset, lúc đó asset biến mất khỏi sidebar/search của editor,
+        // nhưng URL vẫn còn nên các design cũ render bình thường.
+        let sql = 'SELECT * FROM assets WHERE is_active = true AND uploaded_by IS NULL';
         const params: any[] = [];
         let paramIndex = 1;
-            
+
         if (q) {
             sql += ` AND (name ILIKE $${paramIndex} OR $${paramIndex + 1} = ANY(tags))`;
             params.push(`%${q}%`, q);
