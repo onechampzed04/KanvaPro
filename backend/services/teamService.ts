@@ -151,7 +151,7 @@ export const teamService = {
               (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) AS member_count,
               us.id AS sub_id, us.status AS sub_status,
               sp.max_team_members AS plan_max_members,
-              CASE WHEN us.status = 'active' AND us.current_period_end > NOW() THEN true ELSE false END AS is_pro,
+              CASE WHEN us.status = 'active' AND us.current_period_end > NOW() AND (t.max_members = 1 OR COALESCE(sp.max_team_members, 1) > 1) THEN true ELSE false END AS is_pro,
               CASE WHEN t.max_members = 1 THEN true ELSE false END AS is_personal
        FROM teams t
        JOIN team_members tm ON t.id = tm.team_id
@@ -186,7 +186,7 @@ export const teamService = {
         (SELECT COUNT(*) FROM team_members WHERE team_id = t.id)::int AS member_count,
         us.id AS sub_id, us.status AS sub_status, us.current_period_end,
         sp.name AS plan_name, sp.slug AS plan_slug, sp.max_team_members AS plan_max_members,
-        CASE WHEN us.status = 'active' AND us.current_period_end > NOW() THEN true ELSE false END AS is_pro,
+        CASE WHEN us.status = 'active' AND us.current_period_end > NOW() AND (t.max_members = 1 OR COALESCE(sp.max_team_members, 1) > 1) THEN true ELSE false END AS is_pro,
         CASE
           WHEN us.status IS NULL OR us.status = 'expired' OR us.status = 'canceled' THEN
             (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) > t.max_members
@@ -299,8 +299,8 @@ export const teamService = {
 
       const { max_members, sub_status, current_period_end, plan_max, current_count } = teamRes.rows[0];
 
-      const isPro = sub_status === 'active' && current_period_end && new Date(current_period_end) > new Date();
-      const effectiveMax = isPro && plan_max ? Number(plan_max) : Number(max_members);
+      const isPro = sub_status === 'active' && current_period_end && new Date(current_period_end) > new Date() && (max_members === 1 || plan_max > 1);
+      const effectiveMax = Number(max_members);
 
       // Kiểm tra Quota TRONG transaction, sau khi đã lock
       if (current_count >= effectiveMax) {

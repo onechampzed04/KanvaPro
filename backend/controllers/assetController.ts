@@ -14,12 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FONTS_DIR = path.join(__dirname, '..', 'public', 'fonts');
 const IMAGES_DIR = path.join(__dirname, '..', 'public', 'uploads', 'images');
 
-/**
- * POST /api/assets/upload-image
- * Nhận file ảnh (png, jpg, webp, gif, svg) qua Multer memoryStorage,
- * lưu vào public/uploads/images/, trả về URL tĩnh để gán vào element.src.
- * Đây là giải pháp thay thế cho việc lưu Base64 trong DB.
- */
+import sizeOf from 'image-size';
+import { v4 as uuidv4 } from 'uuid';
+
 export const uploadImage = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
@@ -37,7 +34,6 @@ export const uploadImage = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'File size must not exceed 20MB' });
     }
 
-    const { v4: uuidv4 } = await import('uuid');
     const ext = path.extname(file.originalname).toLowerCase() || '.png';
     const fileName = `${uuidv4()}${ext}`;
     const filePath = path.join(IMAGES_DIR, fileName);
@@ -45,23 +41,32 @@ export const uploadImage = async (req: Request, res: Response) => {
     fs.mkdirSync(IMAGES_DIR, { recursive: true });
     fs.writeFileSync(filePath, file.buffer);
 
+    let width = null;
+    let height = null;
+    try {
+      const dimensions = sizeOf(file.buffer);
+      width = dimensions.width || null;
+      height = dimensions.height || null;
+    } catch (err) {
+      console.warn('[Upload] Could not read image dimensions:', err);
+    }
+
     const imageUrl = `/uploads/images/${fileName}`;
 
-    // ─── [WORKSPACE] Lấy workspaceId từ context (nếu có) ────────────────────
     const workspace = (req as any).workspace;
     const workspaceId: string | undefined = workspace?.id;
     const workspaceType = workspace?.type;
 
-    // Ghi vào DB assets, kèm team_id để phân biệt tài sản của Workspace nào
-    // RETURNING id để frontend lấy assetId gọi cloneAssetForDesign
     let assetId: string | null = null;
     const assetTeamId = (workspaceId && workspaceType !== 'personal') ? workspaceId : null;
+    const metadataStr = JSON.stringify({ width, height });
+
     try {
       const insertResult = await db.query(
-        `INSERT INTO assets (name, type, url, uploaded_by, team_id, is_premium, file_size, created_at)
-         VALUES ($1, $2, $3, $4, $5, false, $6, NOW())
+        `INSERT INTO assets (name, type, url, uploaded_by, team_id, is_premium, file_size, created_at, metadata)
+         VALUES ($1, $2, $3, $4, $5, false, $6, NOW(), $7)
          RETURNING id`,
-        [file.originalname, 'image', imageUrl, user.id, assetTeamId, file.size]
+        [file.originalname, 'image', imageUrl, user.id, assetTeamId, file.size, metadataStr]
       );
       assetId = insertResult.rows[0]?.id ?? null;
       console.log(`[Upload] Asset inserted: id=${assetId}, user=${user.id}, workspace=${workspaceId ?? 'personal'}, file=${file.originalname}`);
@@ -69,17 +74,16 @@ export const uploadImage = async (req: Request, res: Response) => {
       console.error('[Upload] FAILED to insert asset to DB:', insertErr);
     }
 
-    // ─── [WORKSPACE] Trừ dung lượng vào Workspace (không phải User cá nhân) ─
     await incrementStorageUsage(user.id, file.size, workspaceId, workspaceType).catch((e) => {
       console.error('[Upload] Failed to increment storage:', e);
     });
 
     res.status(201).json({
       url: imageUrl,
-      assetId,          // [NEW] Trả về để frontend gọi cloneAssetForDesign
+      assetId,
       name: file.originalname,
-      width: null,
-      height: null,
+      width,
+      height,
     });
   } catch (error) {
     console.error('Upload Image Error:', error);
@@ -354,11 +358,11 @@ export const getUserImages = async (req: Request, res: Response) => {
       // ─── Lấy tất cả ảnh của user không phân biệt workspace ───
       result = await db.query(
         `SELECT a.id, a.name, a.type, 
-                CASE WHEN a.type = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
-                a.file_size, a.created_at
+                CASE WHEN a.type::text = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
+                a.file_size, a.created_at, a.metadata
          FROM assets a
          LEFT JOIN designs d ON a.metadata->>'design_id' = d.id::text
-         WHERE a.type IN ('image', 'pptx')
+         WHERE a.type::text IN ('image', 'pptx')
            AND a.uploaded_by = $1
            AND (a.metadata->>'design_clone' IS NULL OR a.metadata->>'design_clone' = 'false')
          ORDER BY a.created_at DESC`,
@@ -375,11 +379,11 @@ export const getUserImages = async (req: Request, res: Response) => {
       // ─── [WORKSPACE] Filter by team_id if inside a Team ───
       result = await db.query(
         `SELECT a.id, a.name, a.type, 
-                CASE WHEN a.type = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
-                a.file_size, a.created_at
+                CASE WHEN a.type::text = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
+                a.file_size, a.created_at, a.metadata
          FROM assets a
          LEFT JOIN designs d ON a.metadata->>'design_id' = d.id::text
-         WHERE a.type IN ('image', 'pptx')
+         WHERE a.type::text IN ('image', 'pptx')
            AND a.team_id = $1
            ${uploadedByFilter.replace('uploaded_by', 'a.uploaded_by')}
            AND (a.metadata->>'design_clone' IS NULL OR a.metadata->>'design_clone' = 'false')
@@ -390,11 +394,11 @@ export const getUserImages = async (req: Request, res: Response) => {
       // ─── [WORKSPACE] Filter by personal (team_id IS NULL) ───
       result = await db.query(
         `SELECT a.id, a.name, a.type, 
-                CASE WHEN a.type = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
-                a.file_size, a.created_at
+                CASE WHEN a.type::text = 'pptx' AND d.thumbnail_url IS NOT NULL THEN d.thumbnail_url ELSE a.url END as url, 
+                a.file_size, a.created_at, a.metadata
          FROM assets a
          LEFT JOIN designs d ON a.metadata->>'design_id' = d.id::text
-         WHERE a.type IN ('image', 'pptx')
+         WHERE a.type::text IN ('image', 'pptx')
            AND a.uploaded_by = $1
            AND a.team_id IS NULL
            AND (a.metadata->>'design_clone' IS NULL OR a.metadata->>'design_clone' = 'false')
@@ -403,7 +407,29 @@ export const getUserImages = async (req: Request, res: Response) => {
       );
     }
 
-    res.json({ images: result.rows });
+    const imagesWithDimensions = result.rows.map((r: any) => {
+      let width = null;
+      let height = null;
+      if (r.metadata) {
+        try {
+          const meta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+          width = meta.width || null;
+          height = meta.height || null;
+        } catch (e) { }
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        url: r.url,
+        file_size: r.file_size,
+        created_at: r.created_at,
+        width,
+        height
+      };
+    });
+
+    res.json({ images: imagesWithDimensions });
   } catch (error) {
     console.error('Get User Images Error:', error);
     res.status(500).json({ error: 'Không thể lấy danh sách hình ảnh' });

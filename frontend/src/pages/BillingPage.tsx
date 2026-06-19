@@ -113,7 +113,7 @@ export default function BillingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans relative">
+    <div className="min-h-screen bg-transparent font-sans relative">
       {/* KHU VỰC HIỂN THỊ CHÍNH */}
       <div className="print:hidden p-8 max-w-5xl mx-auto">
         <div className="flex justify-between items-start mb-8">
@@ -293,7 +293,7 @@ export default function BillingPage() {
 
       {/* KHU VỰC HÓA ĐƠN ĐỂ IN PDF — [ĐÃ SỬA] Thêm dấu PAID + tách dòng thuế rõ ràng */}
       {selectedInvoice && (
-        <div className="hidden print:block absolute top-0 left-0 w-full bg-white text-slate-800 p-12" style={{ fontFamily: 'sans-serif' }}>
+        <div className="doc-print-area hidden print:block absolute top-0 left-0 w-full bg-white text-slate-800 p-12" style={{ fontFamily: 'sans-serif' }}>
           <div className="max-w-[800px] mx-auto">
             <div className="flex justify-between items-start mb-12 border-b-2 border-slate-100 pb-8">
               <div>
@@ -321,8 +321,8 @@ export default function BillingPage() {
               <div className="text-right">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Thanh toán cho</h3>
                 <p className="font-bold text-slate-800 text-lg">KanvaPro Inc.</p>
-                <p className="text-slate-600">123 Design Street</p>
-                <p className="text-slate-600">Creative City, VN</p>
+                <p className="text-slate-600">Hà Nội</p>
+                <p className="text-slate-600">Việt Nam</p>
               </div>
             </div>
 
@@ -372,7 +372,6 @@ export default function BillingPage() {
 
             <div className="text-center text-slate-500 text-sm mt-12 pt-8 border-t border-slate-100">
               <p className="font-bold text-slate-600 mb-1">Cảm ơn bạn đã tin tưởng và sử dụng KanvaPro!</p>
-              <p>Nếu có thắc mắc, vui lòng liên hệ support@kanvapro.com</p>
             </div>
           </div>
         </div>

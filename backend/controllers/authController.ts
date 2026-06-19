@@ -102,12 +102,12 @@ export const login = async (req: Request, res: Response) => {
   try {
     const user: User | null = await db.getOne('SELECT * FROM users WHERE email = $1', [email]);
     if (!user) {
-      return res.status(400).json({ error: 'Invalid credentials' });
+      return res.status(400).json({ error: 'Email hoặc mật khẩu không chính xác' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password_hash!);
     if (!validPassword) {
-      return res.status(400).json({ error: 'Invalid credentials' });
+      return res.status(400).json({ error: 'Email hoặc mật khẩu không chính xác' });
     }
 
     // Kiểm tra tài khoản bị ban
@@ -255,6 +255,7 @@ export const getMe = async (req: Request, res: Response) => {
         current_period_end: row.current_period_end,
         plan_name: row.plan_name,
         plan_slug: row.plan_slug,
+        plan_max_members: row.plan_max_members,
       } : null
     };
 
@@ -415,13 +416,11 @@ export const updateAvatar = async (req: Request, res: Response) => {
     const filePath = path.join(avatarsDir, fileName);
     fs.writeFileSync(filePath, file.buffer);
 
-    const avatarUrl = `/uploads/avatars/${fileName}`;
+    // Thêm query parameter timestamp để phá browser cache khi file bị ghi đè
+    const avatarUrl = `/uploads/avatars/${fileName}?v=${Date.now()}`;
 
     // Cập nhật DB
-    await db.execute(
-      'UPDATE users SET avatar_url = $1 WHERE id = $2',
-      [avatarUrl, userId]
-    );
+    await db.execute('UPDATE users SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, userId]);
 
     res.json({ message: 'Cập nhật ảnh đại diện thành công', avatar_url: avatarUrl });
   } catch (error) {

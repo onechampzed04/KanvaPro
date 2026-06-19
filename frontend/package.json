@@ -57,6 +57,7 @@
     "socket.io-client": "^4.8.3",
     "sweetalert2": "^11.26.24",
     "tailwind-merge": "^3.5.0",
+    "tiptap": "^1.32.2",
     "use-image": "^1.1.4",
     "uuid": "^13.0.0",
     "vite": "^6.2.0",

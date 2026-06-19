@@ -18,6 +18,17 @@ export const paymentController = {
         return res.status(400).json({ error: 'Thiếu thông tin gói (planId, planName)' });
       }
 
+      // [SECURITY FIX] Check team owner if teamId is provided
+      if (teamId) {
+        const teamCheck = await db.query(
+          `SELECT id FROM teams WHERE id = $1 AND owner_id = $2 AND is_deleted = false`,
+          [teamId, userId]
+        );
+        if (teamCheck.rows.length === 0) {
+          return res.status(403).json({ error: 'Bạn không có quyền gia hạn hoặc nâng cấp nhóm này vì bạn không phải là chủ nhóm.' });
+        }
+      }
+
       const checkoutUrl = await paymentService.createPaymentLink(
         userId, planId, planName, membersCount, inviteEmails, teamId
       );

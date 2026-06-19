@@ -60,7 +60,8 @@ export const authService = {
          us.status AS sub_status,
          us.current_period_end,
          sp.name AS plan_name,
-         sp.slug AS plan_slug
+         sp.slug AS plan_slug,
+         sp.max_team_members AS plan_max_members
        FROM users u
        LEFT JOIN user_subscriptions us ON us.user_id = u.id
        LEFT JOIN subscription_plans sp ON sp.id = us.plan_id

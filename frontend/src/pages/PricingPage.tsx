@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Check, Loader2, Crown, Sparkles, BadgeCheck, X, ArrowRight, Tag } from 'lucide-react';
+import { Check, Loader2, Crown, Sparkles, BadgeCheck, X, ArrowRight, Tag, RefreshCw } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { useSubscription } from '../hooks/useSubscription';
 import { fetchActiveSubscriptions, createCheckoutSession, previewUpgrade } from '../api/api';
 
@@ -12,18 +13,20 @@ function formatVND(n: number) {
 export default function PricingPage() {
   const { user } = useAuth();
   const { isPro: isUserPro, planSlug } = useSubscription();
+  const { currentWorkspace } = useWorkspace();
   const navigate = useNavigate();
 
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCheckingOut, setIsCheckingOut] = useState<string | null>(null);
 
-  // [MỚI] State cho Modal Checkout Preview (Tạm tính)
   const [previewModal, setPreviewModal] = useState<{
     show: boolean;
     sub: any;
     preview: any;
     isLoadingPreview: boolean;
+    teamId?: string;
+    membersCount?: number;
   }>({ show: false, sub: null, preview: null, isLoadingPreview: false });
 
   useEffect(() => {
@@ -57,11 +60,21 @@ export default function PricingPage() {
       return;
     }
 
+    const isTeamPlan = sub.slug === 'pro_team';
+    let targetTeamId = undefined;
+    let targetMembersCount = undefined;
+
+    // Nếu đang chọn gói Team và đang ở trong 1 Team Workspace
+    if (isTeamPlan && currentWorkspace && currentWorkspace.workspace_type !== 'personal') {
+      targetTeamId = currentWorkspace.id;
+      targetMembersCount = currentWorkspace.max_members || 1;
+    }
+
     // Mở modal với trạng thái loading
-    setPreviewModal({ show: true, sub, preview: null, isLoadingPreview: true });
+    setPreviewModal({ show: true, sub, preview: null, isLoadingPreview: true, teamId: targetTeamId, membersCount: targetMembersCount });
 
     try {
-      const preview = await previewUpgrade(sub.id);
+      const preview = await previewUpgrade(sub.id, targetMembersCount);
       setPreviewModal(prev => ({ ...prev, preview, isLoadingPreview: false }));
     } catch (error) {
       // Nếu lỗi preview, vẫn cho phép checkout với giá gốc
@@ -73,17 +86,17 @@ export default function PricingPage() {
     }
   };
 
-  // [MỚI] Bước 2: User bấm "Xác nhận & Thanh toán" trong Modal → redirect PayOS
   const handleConfirmCheckout = async () => {
     const sub = previewModal.sub;
     if (!sub) return;
     setIsCheckingOut(sub.id);
     try {
-      // [FIX Vấn đề 3] Không gửi amount — backend tự tính từ DB
       const response = await createCheckoutSession({
         planId: sub.id,
         planName: sub.name,
-      });
+        teamId: previewModal.teamId,
+        membersCount: previewModal.membersCount
+      } as any);
       if (response.checkoutUrl) window.location.href = response.checkoutUrl;
     } catch (error) {
       alert('Hệ thống thanh toán đang bận. Vui lòng thử lại sau!');
@@ -101,7 +114,7 @@ export default function PricingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12 px-4 sm:px-6 lg:px-8 font-sans">
+    <div className="min-h-screen bg-transparent py-12 px-4 sm:px-6 lg:px-8 font-sans">
 
       {/* ─── [MỚI] Modal Checkout Preview (Tạm tính trước khi thanh toán) ─── */}
       {previewModal.show && (
@@ -126,9 +139,18 @@ export default function PricingPage() {
               <>
                 {/* Chi tiết tạm tính */}
                 <div className="bg-slate-50 rounded-xl p-5 space-y-3 mb-6">
+                  {previewModal.teamId && (
+                    <div className="flex justify-between text-sm mb-2 pb-2 border-b border-slate-200">
+                      <span className="text-slate-600">Gia hạn nhóm:</span>
+                      <span className="font-bold text-slate-800">{currentWorkspace?.name}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-600">Gói đăng ký:</span>
-                    <span className="font-bold text-slate-800">{previewModal.preview.newPlanName}</span>
+                    <span className="font-bold text-slate-800">
+                      {previewModal.preview.newPlanName}
+                      {previewModal.membersCount ? ` (${previewModal.membersCount} thành viên)` : ''}
+                    </span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-600">Giá gốc:</span>
@@ -179,9 +201,6 @@ export default function PricingPage() {
       )}
 
       <div className="max-w-7xl mx-auto text-center">
-        <Link to="/" className="text-indigo-500 font-bold hover:text-indigo-700 hover:underline mb-6 inline-block transition">
-          ← Quay lại Bảng điều khiển
-        </Link>
         <h2 className="text-3xl font-black text-slate-900 sm:text-5xl tracking-tight">
           Nâng tầm thiết kế của bạn
         </h2>
@@ -220,21 +239,23 @@ export default function PricingPage() {
           // Parse JSONB features từ DB an toàn
           let featuresList: string[] = [];
           if (typeof sub.features === 'string') {
-            try { featuresList = JSON.parse(sub.features); } catch(e) {}
+            try { featuresList = JSON.parse(sub.features); } catch (e) { }
           } else if (Array.isArray(sub.features)) {
             featuresList = sub.features;
           }
 
+          const isTeamPlan = sub.slug === 'pro_team';
+          const isTeamRenewal = isTeamPlan && currentWorkspace && currentWorkspace.workspace_type !== 'personal';
+
           return (
-            <div 
-              key={sub.id} 
-              className={`bg-white rounded-3xl p-8 flex flex-col relative transition-all duration-300 ${
-                isCurrentPlan
+            <div
+              key={sub.id}
+              className={`bg-white rounded-3xl p-8 flex flex-col relative transition-all duration-300 ${isCurrentPlan
                   ? 'shadow-2xl shadow-emerald-500/20 border-2 border-emerald-500 transform lg:scale-105 z-10'
-                  : isPro 
-                    ? 'shadow-2xl shadow-indigo-500/20 border-2 border-indigo-500 transform lg:scale-105 z-10' 
+                  : isPro
+                    ? 'shadow-2xl shadow-indigo-500/20 border-2 border-indigo-500 transform lg:scale-105 z-10'
                     : 'shadow-lg shadow-slate-200/50 border border-slate-200 hover:border-indigo-300'
-              }`}
+                }`}
             >
               {/* Badge "Gói hiện tại" nếu user đang dùng gói này */}
               {isCurrentPlan && (
@@ -242,58 +263,60 @@ export default function PricingPage() {
                   <BadgeCheck size={12} /> GÓI HIỆN TẠI
                 </div>
               )}
-              
+
               {/* Badge "Phổ biến nhất" cho gói Pro */}
               {isPro && !isCurrentPlan && (
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 -mt-4 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-md flex items-center gap-1">
                   <Crown size={12} /> PHỔ BIẾN NHẤT
                 </div>
               )}
-              
+
               <h3 className="text-2xl font-black text-slate-900 mt-2">{sub.name}</h3>
               <p className="mt-3 text-sm text-slate-500 font-medium min-h-[40px]">
                 {isFree ? "Dành cho cá nhân mới bắt đầu khám phá." : "Dành cho nhà thiết kế chuyên nghiệp & doanh nghiệp."}
               </p>
-              
+
               <div className="mt-6 flex items-end gap-1">
                 <span className="text-5xl font-black text-slate-900 tracking-tighter">
                   {Number(sub.monthly_price).toLocaleString('vi-VN')}đ
                 </span>
                 <span className="text-base font-bold text-slate-400 mb-1">/tháng</span>
               </div>
-              
+
               <ul className="mt-8 space-y-4 flex-1">
                 {featuresList.map((feature, idx) => (
                   <li key={idx} className="flex items-start gap-3">
-                    <div className={`mt-0.5 shrink-0 rounded-full p-1 ${
-                      isCurrentPlan 
+                    <div className={`mt-0.5 shrink-0 rounded-full p-1 ${isCurrentPlan
                         ? 'bg-emerald-100 text-emerald-600'
                         : isPro ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-100 text-emerald-600'
-                    }`}>
+                      }`}>
                       <Check className="h-3 w-3" strokeWidth={3} />
                     </div>
                     <span className="text-sm font-medium text-slate-700 leading-snug">{feature}</span>
                   </li>
                 ))}
               </ul>
-              
-              <button 
+
+              <button
                 onClick={() => handleSubscribe(sub)}
                 disabled={isCheckingOut === sub.id || isCurrentPlan}
-                className={`mt-10 w-full font-bold py-4 px-6 rounded-xl text-center transition-all duration-300 flex items-center justify-center gap-2 ${
-                  isCurrentPlan
+                className={`mt-10 w-full font-bold py-4 px-6 rounded-xl text-center transition-all duration-300 flex items-center justify-center gap-2 ${isCurrentPlan
                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
-                    : isFree 
-                      ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' 
-                      : isPro 
-                        ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg hover:shadow-indigo-500/30 hover:-translate-y-1' 
-                        : 'bg-slate-900 text-white hover:bg-slate-800'
-                }`}
+                    : isFree
+                      ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      : isTeamRenewal
+                        ? 'bg-gradient-to-r from-rose-500 to-orange-500 text-white hover:shadow-lg hover:shadow-orange-500/30 hover:-translate-y-1'
+                        : isPro
+                          ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg hover:shadow-indigo-500/30 hover:-translate-y-1'
+                          : 'bg-slate-900 text-white hover:bg-slate-800'
+                  }`}
               >
                 {isCheckingOut === sub.id ? (
                   <><Loader2 className="w-5 h-5 animate-spin" /> Đang chuyển hướng...</>
                 ) : isCurrentPlan ? (
                   <><BadgeCheck className="w-5 h-5" /> Gói hiện tại của bạn</>
+                ) : isTeamRenewal ? (
+                  <><RefreshCw className="w-5 h-5" /> Gia hạn nhóm</>
                 ) : (
                   isFree ? "Bắt đầu miễn phí" : `Nâng cấp ${sub.name}`
                 )}

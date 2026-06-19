@@ -74,7 +74,9 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
            sp.max_team_members AS plan_max_members,
            sp.features AS plan_features,
            CASE 
-             WHEN us.status = 'active' AND us.current_period_end > NOW() THEN true
+             WHEN us.status = 'active' AND us.current_period_end > NOW() 
+                  AND (t.max_members = 1 OR COALESCE(sp.max_team_members, 1) > 1)
+             THEN true
              ELSE false
            END AS is_pro
          FROM teams t
@@ -119,7 +121,9 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
            sp.max_team_members AS plan_max_members,
            sp.features AS plan_features,
            CASE 
-             WHEN us.status = 'active' AND us.current_period_end > NOW() THEN true
+             WHEN us.status = 'active' AND us.current_period_end > NOW() 
+                  AND (t.max_members = 1 OR COALESCE(sp.max_team_members, 1) > 1)
+             THEN true
              ELSE false
            END AS is_pro
          FROM teams t
@@ -146,9 +150,7 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
       maxStorageGb: Number(workspace?.max_storage_gb ?? 5),
       isPro: workspace?.is_pro ?? false,
       planFeatures: workspace?.plan_features ?? [],
-      maxMembers: workspace?.is_pro
-        ? Number(workspace?.plan_max_members ?? 1)
-        : (workspace?.max_members ?? 1),
+      maxMembers: Number(workspace?.max_members ?? 1),
     };
 
     next();

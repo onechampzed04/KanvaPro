@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'framer-motion';
+import { Eye, EyeOff } from 'lucide-react';
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
@@ -12,6 +13,7 @@ export default function RegisterPage() {
   const [userId, setUserId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -106,13 +108,23 @@ export default function RegisterPage() {
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider ml-1 mb-2">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white/50 px-4 py-3.5 focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all outline-none text-slate-700 font-medium"
-                required
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  maxLength={20}
+                  className="w-full rounded-2xl border border-slate-200 bg-white/50 px-4 py-3.5 pr-14 focus:border-pink-400 focus:ring-4 focus:ring-pink-100 transition-all outline-none text-slate-700 font-medium"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
             <button
               type="submit"

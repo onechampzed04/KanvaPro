@@ -1,5 +1,5 @@
 // src/components/editor/PresentationPlayer.tsx
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronLeft,
@@ -11,7 +11,7 @@ import {
   Pause,
   Grid,
 } from 'lucide-react';
-import { Stage, Layer, Rect, Group } from 'react-konva';
+import { Stage, Layer, Rect, Group, Line } from 'react-konva';
 import { CircleShape, RectangleShape, EditableText, URLImage } from './CanvasElements';
 
 interface PresentationPlayerProps {
@@ -79,12 +79,36 @@ export default function PresentationPlayer({
   const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoPlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const totalSlides = pages.length;
+
   // ── Animation state for step entry effects ──────────────────────────────────
   const [animatingStep, setAnimatingStep] = useState(-1);  // which animationOrder is currently animating
   const [animProgress, setAnimProgress] = useState(1);     // 0→1 progress of entry animation
   const animRafRef = useRef<number | null>(null);
   const animStartTimeRef = useRef<number>(0);
   const ANIM_DURATION = 600; // ms
+  const currentPage = pages[currentIdx];
+  
+  const uniqueSteps = useMemo(() => {
+    if (!currentPage?.elements) return [0];
+    const steps = new Set<number>([0]);
+    currentPage.elements.forEach((el: any) => {
+      // Treat undefined animationOrder as 0 (appear immediately)
+      // or if you want to support legacy undefined as 999, we should check AnimationPanel logic.
+      // AnimationPanel defaults undefined to 999, but PresentationPlayer treated it as 0.
+      // Let's keep treating it as 0 for rendering.
+      if (el.animationOrder && el.animationOrder > 0) {
+        steps.add(el.animationOrder);
+      }
+    });
+    return Array.from(steps).sort((a, b) => a - b);
+  }, [currentPage]);
+
+  const maxAnimationOrder = uniqueSteps[uniqueSteps.length - 1];
+
+  useEffect(() => {
+    console.log("PresentationPlayer mounted/updated. currentStep:", currentStep, "maxAnimationOrder:", maxAnimationOrder, "elements count:", currentPage?.elements?.length);
+  }, [currentStep, maxAnimationOrder, currentPage?.elements]);
 
   const startStepAnimation = useCallback((step: number) => {
     setAnimatingStep(step);
@@ -104,9 +128,6 @@ export default function PresentationPlayer({
     animRafRef.current = requestAnimationFrame(animate);
   }, []);
 
-  const currentPage = pages[currentIdx];
-  const totalSlides = pages.length;
-
   // --- Navigation ---
   const goTo = useCallback(
     (idx: number, dir: number) => {
@@ -119,27 +140,26 @@ export default function PresentationPlayer({
     [totalSlides]
   );
 
-  const maxAnimationOrder = currentPage?.elements?.reduce((max: number, el: any) => {
-    return Math.max(max, el.animationOrder || 0);
-  }, 0) || 0;
-
   const goNext = useCallback(() => {
-    if (currentStep < maxAnimationOrder) {
-      const nextStep = currentStep + 1;
-      setCurrentStep(nextStep);
-      startStepAnimation(nextStep);
+    const nextStepVal = uniqueSteps.find(s => s > currentStep);
+    if (nextStepVal !== undefined) {
+      setCurrentStep(nextStepVal);
+      startStepAnimation(nextStepVal);
     } else {
       goTo(currentIdx + 1, 1);
     }
-  }, [currentStep, maxAnimationOrder, currentIdx, goTo, startStepAnimation]);
+  }, [currentStep, uniqueSteps, currentIdx, goTo, startStepAnimation]);
 
   const goPrev = useCallback(() => {
     if (currentStep > 0) {
-      setCurrentStep(prev => prev - 1);
+      const prevSteps = [...uniqueSteps].filter(s => s < currentStep);
+      const prevStepVal = prevSteps.length > 0 ? prevSteps[prevSteps.length - 1] : 0;
+      setCurrentStep(prevStepVal);
+      setAnimatingStep(-1);
     } else {
       goTo(currentIdx - 1, -1);
     }
-  }, [currentStep, currentIdx, goTo]);
+  }, [currentStep, uniqueSteps, currentIdx, goTo]);
 
   // --- Keyboard Handler ---
   useEffect(() => {
@@ -289,6 +309,28 @@ export default function PresentationPlayer({
                 const handlers = { onChange: () => {}, onChangeFinal: () => {}, onSelect: () => {}, onDragMove: () => {} };
                 if (el.type === 'circle') return <CircleShape key={el.id} shape={shapeProps} {...handlers} />;
                 if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={shapeProps} {...handlers} />;
+                if (el.type === 'line') {
+                  return (
+                    <Line
+                      key={el.id}
+                      id={el.id}
+                      points={shapeProps.points}
+                      stroke={shapeProps.stroke || '#6366f1'}
+                      strokeWidth={shapeProps.strokeWidth || 3}
+                      hitStrokeWidth={20}
+                      tension={shapeProps.tension || 0}
+                      lineCap={shapeProps.lineCap || 'round'}
+                      lineJoin={shapeProps.lineJoin || 'round'}
+                      x={shapeProps.x || 0}
+                      y={shapeProps.y || 0}
+                      opacity={shapeProps.opacity ?? 1}
+                      scaleX={shapeProps.scaleX ?? 1}
+                      scaleY={shapeProps.scaleY ?? 1}
+                      rotation={shapeProps.rotation ?? 0}
+                      listening={false}
+                    />
+                  );
+                }
                 if (el.type === 'text') return <EditableText key={el.id} text={shapeProps} isEditing={false} {...handlers} />;
                 if (el.type === 'image') return <URLImage key={el.id} image={shapeProps} {...handlers} />;
                 return null;

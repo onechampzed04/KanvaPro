@@ -26,9 +26,14 @@ const PREVIEW_W = 380; // chiều rộng vùng preview trong panel
 export default function CropOverlay({ element, onApply, onCancel, onReset }: CropOverlayProps) {
   const imgW = element.width || 200;
   const imgH = element.height || 200;
-  const aspect = imgH / imgW;
-  const previewH = Math.min(PREVIEW_W * aspect, 340);
-  const scale = PREVIEW_W / imgW; // tỉ lệ preview → canvas
+  const MAX_PREVIEW_W = 380;
+  const MAX_PREVIEW_H = 340;
+
+  // Tính scale để toàn bộ ảnh nằm gọn trong MAX_PREVIEW_W x MAX_PREVIEW_H (như object-fit: contain)
+  const scale = Math.min(MAX_PREVIEW_W / imgW, MAX_PREVIEW_H / imgH);
+  
+  const previewW = imgW * scale;
+  const previewH = imgH * scale;
 
   const initial: CropRect = element.cropRect
     ? { ...element.cropRect }
@@ -103,15 +108,27 @@ export default function CropOverlay({ element, onApply, onCancel, onReset }: Cro
 
   const onMouseUp = useCallback(() => {
     dragRef.current = null;
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
-  }, [onMouseMove]);
+    // Note: We'll remove these by named reference if needed, 
+    // but the easiest way to avoid closure issues is to define them directly or use standard removal.
+  }, []);
 
   const startDrag = (type: Handle, e: React.MouseEvent) => {
     e.stopPropagation(); e.preventDefault();
     dragRef.current = { type, sx: e.clientX, sy: e.clientY, sc: { ...crop } };
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    
+    // Define stable handlers for the drag session
+    const handleMove = (ev: MouseEvent) => {
+      onMouseMove(ev);
+    };
+    
+    const handleUp = (ev: MouseEvent) => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
   };
 
   // tọa độ preview (px trong preview box)
@@ -199,7 +216,7 @@ export default function CropOverlay({ element, onApply, onCancel, onReset }: Cro
             {/* Image preview container */}
             <div style={{
               position: 'relative',
-              width: PREVIEW_W, height: previewH,
+              width: previewW, height: previewH,
               margin: '0 auto',
               userSelect: 'none',
             }}>

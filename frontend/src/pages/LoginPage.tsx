@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Eye, EyeOff } from 'lucide-react';
 
 type AuthStep =
   | 'login'
@@ -31,6 +32,9 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -260,7 +264,16 @@ export default function LoginPage() {
             </div>
             <div>
               <label className={labelClass}>Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} className={inputClass} required />
+              <div className="relative">
+                <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} maxLength={20} className={inputClass + " pr-14"} required />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             {/* Forgot Password link */}
@@ -367,11 +380,29 @@ export default function LoginPage() {
           <motion.form initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} onSubmit={handleResetPassword} className="space-y-5">
             <div>
               <label className={labelClass}>Mật khẩu mới</label>
-              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className={inputClass} required minLength={6} placeholder="Tối thiểu 6 ký tự" />
+              <div className="relative">
+                <input type={showNewPassword ? "text" : "password"} value={newPassword} onChange={e => setNewPassword(e.target.value)} maxLength={20} className={inputClass + " pr-14"} required minLength={6} placeholder="Tối thiểu 6 ký tự" />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
             <div>
               <label className={labelClass}>Xác nhận mật khẩu</label>
-              <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className={inputClass} required placeholder="Nhập lại mật khẩu mới" />
+              <div className="relative">
+                <input type={showConfirmPassword ? "text" : "password"} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} maxLength={20} className={inputClass + " pr-14"} required placeholder="Nhập lại mật khẩu mới" />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
             <button type="submit" disabled={loading} className={btnPrimary}>{loading ? 'Updating...' : 'Đặt lại mật khẩu'}</button>
           </motion.form>

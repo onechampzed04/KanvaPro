@@ -162,7 +162,7 @@ export default function AdminTeams() {
       </div>
 
       {/* ── Filters ── */}
-      <div className="p-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl flex flex-col md:flex-row gap-4 items-center">
+      <div className="relative z-20 p-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl flex flex-col md:flex-row gap-4 items-center">
         <div className="relative flex-1 w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
           <input
@@ -184,7 +184,7 @@ export default function AdminTeams() {
       </div>
 
       {/* ── Table ── */}
-      <div className="bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden">
+      <div className="relative z-10 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-gray-300">
             <thead className="bg-black/20 text-gray-400">

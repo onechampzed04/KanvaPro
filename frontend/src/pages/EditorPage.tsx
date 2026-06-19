@@ -570,7 +570,15 @@ export default function EditorPage() {
    * Thêm ảnh từ sidebar Uploads vào Canvas
    */
   const addUploadedImageToCanvas = useCallback((imgItem: { id: string; url: string; width?: number; height?: number }) => {
-    addImageOriginal(imgItem.url, imgItem.width || 800, imgItem.height || 600);
+    if (imgItem.width && imgItem.height) {
+      addImageOriginal(imgItem.url, imgItem.width, imgItem.height);
+    } else {
+      // Fallback for old images without dimensions in DB
+      const img = new window.Image();
+      img.src = imgItem.url;
+      img.onload = () => addImageOriginal(imgItem.url, img.width, img.height);
+      img.onerror = () => addImageOriginal(imgItem.url, 800, 600);
+    }
   }, [addImageOriginal]);
 
   // --- 2. Data Fetching ---

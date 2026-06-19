@@ -366,7 +366,7 @@ function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
     const img = new Image();
     img.onload = () => {
       imageRef.current = img;
-      const fz = Math.max(CROP_SIZE / img.naturalWidth, CROP_SIZE / img.naturalHeight);
+      const fz = Math.min(CROP_SIZE / img.naturalWidth, CROP_SIZE / img.naturalHeight);
       setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
       setMinZoom(fz);
       setZoom(fz);
@@ -491,6 +491,11 @@ function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
     ctx.beginPath();
     ctx.arc(OUTPUT_SIZE / 2, OUTPUT_SIZE / 2, OUTPUT_SIZE / 2, 0, Math.PI * 2);
     ctx.clip();
+
+    // Fill background with white to avoid black letterboxes in jpeg
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
     ctx.drawImage(img, cx, cy, scaledW, scaledH);
 
     out.toBlob(blob => { if (blob) onConfirm(blob); }, 'image/jpeg', 0.92);

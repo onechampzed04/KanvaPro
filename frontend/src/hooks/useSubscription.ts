@@ -15,10 +15,10 @@ export function useSubscription() {
   }
 
   const isUserPro = isSubscriptionActive(user);
-  const isPro = currentWorkspace?.is_pro || isUserPro;
-  const planName = currentWorkspace?.plan_name || user?.subscription?.plan_name || null;
-  const planSlug = currentWorkspace?.plan_slug || user?.subscription?.plan_slug || null;
-  const periodEnd = currentWorkspace?.current_period_end || user?.subscription?.current_period_end || null;
+  const isPro = currentWorkspace ? currentWorkspace.is_pro : isUserPro;
+  const planName = currentWorkspace ? currentWorkspace.plan_name : (user?.subscription?.plan_name || null);
+  const planSlug = currentWorkspace ? currentWorkspace.plan_slug : (user?.subscription?.plan_slug || null);
+  const periodEnd = currentWorkspace ? currentWorkspace.current_period_end : (user?.subscription?.current_period_end || null);
 
   const requirePro = (featureName = 'tính năng này'): boolean => {
     if (isPro) return true;

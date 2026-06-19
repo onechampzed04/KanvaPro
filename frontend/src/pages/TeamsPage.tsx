@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { Users, Plus, ChevronLeft, Crown, Shield, Eye, Trash2, Mail, Layout, FileText, X, Check, Video, Lock, AlertTriangle, Copy, ArrowRight, LogOut, RefreshCw, Settings, Upload, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { fetchMyTeams, createTeam, fetchTeamById, inviteTeamMember, removeTeamMember, createDesign, updateTeam, updateTeamAvatar } from '../api/api';
-import { useAuth, isSubscriptionActive } from '../context/AuthContext';
+import { useAuth, isTeamSubscriptionActive } from '../context/AuthContext';
 import TeamOnboarding from '../components/dashboard/TeamOnboarding';
 
 const ROLE_CONFIG: Record<string, { label: string; color: string; bg: string; icon: any }> = {
@@ -42,7 +42,7 @@ function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
     const img = new Image();
     img.onload = () => {
       imageRef.current = img;
-      const fz = Math.max(CROP_SIZE / img.naturalWidth, CROP_SIZE / img.naturalHeight);
+      const fz = Math.min(CROP_SIZE / img.naturalWidth, CROP_SIZE / img.naturalHeight);
       setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
       setMinZoom(fz);
       setZoom(fz);
@@ -167,6 +167,11 @@ function CropModal({ src, onConfirm, onCancel }: CropModalProps) {
     ctx.beginPath();
     ctx.arc(OUTPUT_SIZE / 2, OUTPUT_SIZE / 2, OUTPUT_SIZE / 2, 0, Math.PI * 2);
     ctx.clip();
+    
+    // Fill background with white to avoid black letterboxes in jpeg
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
     ctx.drawImage(img, cx, cy, scaledW, scaledH);
 
     out.toBlob(blob => { if (blob) onConfirm(blob); }, 'image/jpeg', 0.92);
@@ -497,6 +502,14 @@ export default function TeamsPage() {
       setActionLoading(false);
     }
   };
+  // ── [NEW] Loading state để tránh giật khung hình ───────────────────────
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   // ── [NEW] Nếu user chưa có team nào → Hiện màn hình Onboarding ──────────────
   if (!loading && teams.length === 0) {
@@ -539,7 +552,7 @@ export default function TeamsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 font-sans flex flex-col">
+    <div className="min-h-screen bg-transparent font-sans flex flex-col">
       {/* Header */}
       <header className="bg-white/70 backdrop-blur-xl border-b border-slate-100 px-8 py-4 flex items-center justify-between sticky top-0 z-30 shadow-sm">
         <div className="flex items-center gap-4">
@@ -553,7 +566,7 @@ export default function TeamsPage() {
         {!teams.some(t => t.my_role === 'owner') && (
           <button
             onClick={() => {
-              if (!isSubscriptionActive(user)) {
+              if (!isTeamSubscriptionActive(user)) {
                 setShowBuyTeamModal(true);
               } else {
                 setShowCreateModal(true);
@@ -1011,15 +1024,6 @@ export default function TeamsPage() {
                     placeholder="user@example.com"
                     className="mt-1.5 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 transition"
                   />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Vai trò</label>
-                  <select value={inviteRole} onChange={e => setInviteRole(e.target.value)}
-                    className="mt-1.5 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-emerald-400 transition cursor-pointer">
-                    <option value="admin">Admin</option>
-                    <option value="member">Member</option>
-                    <option value="viewer">Viewer</option>
-                  </select>
                 </div>
               </div>
               <div className="flex gap-3 mt-6">

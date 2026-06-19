@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isSubscriptionActive } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
   Plus, LogOut, Layout, Image as ImageIcon, Video,
@@ -62,6 +62,7 @@ export default function DashboardPage() {
   const [designs, setDesigns] = useState<any[]>([]);
   const [filterOwner, setFilterOwner] = useState<'any' | 'me' | 'shared' | 'email'>('any');
   const [filterEmail, setFilterEmail] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('any');
   const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'alpha_asc' | 'alpha_desc'>('date_desc');
   const [isCustomSizeOpen, setIsCustomSizeOpen] = useState(false);
@@ -111,6 +112,7 @@ export default function DashboardPage() {
   const isStorageWarning = storagePercentage > 90;
 
   const [deleteModalDesign, setDeleteModalDesign] = useState<any | null>(null);
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
@@ -175,6 +177,10 @@ export default function DashboardPage() {
       result = result.filter(d => d.design_type === filterType);
     }
 
+    if (searchQuery.trim() !== '') {
+      result = result.filter(d => d.title.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
+
     result.sort((a, b) => {
       if (sortBy === 'date_desc') return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
       if (sortBy === 'date_asc') return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
@@ -184,7 +190,7 @@ export default function DashboardPage() {
     });
 
     return result;
-  }, [designs, filterOwner, filterEmail, filterType, sortBy, user]);
+  }, [designs, filterOwner, filterEmail, filterType, sortBy, user, searchQuery]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -235,7 +241,14 @@ export default function DashboardPage() {
     const contentX = e.clientX - mainRect.left + scrollLeft;
     const contentY = e.clientY - mainRect.top + scrollTop;
 
-    initialSelectedIdsRef.current = [...selectedIds];
+    // Click ra ngoài để bỏ chọn
+    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      setSelectedIds([]);
+      initialSelectedIdsRef.current = [];
+    } else {
+      initialSelectedIdsRef.current = [...selectedIds];
+    }
+
     setSelectionRect({
       visible: true,
       startX: contentX,
@@ -590,8 +603,12 @@ export default function DashboardPage() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm('Chuyển các thiết kế đã chọn vào thùng rác?')) return;
+    setBulkDeleteModalOpen(true);
+  };
+
+  const confirmBulkDelete = async () => {
     try {
+      setBulkDeleteModalOpen(false);
       const result = await bulkDeleteDesigns(selectedIds);
       const deletedIds = result.deletedIds || selectedIds;
       setDesigns(prev => prev.filter(d => !deletedIds.includes(d.id)));
@@ -687,7 +704,11 @@ export default function DashboardPage() {
             {!isSidebarCollapsed && (
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-bold text-slate-800 truncate">{currentWorkspace ? currentWorkspace.name : 'Không gian Cá nhân'}</h3>
-                <p className="text-xs font-medium text-slate-500 truncate">{currentWorkspace ? 'Team Workspace' : 'Free Workspace'}</p>
+                <p className="text-xs font-medium text-slate-500 truncate">
+                  {currentWorkspace 
+                    ? (currentWorkspace.is_pro ? 'Team Workspace (Pro)' : 'Team Workspace (Free)') 
+                    : (isSubscriptionActive(user) ? 'Personal Workspace (Pro)' : 'Personal Workspace (Free)')}
+                </p>
               </div>
             )}
             {!isSidebarCollapsed && (
@@ -709,16 +730,16 @@ export default function DashboardPage() {
                     onClick={() => { switchWorkspace(null); setIsWorkspaceDropdownOpen(false); }}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center justify-between ${!currentWorkspace ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}`}
                   >
-                    <span>Cá nhân (Free)</span>
+                    <span>Cá nhân {isSubscriptionActive(user) ? '(Pro)' : '(Free)'}</span>
                     {!currentWorkspace && <span className="text-indigo-600">✓</span>}
                   </button>
-                  {workspaces.map(w => (
+                  {workspaces.filter((w: any) => w.workspace_type !== 'personal').map((w: any) => (
                     <button
                       key={w.id}
                       onClick={() => { switchWorkspace(w.id); setIsWorkspaceDropdownOpen(false); }}
                       className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center justify-between mt-1 ${currentWorkspace?.id === w.id ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
-                      <span className="truncate">{w.name} (Pro)</span>
+                      <span className="truncate">{w.name} {w.is_pro ? '(Pro)' : '(Free)'}</span>
                       {currentWorkspace?.id === w.id && <span className="text-indigo-600">✓</span>}
                     </button>
                   ))}
@@ -760,8 +781,12 @@ export default function DashboardPage() {
           <NavItem icon={Trash2} label="Thùng rác" active={activePage === 'trash'} onClick={() => setActivePage('trash')} />
           <div className="my-3 border-t border-slate-100" />
           <NavItem icon={UserCircle2} label="Hồ sơ cá nhân" active={activePage === 'profile'} onClick={() => setActivePage('profile')} />
-          <NavItem icon={Receipt} label="Hóa đơn & Lịch sử" active={activePage === 'billing'} onClick={() => setActivePage('billing')} />
-          <NavItem icon={Crown} label="Nâng cấp tài khoản" active={activePage === 'pricing'} onClick={() => setActivePage('pricing')} />
+          {(!currentWorkspace || currentWorkspace?.owner_id === user?.id) && (
+            <>
+              <NavItem icon={Receipt} label="Hóa đơn & Lịch sử" active={activePage === 'billing'} onClick={() => setActivePage('billing')} />
+              <NavItem icon={Crown} label="Nâng cấp tài khoản" active={activePage === 'pricing'} onClick={() => setActivePage('pricing')} />
+            </>
+          )}
           {(user?.role === 'admin' || user?.role === 'moderator') && (
             <NavItem icon={Shield} label="Quản trị viên" to="/admin" />
           )}
@@ -772,15 +797,23 @@ export default function DashboardPage() {
         {!isSidebarCollapsed ? (
           <div className="p-6 border-t border-slate-200 bg-slate-50/50 shrink-0">
             {!isPro ? (
+              (!currentWorkspace || currentWorkspace?.owner_id === user?.id) && (
+
               <div className="mb-4 bg-gradient-to-br from-indigo-50 to-purple-50 p-4 rounded-2xl border border-purple-100">
                 <div className="flex items-center gap-2 mb-2">
                   <Crown size={18} className="text-purple-600" strokeWidth={2.5} />
-                  <span className="font-bold text-sm text-purple-900">KanvaPro Free</span>
+                  <span className="font-bold text-sm text-purple-900">
+                    {currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'Kanva Team (Free)' : 'KanvaPro Free'}
+                  </span>
                 </div>
-                <button onClick={() => setActivePage('pricing')} className="block w-full text-center bg-white text-purple-600 text-xs font-bold py-2 rounded-xl border border-purple-200 hover:bg-purple-600 hover:text-white transition-colors">
-                  Nâng cấp ngay
+                <button 
+                  onClick={() => setActivePage(currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'teams' : 'pricing')} 
+                  className="block w-full text-center bg-white text-purple-600 text-xs font-bold py-2 rounded-xl border border-purple-200 hover:bg-purple-600 hover:text-white transition-colors"
+                >
+                  {currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'Gia hạn nhóm' : 'Nâng cấp ngay'}
                 </button>
               </div>
+              )
             ) : (
               <div className="mb-4 bg-gradient-to-br from-emerald-50 to-teal-50 p-4 rounded-2xl border border-emerald-100 flex items-center gap-2">
                 <Crown size={18} className="text-emerald-600" strokeWidth={2.5} />
@@ -809,9 +842,12 @@ export default function DashboardPage() {
         ) : (
           /* Collapsed footer: chỉ icon logout */
           <div className="py-4 px-2 border-t border-slate-200 flex flex-col items-center gap-3 shrink-0">
-            {!isPro && (
-              <button onClick={() => setActivePage('pricing')} title="Nâng cấp gói"
-                className="p-2 text-purple-500 hover:bg-purple-50 rounded-xl transition">
+            {!isPro && (!currentWorkspace || currentWorkspace?.owner_id === user?.id) && (
+              <button 
+                onClick={() => setActivePage(currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'teams' : 'pricing')} 
+                title={currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? "Gia hạn nhóm" : "Nâng cấp gói"}
+                className="p-2 text-purple-500 hover:bg-purple-50 rounded-xl transition"
+              >
                 <Crown size={20} strokeWidth={2.5} />
               </button>
             )}
@@ -856,12 +892,14 @@ export default function DashboardPage() {
           />
         )}
 
-        {activePage === 'teams' && <TeamsPanel />}
-        {activePage === 'storage' && <StoragePanel />}
-        {activePage === 'trash' && <TrashPanel />}
-        {activePage === 'billing' && <BillingPanel />}
-        {activePage === 'pricing' && <PricingPanel />}
-        {activePage === 'profile' && <ProfilePanel />}
+        <div className="relative z-10 flex-1 flex flex-col">
+          {activePage === 'teams' && <TeamsPanel />}
+          {activePage === 'storage' && <StoragePanel />}
+          {activePage === 'trash' && <TrashPanel />}
+          {activePage === 'billing' && <BillingPanel />}
+          {activePage === 'pricing' && <PricingPanel />}
+          {activePage === 'profile' && <ProfilePanel />}
+        </div>
 
 
         {/* Chỉ hiện home content khi activePage === 'home' */}
@@ -886,11 +924,17 @@ export default function DashboardPage() {
                   What will you design today?
                 </motion.h2>
               </div>
-              {/* Search bar simulation */}
+              {/* Search bar */}
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.2 }}
-                className="relative max-w-3xl w-full mx-auto shadow-sm group">
+                className="relative max-w-3xl w-full mx-auto group">
                 <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-[#4c1d95] transition-colors" size={20} />
-                <input type="text" placeholder="Search designs, folders and uploads" className="w-full bg-white border border-slate-200 hover:border-slate-300 text-slate-800 placeholder:text-slate-400 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-[#5E2EE1] focus:ring-4 focus:ring-[#5E2EE1]/10 transition-all font-medium text-[15px] shadow-sm" />
+                <input 
+                  type="text" 
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Tìm kiếm thiết kế của bạn..." 
+                  className="w-full bg-white border border-slate-200 hover:border-slate-300 text-slate-800 placeholder:text-slate-400 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-[#5E2EE1] focus:ring-4 focus:ring-[#5E2EE1]/10 transition-all font-medium text-[15px] shadow-sm" 
+                />
               </motion.div>
             </section>
 
@@ -1456,6 +1500,39 @@ export default function DashboardPage() {
                 <button onClick={handleDeleteDesign} disabled={isDeleting}
                   className="flex-1 py-3.5 rounded-xl bg-rose-500 text-white font-bold hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20 disabled:opacity-60 flex justify-center items-center">
                   {isDeleting ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span> : 'Xóa thiết kế'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK DELETE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {bulkDeleteModalOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={() => setBulkDeleteModalOpen(false)}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[28px] shadow-2xl p-8 max-w-md w-full"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-5 mb-6">
+                <div className="w-14 h-14 bg-rose-50 rounded-full flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle size={28} className="text-rose-500" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-extrabold text-slate-800">Xóa {selectedIds.length} thiết kế?</h3>
+                  <p className="text-sm text-slate-500 mt-1 font-medium">Các bản thiết kế này sẽ được chuyển vào Thùng rác.</p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setBulkDeleteModalOpen(false)}
+                  className="flex-1 py-3.5 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition-colors">
+                  Hủy
+                </button>
+                <button onClick={confirmBulkDelete}
+                  className="flex-1 py-3.5 rounded-xl bg-rose-500 text-white font-bold hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20 flex justify-center items-center">
+                  Xóa {selectedIds.length} mục
                 </button>
               </div>
             </motion.div>

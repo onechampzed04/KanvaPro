@@ -9,6 +9,7 @@ export interface UserSubscription {
   current_period_end: string;
   plan_name: string;
   plan_slug: string;
+  plan_max_members?: number;
 }
 
 export interface User {
@@ -39,6 +40,11 @@ export const isSubscriptionActive = (user: User | null): boolean => {
   if (user.subscription.status !== 'active') return false;
 
   return new Date(user.subscription.current_period_end) > new Date();
+};
+
+export const isTeamSubscriptionActive = (user: User | null): boolean => {
+  if (!isSubscriptionActive(user)) return false;
+  return (user?.subscription?.plan_max_members || 1) > 1;
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
