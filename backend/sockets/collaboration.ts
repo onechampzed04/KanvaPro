@@ -83,6 +83,7 @@ export function emitTeamMemberRemoved(teamId: string, removedUserId: string, act
   });
 }
 
+// k dung cai nay nua!
 export function emitTeamOwnershipTransferred(teamId: string, newOwnerId: string, actorName: string) {
   if (!globalIo) return;
   globalIo.to(`team-${teamId}`).emit('team:members_changed', { teamId });
@@ -139,7 +140,7 @@ export function setupCollaboration(io: Server) {
           socket.join('admin-dashboard');
           console.log(`[Admin Socket] ${userData.email} joined admin-dashboard room`);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     });
 
     // ── 0b. Join team room (Có kiểm tra membership) ─────────────────────────
@@ -147,8 +148,6 @@ export function setupCollaboration(io: Server) {
       const userData = verifySocketToken(token);
       if (!userData) return; // Token không hợp lệ → bỏ qua
 
-      // [FIX Vấn đề 16] Kiểm tra user thực sự là thành viên của team này.
-      // Trước đây: bất kỳ user nào biết teamId đều join được → nhận sự kiện real-time của team.
       try {
         const membership = await db.getOne(
           'SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2',
@@ -198,8 +197,6 @@ export function setupCollaboration(io: Server) {
         console.error('[Collab] DB fetch user error:', err);
       }
 
-      // [SECURITY FIX - BOLA/IDOR in WebSockets]
-      // Verify RBAC before allowing user to join the design room.
       let designRole: 'owner' | 'editor' | 'commenter' | 'viewer' | null = null;
       try {
         const designRes = await db.query('SELECT user_id, is_public FROM designs WHERE id = $1 AND is_deleted = false', [designId]);
@@ -549,7 +546,7 @@ export function setupCollaboration(io: Server) {
       try {
         const dbUser = await db.getOne('SELECT email FROM users WHERE id = $1', [userData.id]);
         if (dbUser) email = dbUser.email || email;
-      } catch {}
+      } catch { }
 
       // [SECURITY FIX - BOLA/IDOR in WebSockets]
       // Verify RBAC trước khi cho phép user join vào document room để nghe lén.

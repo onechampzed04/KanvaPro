@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { useAuth, isSubscriptionActive } from '../context/AuthContext';
+import { useAuth, isSubscriptionActive, isPersonalSubscriptionActive } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useToast } from '../context/ToastContext';
 import {
@@ -714,7 +714,7 @@ export default function DashboardPage() {
                 <p className="text-xs font-medium text-slate-500 truncate">
                   {currentWorkspace 
                     ? (currentWorkspace.is_pro ? 'Team Workspace (Pro)' : 'Team Workspace (Free)') 
-                    : (isSubscriptionActive(user) ? 'Personal Workspace (Pro)' : 'Personal Workspace (Free)')}
+                    : (isPersonalSubscriptionActive(user) ? 'Personal Workspace (Pro)' : 'Personal Workspace (Free)')}
                 </p>
               </div>
             )}
@@ -737,7 +737,7 @@ export default function DashboardPage() {
                     onClick={() => { switchWorkspace(null); setIsWorkspaceDropdownOpen(false); }}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center justify-between ${!currentWorkspace ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}`}
                   >
-                    <span>Cá nhân {isSubscriptionActive(user) ? '(Pro)' : '(Free)'}</span>
+                    <span>Cá nhân {isPersonalSubscriptionActive(user) ? '(Pro)' : '(Free)'}</span>
                     {!currentWorkspace && <span className="text-indigo-600">✓</span>}
                   </button>
                   {workspaces.filter((w: any) => w.workspace_type !== 'personal').map((w: any) => (

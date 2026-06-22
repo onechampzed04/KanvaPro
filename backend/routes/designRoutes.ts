@@ -27,7 +27,7 @@ const router = Router();
 router.post('/export/video', upload.single('video'), exportVideo);
 
 // ── PPTX Import (auth check + resolveWorkspace + quota check + multer) ──
-router.post('/import/pptx', authenticate, resolveWorkspace, checkStorageQuota, upload.single('pptx'), importPptx);
+router.post('/import/pptx', authenticate, resolveWorkspace, upload.single('pptx'), checkStorageQuota, importPptx);
 
 router.use(authenticate);
 
@@ -73,7 +73,7 @@ router.patch('/:id/rename', checkDesignAccess, requireRole('owner', 'editor'), r
 router.post('/:id/versions', checkDesignAccess, requireRole('owner', 'editor'), saveDesignVersion);
 router.get('/:id/versions', checkDesignAccess, requireRole('owner', 'editor'), getDesignVersions);
 router.get('/:id/versions/:versionId', checkDesignAccess, getDesignVersionSnapshot); // Xem trước (cần tối thiểu viewer)
-router.post('/:id/versions/:versionId/restore', checkDesignAccess, requireRole('owner', 'editor'), restoreDesignVersion);
+router.post('/:id/versions/:versionId/restore', checkDesignAccess, requireRole('owner'), restoreDesignVersion);
 
 // Lấy danh sách share (commenter+ được xem)
 router.get('/:id/shares', checkDesignAccess, requireRole('owner', 'editor', 'commenter', 'viewer'), getDesignShares);

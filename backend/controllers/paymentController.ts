@@ -27,6 +27,18 @@ export const paymentController = {
         if (teamCheck.rows.length === 0) {
           return res.status(403).json({ error: 'Bạn không có quyền gia hạn hoặc nâng cấp nhóm này vì bạn không phải là chủ nhóm.' });
         }
+
+        // [BACKEND VALIDATION] Prevent downgrading seats below current member count
+        const membersRes = await db.query(
+          `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+          [teamId]
+        );
+        const currentMembersCount = parseInt(membersRes.rows[0].count, 10);
+        if (membersCount && membersCount < currentMembersCount) {
+          return res.status(400).json({ 
+            error: `Số lượng chỗ mới (${membersCount}) không thể nhỏ hơn số thành viên hiện tại trong nhóm (${currentMembersCount} người). Vui lòng xóa bớt thành viên trước khi gia hạn.` 
+          });
+        }
       }
 
       const checkoutUrl = await paymentService.createPaymentLink(

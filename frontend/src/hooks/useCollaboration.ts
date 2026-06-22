@@ -1,9 +1,4 @@
-// src/hooks/useCollaboration.ts
-// ─── [FIX Vấn đề 2] Loại bỏ hoàn toàn cơ chế song hành State-Ref ─────────────
-// TRƯỚC: Dùng useRef song song cho onRemoteUpdate, onRemotePageAdded... để tránh
-//        stale closure. Việc đồng bộ thủ công cực kỳ dễ bị thiếu sót.
-//
-// SAU:   Tất cả socket event listeners gọi trực tiếp CALLBACK PROP thông qua một
+// Tất cả socket event listeners gọi trực tiếp CALLBACK PROP thông qua một
 //        ref DUY NHẤT (callbacksRef). Đây là pattern "stable ref to latest callbacks"
 //        — sạch hơn, an toàn hơn và không cần cập nhật store song song.
 //        Trạng thái presence (activeUsers, isConnected, elementLocks) được quản lý
@@ -52,14 +47,12 @@ interface UseCollaborationOptions {
   onRemotePageResized?: (pageId: string, width: number, height: number, isLive: boolean, userName: string) => void;
   onRemoteDelta?: (delta: ElementDelta) => void;
   onInitialRevision?: (revision: number) => void;
-  // [FIX 6] Callback khi nhận thumbnail mới từ collaborator khác
   onRemotePageThumbnailUpdated?: (pageId: string, thumbUrl: string) => void;
   onRemotePageBackgroundUpdated?: (pageId: string, background_color: string, userName: string) => void;
   onRemoteRoleUpdated?: (role: string) => void;
 }
 
 interface UseCollaborationReturn {
-  // ── Presence (đọc từ Zustand, không cần return riêng) ────────────────────
   socket: Socket | null;
   // ── Element broadcast ────────────────────────────────────────────────────
   emitElementsUpdate: (pageId: string, elements: any[]) => void;
@@ -72,10 +65,8 @@ interface UseCollaborationReturn {
   emitPagesReordered: (pageIds: string[]) => void;
   emitCursorMove: (designId: string, x: number, y: number) => void;
   emitPageResize: (pageId: string, width: number, height: number, isLive: boolean) => void;
-  // [FIX 6] Emitter broadcast thumbnail mới cho tất cả collaborator
   emitPageThumbnailUpdated: (pageId: string, thumbUrl: string) => void;
   emitPageBackgroundUpdated: (pageId: string, background_color: string) => void;
-  // [FIX #8] Emitters cho element locking (text edit)
   emitElementLock: (designId: string, pageId: string, elementId: string) => void;
   emitElementUnlock: (designId: string, elementId: string) => void;
 }
@@ -154,6 +145,8 @@ export function useCollaboration({
   // [FIX Vấn đề 15] Throttle cursor emit — giới hạn 50ms (20 updates/s thay vì 60/s)
   const throttleCursorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCursorEmitRef = useRef<{ designId: string; x: number; y: number } | null>(null);
+  const throttleDeltaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingDeltaEmitRef = useRef<ElementDelta | null>(null);
 
   // ── Socket Setup ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -324,6 +317,10 @@ export function useCollaboration({
       window.dispatchEvent(new CustomEvent('design:force_reload', { detail: { message } }));
     });
 
+    socket.on('design-restored', () => {
+      window.dispatchEvent(new CustomEvent('design-restored'));
+    });
+
     // ── Cleanup ────────────────────────────────────────────────────
     return () => {
       socket.emit('leave-design', { designId });
@@ -335,6 +332,7 @@ export function useCollaboration({
       if (throttleResizeTimerRef.current) clearTimeout(throttleResizeTimerRef.current);
       // [FIX Vấn đề 15] Dọn cursor throttle timer khi unmount
       if (throttleCursorTimerRef.current) clearTimeout(throttleCursorTimerRef.current);
+      if (throttleDeltaTimerRef.current) clearTimeout(throttleDeltaTimerRef.current);
     };
   }, [designId]); // eslint-disable-line react-hooks/exhaustive-deps
   // ↑ Chỉ phụ thuộc vào designId — callbacksRef tự sync mỗi render
@@ -365,7 +363,27 @@ export function useCollaboration({
 
   const emitElementDelta = useCallback((delta: ElementDelta) => {
     if (!socketRef.current?.connected || !designId) return;
-    socketRef.current.emit('element-delta', { designId, ...delta });
+    
+    // Nếu có nhiều thao tác delta liên tiếp cho cùng 1 phần tử, ta gộp changes lại
+    if (pendingDeltaEmitRef.current && pendingDeltaEmitRef.current.elementId === delta.elementId) {
+      pendingDeltaEmitRef.current = {
+        ...pendingDeltaEmitRef.current,
+        changes: { ...pendingDeltaEmitRef.current.changes, ...delta.changes }
+      };
+    } else {
+      pendingDeltaEmitRef.current = delta;
+    }
+
+    if (!throttleDeltaTimerRef.current) {
+      throttleDeltaTimerRef.current = setTimeout(() => {
+        const pending = pendingDeltaEmitRef.current;
+        if (pending && socketRef.current?.connected) {
+          socketRef.current.emit('element-delta', { designId, ...pending });
+        }
+        pendingDeltaEmitRef.current = null;
+        throttleDeltaTimerRef.current = null;
+      }, 30);
+    }
   }, [designId]);
 
   const emitPageChanged = useCallback((pageId: string) => {

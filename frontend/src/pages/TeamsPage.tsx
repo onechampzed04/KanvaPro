@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { Users, Plus, ChevronLeft, Crown, Shield, Eye, Trash2, Mail, Layout, FileText, X, Check, Video, Lock, AlertTriangle, Copy, ArrowRight, LogOut, RefreshCw, Settings, Upload, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
-import { fetchMyTeams, createTeam, fetchTeamById, inviteTeamMember, removeTeamMember, createDesign, updateTeam, updateTeamAvatar } from '../api/api';
+import { fetchMyTeams, createTeam, fetchTeamById, inviteTeamMember, removeTeamMember, createDesign, updateTeam, updateTeamAvatar, previewUpgrade } from '../api/api';
 import { useAuth, isTeamSubscriptionActive } from '../context/AuthContext';
 import TeamOnboarding from '../components/dashboard/TeamOnboarding';
 
@@ -264,6 +264,13 @@ export default function TeamsPage() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showCreateDesignMenu, setShowCreateDesignMenu] = useState(false);
 
+  // ─── Renew Team ────────────────────────────────────────────────────────────
+  const [showRenewModal, setShowRenewModal] = useState(false);
+  const [renewSeats, setRenewSeats] = useState(2);
+  const [renewPlan, setRenewPlan] = useState<any>(null);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
   // ─── [HARD CAP] Modal nâng cấp gói khi vượt giới hạn thành viên ──────────
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showUpgradeSeatsModal, setShowUpgradeSeatsModal] = useState(false);
@@ -285,6 +292,16 @@ export default function TeamsPage() {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
   };
+
+  useEffect(() => {
+    if (showRenewModal && renewPlan && renewSeats >= 2) {
+      setPreviewLoading(true);
+      previewUpgrade(renewPlan.id, renewSeats)
+        .then(setPreviewData)
+        .catch(console.error)
+        .finally(() => setPreviewLoading(false));
+    }
+  }, [showRenewModal, renewPlan, renewSeats]);
 
   const loadTeams = async () => {
     try {
@@ -739,30 +756,23 @@ export default function TeamsPage() {
                       {activeTeam.my_role === 'owner' && !activeTeam.is_pro && (
                         <button
                           onClick={async () => {
-                            // Lấy gói pro_team từ API
-                            const res = await fetch('/api/subscriptions');
-                            const data = await res.json();
-                            const plans: any[] = data.plans || data.subscriptions || [];
-                            const teamPlan = plans.find((p: any) => p.slug === 'pro_team');
-                            if (!teamPlan) { alert('Không tìm thấy gói Team. Vui lòng liên hệ hỗ trợ.'); return; }
+                            setActionLoading(true);
+                            try {
+                              const res = await fetch('/api/subscriptions');
+                              const data = await res.json();
+                              const plans: any[] = data.plans || data.subscriptions || [];
+                              const teamPlan = plans.find((p: any) => p.slug === 'pro_team');
+                              if (!teamPlan) { alert('Không tìm thấy gói Team. Vui lòng liên hệ hỗ trợ.'); return; }
 
-                            // Tạo checkout với teamId cụ thể để gia hạn đúng nhóm này
-                            const checkoutRes = await fetch('/api/payments/create-checkout', {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                              },
-                              body: JSON.stringify({
-                                planId: teamPlan.id,
-                                planName: teamPlan.name,
-                                membersCount: activeTeam.max_members,
-                                teamId: activeTeam.id, // [FIX] Truyền đích danh teamId
-                              }),
-                            });
-                            const checkoutData = await checkoutRes.json();
-                            if (!checkoutRes.ok) { alert(checkoutData.error || 'Lỗi tạo link thanh toán'); return; }
-                            window.location.href = checkoutData.checkoutUrl;
+                              setRenewPlan(teamPlan);
+                              const currentMembers = activeTeam.members?.length || 1;
+                              setRenewSeats(Math.max(2, currentMembers, activeTeam.max_members || 2));
+                              setShowRenewModal(true);
+                            } catch (e: any) {
+                              alert('Lỗi: ' + e.message);
+                            } finally {
+                              setActionLoading(false);
+                            }
                           }}
                           className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white font-bold rounded-xl text-sm transition shadow-md hover:-translate-y-0.5"
                           title={`Gia hạn gói cho nhóm "${activeTeam.name}"`}
@@ -1165,6 +1175,130 @@ export default function TeamsPage() {
         )}
       </AnimatePresence>
 
+
+      {/* Renew Modal */}
+      <AnimatePresence>
+        {showRenewModal && renewPlan && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4"
+            onClick={() => setShowRenewModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-extrabold text-xl text-slate-800 flex items-center gap-2">
+                  <RefreshCw size={20} className="text-violet-500" /> Gia hạn nhóm
+                </h3>
+                <button onClick={() => setShowRenewModal(false)} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                    Số lượng thành viên (Bao gồm cả bạn)
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setRenewSeats(Math.max(2, renewSeats - 1))}
+                      className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center text-slate-500 font-black text-lg transition"
+                    >
+                      -
+                    </button>
+                    <div className="flex-1 h-10 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center font-black text-lg text-slate-700">
+                      {renewSeats}
+                    </div>
+                    <button
+                      onClick={() => setRenewSeats(renewSeats + 1)}
+                      className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center text-slate-500 font-black text-lg transition"
+                    >
+                      +
+                    </button>
+                  </div>
+                  {renewSeats < (activeTeam?.members?.length || 0) && (
+                    <p className="mt-2 text-xs text-red-500 font-medium">
+                      ⚠️ Số lượng chỗ mới ({renewSeats}) không thể nhỏ hơn số thành viên hiện tại trong nhóm ({activeTeam?.members?.length} người). Vui lòng xóa bớt thành viên trước khi hạ số lượng.
+                    </p>
+                  )}
+                </div>
+
+                {/* Proration Detail */}
+                <div className="bg-violet-50/50 rounded-2xl p-4 border border-violet-100 space-y-3">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Chi tiết thanh toán</p>
+                  {previewLoading ? (
+                    <div className="space-y-2">
+                      <div className="h-4 bg-slate-200 rounded animate-pulse w-full"></div>
+                      <div className="h-4 bg-slate-200 rounded animate-pulse w-2/3"></div>
+                    </div>
+                  ) : previewData ? (
+                    <div className="space-y-2 text-sm text-slate-600">
+                      <div className="flex justify-between">
+                        <span>Giá gói ({renewSeats} chỗ):</span>
+                        <span className="font-semibold">{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(previewData.originalAmount)}</span>
+                      </div>
+                      {previewData.deductionValue > 0 && (
+                        <div className="flex justify-between text-emerald-600 font-medium">
+                          <span>Được cấn trừ từ gói cũ:</span>
+                          <span>-{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(previewData.deductionValue)}</span>
+                        </div>
+                      )}
+                      <div className="border-t border-slate-200 pt-2 flex justify-between font-bold text-slate-900 text-lg">
+                        <span>Thực tế phải trả:</span>
+                        <span className="text-violet-700">{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(previewData.finalAmount)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">Đang tính toán...</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-8">
+                <button onClick={() => setShowRenewModal(false)}
+                  className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition text-sm">
+                  Hủy
+                </button>
+                <button
+                  onClick={async () => {
+                    setActionLoading(true);
+                    try {
+                      const result = await fetch('/api/payments/create-checkout', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                        },
+                        body: JSON.stringify({
+                          planId: renewPlan.id,
+                          planName: renewPlan.name,
+                          membersCount: renewSeats,
+                          teamId: activeTeam.id,
+                        }),
+                      });
+                      const checkoutData = await result.json();
+                      if (!result.ok) throw new Error(checkoutData.error || 'Lỗi tạo link thanh toán');
+                      window.location.href = checkoutData.checkoutUrl;
+                    } catch (e: any) { alert(e.message || 'Lỗi thanh toán'); }
+                    finally { setActionLoading(false); }
+                  }}
+                  disabled={renewSeats < (activeTeam?.members?.length || 0) || renewSeats < 2 || previewLoading || actionLoading}
+                  className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-bold hover:from-violet-700 hover:to-indigo-700 transition shadow-md disabled:opacity-60 text-sm flex items-center justify-center gap-2"
+                >
+                  <Crown size={16} />
+                  {actionLoading ? 'Đang tạo link...' : 'Thanh toán ngay'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

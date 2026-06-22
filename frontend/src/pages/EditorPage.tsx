@@ -1111,15 +1111,15 @@ export default function EditorPage() {
       setSelectedIds([]);
 
       const transformers = stageRef.current.find('Transformer');
-      transformers.forEach(tr => tr.hide());
-      const guidelines = stageRef.current.find(node => node.name() === 'guideline');
-      guidelines.forEach(g => g.hide());
+      transformers.forEach((tr: any) => tr.hide());
+      const guidelines = stageRef.current.find((node: any) => node.name() === 'guideline');
+      guidelines.forEach((g: any) => g.hide());
       stageRef.current.batchDraw();
 
       thumb = stageRef.current.toDataURL({ pixelRatio: 0.2, mimeType: 'image/jpeg', quality: 0.5 });
 
-      transformers.forEach(tr => tr.show());
-      guidelines.forEach(g => g.show());
+      transformers.forEach((tr: any) => tr.show());
+      guidelines.forEach((g: any) => g.show());
       stageRef.current.batchDraw();
     }
     const updatedPages = pages.map(p =>
@@ -1364,7 +1364,23 @@ export default function EditorPage() {
       return;
     }
     draggingElementIdsRef.current.add(newAttrs.id);
-    syncElements(elementsRef.current.map(el => el.id === newAttrs.id ? newAttrs : el));
+    
+    const oldAttrs = elementsRef.current.find(el => el.id === newAttrs.id);
+    
+    // Cập nhật State cục bộ nhưng KHÔNG gửi update-elements để tối ưu
+    syncElements(elementsRef.current.map(el => el.id === newAttrs.id ? newAttrs : el), true);
+
+    if (oldAttrs && currentPageId) {
+      const changes: any = {};
+      for (const key in newAttrs) {
+        if (newAttrs[key] !== oldAttrs[key]) {
+          changes[key] = newAttrs[key];
+        }
+      }
+      if (Object.keys(changes).length > 0) {
+        emitElementDelta({ pageId: currentPageId, elementId: newAttrs.id, action: 'update', changes });
+      }
+    }
   };
 
   // updateElementImmediate: gửi ngay, bỏ lock sau DragEnd/TransformEnd
@@ -1588,9 +1604,9 @@ export default function EditorPage() {
         try {
           // Ẩn tất cả Transformer (boundary box lựa chọn) và đường dóng căn chỉnh trước khi chụp ảnh để thumbnail sạch đẹp
           const transformers = stageRef.current.find('Transformer');
-          transformers.forEach(tr => tr.hide());
-          const guidelines = stageRef.current.find(node => node.name() === 'guideline');
-          guidelines.forEach(g => g.hide());
+          transformers.forEach((tr: any) => tr.hide());
+          const guidelines = stageRef.current.find((node: any) => node.name() === 'guideline');
+          guidelines.forEach((g: any) => g.hide());
 
           // Temporarily reset scale and position to capture exact design frame
           const oldScaleX = stageRef.current.scaleX();
@@ -1617,8 +1633,8 @@ export default function EditorPage() {
           stageRef.current.position({ x: oldX, y: oldY });
 
           // Hiện lại tất cả sau khi chụp xong
-          transformers.forEach(tr => tr.show());
-          guidelines.forEach(g => g.show());
+          transformers.forEach((tr: any) => tr.show());
+          guidelines.forEach((g: any) => g.show());
           stageRef.current.batchDraw();
           if (dataUrl) {
             const blob = dataURLtoBlob(dataUrl);
@@ -1793,8 +1809,23 @@ export default function EditorPage() {
     };
 
     window.addEventListener('design:force_reload', onForceReload);
-    return () => window.removeEventListener('design:force_reload', onForceReload);
-  }, [showWarning]);
+    
+    const onDesignRestored = () => {
+      showSuccess('Thiết kế đã được khôi phục về phiên bản cũ. Đang tải lại...');
+      // Đánh dấu đã lưu để beforeunload không chặn F5 nếu có unsaved changes
+      saveStatusRef.current = 'saved';
+      setSaveStatus('saved');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    };
+    window.addEventListener('design-restored', onDesignRestored);
+
+    return () => {
+      window.removeEventListener('design:force_reload', onForceReload);
+      window.removeEventListener('design-restored', onDesignRestored);
+    };
+  }, [showWarning, showSuccess]);
 
 
   // Thay vì dùng thẻ <a href="/"> (bỏ qua unsaved), dùng hàm này để:
@@ -2048,9 +2079,9 @@ export default function EditorPage() {
         } else {
           // Ẩn tất cả Transformer và đường dóng căn chỉnh trước khi export để có file xuất sạch đẹp
           const transformers = stageRef.current ? stageRef.current.find('Transformer') : [];
-          transformers.forEach(tr => tr.hide());
-          const guidelines = stageRef.current ? stageRef.current.find(node => node.name() === 'guideline') : [];
-          guidelines.forEach(g => g.hide());
+          transformers.forEach((tr: any) => tr.hide());
+          const guidelines = stageRef.current ? stageRef.current.find((node: any) => node.name() === 'guideline') : [];
+          guidelines.forEach((g: any) => g.hide());
           if (stageRef.current) stageRef.current.batchDraw();
 
           if (pagesToExport.length === 1) {
@@ -2240,8 +2271,8 @@ export default function EditorPage() {
           }
 
           // Hiện lại sau khi export xong
-          transformers.forEach(tr => tr.show());
-          guidelines.forEach(g => g.show());
+          transformers.forEach((tr: any) => tr.show());
+          guidelines.forEach((g: any) => g.show());
           if (stageRef.current) stageRef.current.batchDraw();
         }
         setExportProgress(100);
@@ -3381,6 +3412,7 @@ export default function EditorPage() {
           designId={id!}
           versions={versions}
           isRestoring={isRestoring}
+          isOwner={currentRole === 'owner'}
           onClose={() => setShowVersionModal(false)}
           onRestore={handleRestore}
         />

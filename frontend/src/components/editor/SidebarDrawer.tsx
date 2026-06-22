@@ -100,7 +100,7 @@ export default function SidebarDrawer({
   const GRID_COLS = 2;
   const GRID_ROW_HEIGHT = 165; // px — chiều cao 1 hàng (kể cả gap)
   const uploadScrollRef = useRef<HTMLDivElement | null>(null);
-  const uploadRows = [];
+  const uploadRows: any[][] = [];
   const validUploads = uploadedImages.filter(img => img.type !== 'pptx');
   for (let i = 0; i < validUploads.length; i += GRID_COLS) {
     uploadRows.push(validUploads.slice(i, i + GRID_COLS));
@@ -114,7 +114,7 @@ export default function SidebarDrawer({
 
   // ── [FIX Vấn đề 5] Virtualized 2-column grid cho searchResults ───────────
   const searchScrollRef = useRef<HTMLDivElement | null>(null);
-  const searchRows = [];
+  const searchRows: any[][] = [];
   for (let i = 0; i < searchResults.length; i += GRID_COLS) {
     searchRows.push(searchResults.slice(i, i + GRID_COLS));
   }

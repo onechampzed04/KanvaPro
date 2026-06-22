@@ -265,14 +265,7 @@ export default function AnimationPanel({
             <Users size={13} className="text-violet-600" />
             <span className="text-xs font-bold text-violet-700">{multiSel.length} vật thể được chọn</span>
           </div>
-          <div className="flex gap-1 mb-2">
-            {(['in', 'out'] as const).map(t => (
-              <button key={t} onClick={() => setBulkTab(t)}
-                className={`flex-1 py-1 text-[11px] font-bold rounded-md transition ${bulkTab === t ? (t === 'in' ? 'bg-violet-200 text-violet-800' : 'bg-rose-100 text-rose-700') : 'bg-white/70 text-slate-500'}`}>
-                {t === 'in' ? '▶ Vào' : '◀ Ra'}
-              </button>
-            ))}
-          </div>
+
           <div className="grid grid-cols-4 gap-1 mb-2">
             {ANIMS.filter(a => a.id !== 'none').map(a => (
               <button key={a.id} onClick={() => setBulkAnim(a.id)}
@@ -355,15 +348,7 @@ export default function AnimationPanel({
                                 exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }}
                                 className="overflow-hidden border-t border-slate-100" onClick={e => e.stopPropagation()}>
                                 <div className="p-3 space-y-2.5">
-                                  {/* In/Out */}
-                                  <div className="flex gap-1">
-                                    {(['in', 'out'] as const).map(t => (
-                                      <button key={t} onClick={() => setAnimTab(t)}
-                                        className={`flex-1 py-1 text-[11px] font-bold rounded-md transition ${animTab === t ? (t === 'in' ? 'bg-violet-100 text-violet-700' : 'bg-rose-100 text-rose-700') : 'bg-slate-100 text-slate-500'}`}>
-                                        {t === 'in' ? '▶ Vào' : '◀ Ra'}
-                                      </button>
-                                    ))}
-                                  </div>
+
                                   {/* Anim picker */}
                                   <div className="grid grid-cols-3 gap-1">
                                     {ANIMS.map(a => {

@@ -1,9 +1,5 @@
-// backend/services/redisPresenceService.ts
-// [FIX Vấn đề 6] Thay thế các in-memory Map cục bộ bằng Redis Hash.
-//
 // Kiến trúc Dual-Mode:
 //   - Nếu Redis khả dụng: dùng Redis Hash → nhiều Node server chia sẻ state chung
-//   - Nếu Redis không khả dụng: fallback về Map<> cục bộ (single-instance mode)
 //
 // Redis key schema:
 //   design:{designId}:collaborators   → Hash<socketId, JSON(CollaboratorInfo)>
@@ -106,16 +102,10 @@ export const RedisPresenceService = {
 
   // ── Element Locks ──────────────────────────────────────────────────────────
 
-  /**
-   * Khoá nguyên tử (Atomic Lock): chỉ ghi nếu key CHƯA tồn tại.
-   * Trả về true nếu khoá thành công, false nếu đã bị người khác khoá trước.
-   */
   async lockElement(designId: string, elementId: string, info: LockInfo): Promise<boolean> {
     const redis = getRedis();
     if (redis) {
       const key = `design:${designId}:locks`;
-      // HSETNX: Set if Not eXists — đảm bảo tính nguyên tử
-      // redis v4: hSetNX trả về number (1=success, 0=already exists) → ép về boolean
       const result = await redis.hSetNX(key, elementId, JSON.stringify(info));
       const success = result === 1;
       if (success) await redis.expire(key, ROOM_TTL_SECONDS);

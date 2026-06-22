@@ -6,6 +6,8 @@ import { DesignType } from '../models/enums';
 import { designService } from '../services/designService';
 import { assetService } from '../services/assetService';
 import { designPageService } from '../services/designPageService';
+import { globalIo } from '../sockets/collaboration';
+import { revisionStore } from '../ot/revisionStore';
 import { designVersionService } from '../services/designVersionService';
 
 import fs from 'fs-extra';
@@ -469,6 +471,13 @@ export const restoreDesignVersion = async (req: Request, res: Response) => {
         const { id, versionId } = req.params;
         const userId = (req as any).user?.id;
         await designVersionService.restoreVersion(id, versionId, userId);
+        
+        // Notify all connected clients to reload the design to sync the restored state
+        if (globalIo) {
+            revisionStore.evict(id);
+            globalIo.to(`design:${id}`).emit('design-restored');
+        }
+
         res.json({ message: "Khôi phục thành công" });
     } catch (error) {
         res.status(500).json({ error: "Lỗi khôi phục phiên bản" });

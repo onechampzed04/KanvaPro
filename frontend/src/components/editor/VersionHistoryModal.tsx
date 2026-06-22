@@ -5,11 +5,12 @@ interface VersionHistoryModalProps {
   designId: string;
   versions: any[];
   isRestoring: boolean;
+  isOwner: boolean;
   onClose: () => void;
   onRestore: (versionId: string) => void;
 }
 
-export default function VersionHistoryModal({ designId, versions, isRestoring, onClose, onRestore }: VersionHistoryModalProps) {
+export default function VersionHistoryModal({ designId, versions, isRestoring, isOwner, onClose, onRestore }: VersionHistoryModalProps) {
   return (
     <div className="fixed inset-0 bg-slate-900/40 z-[9999] flex items-center justify-center backdrop-blur-md transition-all">
       <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] w-[480px] overflow-hidden flex flex-col border border-white/50 relative">
@@ -48,7 +49,6 @@ export default function VersionHistoryModal({ designId, versions, isRestoring, o
             ) : (
               <div className="relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent pl-4">
                 {versions.map((v, index) => {
-                  const isCurrent = index === 0;
                   return (
                     <div
                       key={v.id}
@@ -56,20 +56,20 @@ export default function VersionHistoryModal({ designId, versions, isRestoring, o
                     >
                       {/* Timeline dot */}
                       <div className="absolute left-[-16px] w-8 h-8 flex items-center justify-center">
-                        <div className={`w-3 h-3 rounded-full border-2 ${isCurrent ? 'bg-white border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] ring-4 ring-indigo-50' : 'bg-slate-200 border-white group-hover:bg-indigo-300'} transition-all z-10`} />
+                        <div className={`w-3 h-3 rounded-full border-2 ${index === 0 ? 'bg-white border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] ring-4 ring-indigo-50' : 'bg-slate-200 border-white group-hover:bg-indigo-300'} transition-all z-10`} />
                       </div>
 
                       <div className={`ml-8 flex-1 p-4 rounded-2xl border transition-all duration-200 flex items-center justify-between ${
-                        isCurrent 
+                        index === 0 
                           ? 'bg-gradient-to-r from-indigo-50/50 to-white border-indigo-100 shadow-sm' 
                           : 'bg-white border-slate-100 shadow-sm hover:shadow-md hover:border-indigo-200'
                       }`}>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className={`font-bold text-sm ${isCurrent ? 'text-indigo-700' : 'text-slate-700'}`}>
-                              {isCurrent ? 'Phiên bản hiện tại' : `Phiên bản ${v.version_number}`}
+                            <span className={`font-bold text-sm ${index === 0 ? 'text-indigo-700' : 'text-slate-700'}`}>
+                              {index === 0 ? 'Mới nhất' : `Phiên bản ${v.version_number}`}
                             </span>
-                            {isCurrent && <CheckCircle2 size={14} className="text-indigo-500" />}
+                            {index === 0 && <CheckCircle2 size={14} className="text-indigo-500" />}
                           </div>
                           <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 mt-1.5">
                             <Clock size={12} />
@@ -79,15 +79,15 @@ export default function VersionHistoryModal({ designId, versions, isRestoring, o
                           </div>
                         </div>
 
-                        {!isCurrent && (
-                          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all focus-within:opacity-100">
-                            <button
-                              onClick={() => window.open(`/design/${designId}?versionId=${v.id}`, '_blank')}
-                              className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 rounded-xl active:scale-95 shadow-sm hover:shadow"
-                            >
-                              <Eye size={14} />
-                              Xem trước
-                            </button>
+                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all focus-within:opacity-100">
+                          <button
+                            onClick={() => window.open(`/design/${designId}?versionId=${v.id}`, '_blank')}
+                            className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 rounded-xl active:scale-95 shadow-sm hover:shadow"
+                          >
+                            <Eye size={14} />
+                            Xem trước
+                          </button>
+                          {isOwner && (
                             <button
                               onClick={() => onRestore(v.id)}
                               disabled={isRestoring}
@@ -96,8 +96,8 @@ export default function VersionHistoryModal({ designId, versions, isRestoring, o
                               <RotateCcw size={14} />
                               Khôi phục
                             </button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

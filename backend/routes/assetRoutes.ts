@@ -43,7 +43,7 @@ router.get('/search', searchAssets);
 // ─── Font routes ──────────────────────────────────────────────────────────────
 // [PUBLIC] Font hệ thống do Admin upload — không cần auth
 router.get('/fonts', getSystemFonts);
-router.post('/upload-font', authenticate, resolveWorkspace, checkStorageQuota, upload.single('font'), uploadFont);
+router.post('/upload-font', authenticate, resolveWorkspace, upload.single('font'), checkStorageQuota, uploadFont);
 router.get('/user-fonts', authenticate, resolveWorkspace, getUserFonts);
 
 // ─── Image upload ─────────────────────────────────────────────────────────────
@@ -53,7 +53,6 @@ router.post(
   '/upload-image',
   authenticate,
   resolveWorkspace,
-  checkStorageQuota,
   (req: any, res: any, next: any) => {
     upload.single('image')(req, res, (err: any) => {
       if (err && err.code === 'LIMIT_FILE_SIZE') {
@@ -66,6 +65,7 @@ router.post(
       next();
     });
   },
+  checkStorageQuota,
   validateImageFile,
   uploadImage,
 );

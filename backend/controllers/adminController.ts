@@ -22,19 +22,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Multer config ──────────────────────────────────────────────────────────
 const uploadDir = path.join(__dirname, '../sticker_upload/assets');
-const fontsDir  = path.join(__dirname, '../sticker_upload/fonts');
+const fontsDir = path.join(__dirname, '../sticker_upload/fonts');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-if (!fs.existsSync(fontsDir))  fs.mkdirSync(fontsDir,  { recursive: true });
+if (!fs.existsSync(fontsDir)) fs.mkdirSync(fontsDir, { recursive: true });
 
 const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
-const ALLOWED_IMAGE_EXTS  = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
-const ALLOWED_FONT_MIMES  = new Set([
+const ALLOWED_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
+const ALLOWED_FONT_MIMES = new Set([
   'font/ttf', 'font/otf', 'font/woff', 'font/woff2',
   'application/x-font-ttf', 'application/x-font-otf',
   'application/font-woff', 'application/font-woff2',
   'application/octet-stream', // một số browser gửi font dạng octet-stream
 ]);
-const ALLOWED_FONT_EXTS  = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+const ALLOWED_FONT_EXTS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
 
 // Storage tự động chia font / ảnh vào đúng folder
 const storage = multer.diskStorage({
@@ -44,11 +44,12 @@ const storage = multer.diskStorage({
   },
   filename: (_req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`),
 });
-export const adminUpload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 },
+export const adminUpload = multer({
+  storage, limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     const isImage = ALLOWED_IMAGE_MIMES.has(file.mimetype) && ALLOWED_IMAGE_EXTS.has(ext);
-    const isFont  = ALLOWED_FONT_EXTS.has(ext); // trust extension cho font (MIME không đáng tin)
+    const isFont = ALLOWED_FONT_EXTS.has(ext); // trust extension cho font (MIME không đáng tin)
     if (isImage || isFont) {
       cb(null, true);
     } else {
@@ -293,7 +294,7 @@ export const updateUserRole = async (req: Request, res: Response) => {
   // Ví dụ: Moderator (30) không thể gán 'admin' (50) hay 'moderator' (30) cho ai.
   // Chỉ Admin (50) mới có thể gán 'moderator' (30) hoặc 'user' (10).
   const newRoleWeight = getRoleWeight(role);
-  const actorWeight   = getRoleWeight(actorRole);
+  const actorWeight = getRoleWeight(actorRole);
   if (newRoleWeight >= actorWeight) {
     return res.status(403).json({
       error: `Bạn không thể gán role '${role}' (trọng số ${newRoleWeight}) vì quyền của bạn (${actorRole}) chỉ ở mức ${actorWeight}.`,
@@ -338,7 +339,7 @@ export const toggleUserBan = async (req: Request, res: Response) => {
 
     // Force logout n\u1ebfu b\u1ecb ban
     if (banned) {
-      forceLogoutUser(String(id), 'T\u00e0i kho\u1ea3n c\u1ee7a b\u1ea1n \u0111\u00e3 b\u1ecb kh\u00f3a b\u1edfi ban qu\u1ea3n tr\u1ecb.');
+      forceLogoutUser(String(id), 'Ban da bi ban.');
     }
 
     res.json({ success: true });
@@ -681,7 +682,7 @@ export const getAdminSubscriptions = async (req: Request, res: Response) => {
 export const createManualSubscription = async (req: Request, res: Response) => {
   try {
     const { user_id, plan_id, days } = req.body;
-    const adminId   = (req as any).user.id;
+    const adminId = (req as any).user.id;
     const adminRole = (req as any).user?.role;
     if (!user_id || !plan_id) return res.status(400).json({ error: 'user_id and plan_id required' });
 
@@ -759,7 +760,7 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
     params.push(id);
 
     await db.execute(`UPDATE user_subscriptions SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
-    
+
     await db.execute(
       `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
        VALUES ($1, $2, $3, $4)`,
@@ -777,7 +778,7 @@ export const updateSubscriptionStatus = async (req: Request, res: Response) => {
 export const terminateSubscription = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const adminId   = (req as any).user.id;
+    const adminId = (req as any).user.id;
     const adminRole = (req as any).user?.role;
     const { ban, reason } = req.query;
 
@@ -843,7 +844,7 @@ export const subscriptionPlanController = {
         INSERT INTO subscription_plans (name, slug, monthly_price, yearly_price, max_storage_gb, max_team_members, features, is_active)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *
       `, [name, slug, monthly_price, yearly_price, max_storage_gb || null, max_team_members || null, JSON.stringify(features || []), is_active !== false]);
-      
+
       await db.execute(
         `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
          VALUES ($1, $2, $3, $4)`,
@@ -865,7 +866,7 @@ export const subscriptionPlanController = {
 
       // [FIX 2] Bảo toàn giá trị cấn trừ cho user cũ: CẤM sửa giá trị thanh toán của một gói đang tồn tại
       if (monthly_price !== undefined || yearly_price !== undefined) {
-         return res.status(400).json({ error: 'Nghiệp vụ tài chính: Không được phép sửa giá của gói cước đang tồn tại để bảo toàn logic cấn trừ cho user cũ. Vui lòng tạo gói mới và ẩn (deactivate) gói cũ.' });
+        return res.status(400).json({ error: 'Nghiệp vụ tài chính: Không được phép sửa giá của gói cước đang tồn tại để bảo toàn logic cấn trừ cho user cũ. Vui lòng tạo gói mới và ẩn (deactivate) gói cũ.' });
       }
 
       // N\u1ebfu frontend ch\u1ec9 g\u1eedi is_active (trong handleToggleActive)
@@ -885,14 +886,14 @@ export const subscriptionPlanController = {
       const sets: string[] = ['updated_at = NOW()'];
       const params: any[] = [];
 
-      if (name !== undefined)              { params.push(name);                    sets.push(`name = $${params.length}`); }
-      if (slug !== undefined)              { params.push(slug);                    sets.push(`slug = $${params.length}`); }
-      if (description !== undefined)       { params.push(description);             sets.push(`description = $${params.length}`); }
-      if (features !== undefined)          { params.push(JSON.stringify(features)); sets.push(`features = $${params.length}`); }
-      if (stripe_product_id !== undefined) { params.push(stripe_product_id);       sets.push(`stripe_product_id = $${params.length}`); }
-      if (is_active !== undefined)         { params.push(is_active);               sets.push(`is_active = $${params.length}`); }
-      if (max_storage_gb !== undefined)    { params.push(max_storage_gb);          sets.push(`max_storage_gb = $${params.length}`); }
-      if (max_team_members !== undefined)  { params.push(max_team_members);        sets.push(`max_team_members = $${params.length}`); }
+      if (name !== undefined) { params.push(name); sets.push(`name = $${params.length}`); }
+      if (slug !== undefined) { params.push(slug); sets.push(`slug = $${params.length}`); }
+      if (description !== undefined) { params.push(description); sets.push(`description = $${params.length}`); }
+      if (features !== undefined) { params.push(JSON.stringify(features)); sets.push(`features = $${params.length}`); }
+      if (stripe_product_id !== undefined) { params.push(stripe_product_id); sets.push(`stripe_product_id = $${params.length}`); }
+      if (is_active !== undefined) { params.push(is_active); sets.push(`is_active = $${params.length}`); }
+      if (max_storage_gb !== undefined) { params.push(max_storage_gb); sets.push(`max_storage_gb = $${params.length}`); }
+      if (max_team_members !== undefined) { params.push(max_team_members); sets.push(`max_team_members = $${params.length}`); }
 
       params.push(id);
       const result = await db.query(
@@ -901,7 +902,7 @@ export const subscriptionPlanController = {
       );
 
       if (result.rows.length === 0) return res.status(404).json({ error: 'Kh\u00f4ng t\u00ecm th\u1ea5y g\u00f3i c\u01b0\u1edbc' });
-      
+
       await db.execute(
         `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
          VALUES ($1, $2, $3, $4)`,
@@ -1371,9 +1372,9 @@ export const banTeam = async (req: Request, res: Response) => {
       if (globalIo) {
         const members = await db.query('SELECT user_id FROM team_members WHERE team_id = $1', [id]);
         members.rows.forEach(member => {
-          globalIo!.to(`user-${member.user_id}`).emit('team:banned', { 
-            teamId: id, 
-            message: `Team "${team.name}" của bạn đã bị khóa bởi Quản trị viên. Lý do: ${reason || 'Vi phạm chính sách'}` 
+          globalIo!.to(`user-${member.user_id}`).emit('team:banned', {
+            teamId: id,
+            message: `Team "${team.name}" của bạn đã bị khóa bởi Quản trị viên. Lý do: ${reason || 'Vi phạm chính sách'}`
           });
         });
       }
@@ -1386,9 +1387,9 @@ export const banTeam = async (req: Request, res: Response) => {
       if (globalIo) {
         const members = await db.query('SELECT user_id FROM team_members WHERE team_id = $1', [id]);
         members.rows.forEach(member => {
-          globalIo!.to(`user-${member.user_id}`).emit('team:unbanned', { 
-            teamId: id, 
-            message: `Team "${team.name}" của bạn đã được Quản trị viên khôi phục!` 
+          globalIo!.to(`user-${member.user_id}`).emit('team:unbanned', {
+            teamId: id,
+            message: `Team "${team.name}" của bạn đã được Quản trị viên khôi phục!`
           });
         });
       }
@@ -1398,8 +1399,8 @@ export const banTeam = async (req: Request, res: Response) => {
       `INSERT INTO admin_audit_logs (actor_id, action_type, description, ip_address)
        VALUES ($1, $2, $3, $4)`,
       [adminId, banned ? 'BAN_TEAM' : 'UNBAN_TEAM',
-       `${banned ? 'Khóa (is_deleted=true)' : 'Mở khóa (is_deleted=false)'} team "${team.name}" (id=${id}). Lý do: ${reason || 'Không rõ'}`,
-       hashIp(req.ip)]
+        `${banned ? 'Khóa (is_deleted=true)' : 'Mở khóa (is_deleted=false)'} team "${team.name}" (id=${id}). Lý do: ${reason || 'Không rõ'}`,
+        hashIp(req.ip)]
     );
 
     res.json({ success: true, message: banned ? 'Đã khóa team' : 'Đã mở khóa và khôi phục team' });

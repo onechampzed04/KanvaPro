@@ -69,7 +69,7 @@ export default function ImportPptxModal({ onClose, onSuccess }: ImportPptxModalP
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Import thất bại.');
+        throw new Error(data.message || data.error || 'Import thất bại.');
       }
 
       setSlideCount(data.slideCount ?? 0);

@@ -47,6 +47,11 @@ export const isTeamSubscriptionActive = (user: User | null): boolean => {
   return (user?.subscription?.plan_max_members || 1) > 1;
 };
 
+export const isPersonalSubscriptionActive = (user: User | null): boolean => {
+  if (!isSubscriptionActive(user)) return false;
+  return (user?.subscription?.plan_max_members || 1) === 1;
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,7 +94,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!token) return;
 
     import('socket.io-client').then(({ io }) => {
-      // FIX TS2339: dùng window.location.hostname thay vì import.meta.env.DEV
       const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       const socketUrl = isDev ? 'http://localhost:3000' : '';
       const socket = io(socketUrl, {
