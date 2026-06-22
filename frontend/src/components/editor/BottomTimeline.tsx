@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Maximize2, Minimize2, Music, ZoomIn, Plus, Type, Image as ImageIcon, Zap, Grid2X2, X } from 'lucide-react';
 
 export default function BottomTimeline(props: any) {
-  const { pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, updatePage, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime, onOpenTransition, onReorder, showGridView, setShowGridView, activeUsers = [], userPageMap = new Map() } = props;
+  const { canEdit = true, pages, pageTimings, totalDuration, currentPageId, elements, handlePageChange, handleAddPage, deletePage, reorderPages, updateElement, updatePage, designType, selectedIds, setSelectedIds, isPlaying, setIsPlaying, currentTime, setCurrentTime, onOpenTransition, onReorder, showGridView, setShowGridView, activeUsers = [], userPageMap = new Map() } = props;
 
   const [viewMode, setViewMode] = useState<'thumbnail' | 'timeline'>('thumbnail');
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -255,11 +255,11 @@ export default function BottomTimeline(props: any) {
                 {/* 1. KHỐI HIỂN THỊ THUMBNAIL PAGE */}
                 <div
                   className={`flex flex-col items-center gap-2 shrink-0 relative group transition-all duration-200 ${draggedIdx === index ? 'opacity-40 scale-95' : 'opacity-100'}`}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDragLeave={(e) => handleDragLeave(e, index)}
-                  onDrop={(e) => handleDrop(e, index)}
+                  draggable={canEdit}
+                  onDragStart={(e) => canEdit && handleDragStart(e, index)}
+                  onDragOver={(e) => canEdit && handleDragOver(e, index)}
+                  onDragLeave={(e) => canEdit && handleDragLeave(e, index)}
+                  onDrop={(e) => canEdit && handleDrop(e, index)}
                   onDragEnd={() => { setDraggedIdx(null); setDragOverIdx(null); }}
                 >
                   {/* VISUAL INDICATOR */}
@@ -295,7 +295,7 @@ export default function BottomTimeline(props: any) {
                       </div>
                     )}
                   </button>
-                  {pages.length > 1 && deletePage && (
+                  {canEdit && pages.length > 1 && deletePage && (
                     <button
                       onClick={(e) => { e.stopPropagation(); deletePage(page.id); }}
                       className="absolute -top-2 -right-2 bg-white text-red-500 rounded-full shadow border border-slate-200 p-1 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 transition"
@@ -306,7 +306,7 @@ export default function BottomTimeline(props: any) {
                 </div>
 
                 {/* 🔥 2. KHỐI CHUYỂN CẢNH: THANH DỌC VÀ DẤU (+) ĐÃ ĐƯỢC FIX LỖI HIỂN THỊ */}
-                {index < pages.length - 1 && (
+                {canEdit && index < pages.length - 1 && (
                   <div
                     className="relative flex items-center justify-center w-6 h-20 shrink-0 group cursor-pointer"
                     onClick={() => props.onOpenTransition(pages[index + 1].id)}
@@ -330,9 +330,11 @@ export default function BottomTimeline(props: any) {
             );
           })}
 
-          <button onClick={handleAddPage} className="shrink-0 w-16 h-20 bg-white border-2 border-dashed border-slate-300 hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-600 rounded-md flex items-center justify-center text-slate-400 transition">
-            <Plus size={24} />
-          </button>
+          {canEdit && (
+            <button onClick={handleAddPage} className="shrink-0 w-16 h-20 bg-white border-2 border-dashed border-slate-300 hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-600 rounded-md flex items-center justify-center text-slate-400 transition">
+              <Plus size={24} />
+            </button>
+          )}
         </div>
       )}
 
@@ -397,11 +399,12 @@ export default function BottomTimeline(props: any) {
                               bottom: `${4 + (laneIndex * LANE_HEIGHT)}px`
                             }}
                             onPointerDown={(e) => {
+                              if (!canEdit) return;
                               if (page.id !== currentPageId) { handlePageChange(page.id); return; }
                               handleElementPointerDown(e, el.id, 'move', el, pTiming.start, pTiming.end, index);
                             }}
                           >
-                            <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeL', el, pTiming.start, pTiming.end, index); }} />
+                            {canEdit && <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeL', el, pTiming.start, pTiming.end, index); }} />}
                             <div className="flex items-center gap-1 px-1.5 truncate pointer-events-none">
                               {el.animation?.in && el.animation.in !== 'none' && <Zap size={8} className="text-amber-300 fill-amber-300 shrink-0" />}
                               {renderTimelineThumbnail(el)}
@@ -420,7 +423,7 @@ export default function BottomTimeline(props: any) {
                                 </span>
                               )}
                             </div>
-                            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeR', el, pTiming.start, pTiming.end, index); }} />
+                            {canEdit && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/20 hover:bg-white/50" onPointerDown={(e) => { if (page.id === currentPageId) handleElementPointerDown(e, el.id, 'resizeR', el, pTiming.start, pTiming.end, index); }} />}
                           </div>
                         );
                       });
@@ -449,19 +452,22 @@ export default function BottomTimeline(props: any) {
                     )}
                     <span className="absolute bottom-0 left-1 text-[8px] font-bold text-white bg-black/50 px-1 pointer-events-none">{idx + 1}</span>
 
-                    {/* Resize Right Handle */}
-                    <div
-                      className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize bg-white/10 hover:bg-white/40 flex items-center justify-center"
-                      onPointerDown={(e) => handlePagePointerDown(e, page.id, Number(page.duration || 5))}
-                    >
-                      <div className="w-0.5 h-4 bg-white/80 rounded-full pointer-events-none"></div>
-                    </div>
+                    {canEdit && (
+                      <div
+                        className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize bg-white/10 hover:bg-white/40 flex items-center justify-center"
+                        onPointerDown={(e) => handlePagePointerDown(e, page.id, Number(page.duration || 5))}
+                      >
+                        <div className="w-0.5 h-4 bg-white/80 rounded-full pointer-events-none"></div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
-              <div className="absolute h-12 top-2 ml-2" style={{ left: `${totalDuration * PIXELS_PER_SECOND}px` }}>
-                <button onClick={handleAddPage} className="w-8 h-full bg-white hover:bg-indigo-50 hover:text-indigo-600 rounded border border-slate-300 flex items-center justify-center text-slate-400 transition shadow-sm"><Plus size={14} /></button>
-              </div>
+              {canEdit && (
+                <div className="absolute h-12 top-2 ml-2" style={{ left: `${totalDuration * PIXELS_PER_SECOND}px` }}>
+                  <button onClick={handleAddPage} className="w-8 h-full bg-white hover:bg-indigo-50 hover:text-indigo-600 rounded border border-slate-300 flex items-center justify-center text-slate-400 transition shadow-sm"><Plus size={14} /></button>
+                </div>
+              )}
             </div>
 
           </div>

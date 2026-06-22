@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { WorkspaceProvider } from './context/WorkspaceContext';
+import { ToastProvider } from './context/ToastContext';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
@@ -29,40 +30,51 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Ngăn người đã đăng nhập vào lại trang login/register
+function GuestRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (user) return <Navigate to="/" replace />;
+
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <WorkspaceProvider>
-          <Routes>
-            {/* ── Public ── */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/payment/success" element={<PaymentSuccessPage />} />
-            <Route path="/payment/cancel" element={<PaymentCancelPage />} />
+          <ToastProvider>
+            <Routes>
+              {/* ── Public (chỉ dành cho chưa đăng nhập) ── */}
+              <Route path="/login" element={<GuestRoute><LoginPage /></GuestRoute>} />
+              <Route path="/register" element={<GuestRoute><RegisterPage /></GuestRoute>} />
+              <Route path="/pricing" element={<PricingPage />} />
+              <Route path="/payment/success" element={<PaymentSuccessPage />} />
+              <Route path="/payment/cancel" element={<PaymentCancelPage />} />
 
-            {/* ── User ── */}
-            <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-            <Route path="/billing" element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
-            <Route path="/design/:id" element={<ProtectedRoute><EditorPage /></ProtectedRoute>} />
-            <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
-            <Route path="/teams" element={<ProtectedRoute><TeamsPage /></ProtectedRoute>} />
-            <Route path="/storage" element={<ProtectedRoute><StoragePage /></ProtectedRoute>} />
+              {/* ── User ── */}
+              <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+              <Route path="/billing" element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
+              <Route path="/design/:id" element={<ProtectedRoute><EditorPage /></ProtectedRoute>} />
+              <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
+              <Route path="/teams" element={<ProtectedRoute><TeamsPage /></ProtectedRoute>} />
+              <Route path="/storage" element={<ProtectedRoute><StoragePage /></ProtectedRoute>} />
 
-            {/* ── Admin Panel ── */}
-            <Route path="/admin" element={<AdminLayout />}>
-              <Route index element={<AdminDashboard />} />
-              <Route path="users" element={<AdminUsers />} />
-              <Route path="assets" element={<AdminAssets />} />
-              <Route path="templates" element={<AdminTemplates />} />
-              <Route path="subscriptions" element={<AdminSubscriptions />} />
-              <Route path="teams" element={<AdminTeams />} />
-            </Route>
-          </Routes>
+              {/* ── Admin Panel ── */}
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="users" element={<AdminUsers />} />
+                <Route path="assets" element={<AdminAssets />} />
+                <Route path="templates" element={<AdminTemplates />} />
+                <Route path="subscriptions" element={<AdminSubscriptions />} />
+                <Route path="teams" element={<AdminTeams />} />
+              </Route>
+            </Routes>
+          </ToastProvider>
         </WorkspaceProvider>
       </AuthProvider>
     </BrowserRouter>
   );
 }
-

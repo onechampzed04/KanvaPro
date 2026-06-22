@@ -27,11 +27,15 @@ export default function StoragePanel() {
   });
   const [storageBreakdown, setStorageBreakdown] = useState<any[]>([]);
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentWorkspace, workspaces } = useWorkspace();
+  const personalWorkspace = workspaces.find((w: any) => w.workspace_type === 'personal');
+  const activeWorkspace = currentWorkspace || personalWorkspace;
 
-  let maxGb = Number(currentWorkspace?.max_storage_gb || 5);
+  let maxGb = activeWorkspace?.is_pro 
+    ? Number(activeWorkspace?.plan_storage_gb || activeWorkspace?.max_storage_gb || 5)
+    : 5;
 
-  if (isNaN(maxGb) || maxGb === 0) {
+  if (!maxGb || isNaN(maxGb) || maxGb === 0) {
     maxGb = 5;
   }
 
@@ -39,9 +43,8 @@ export default function StoragePanel() {
 
   // [Storage Quota Display]
   // Personal Workspace lưu dung lượng ở users.storage_used_bytes. Team lưu ở teams.used_storage_bytes.
-  // Các field này đã được gộp thống nhất thành currentWorkspace.used_storage_bytes thông qua middleware và service.
-  const usedBytes = currentWorkspace
-    ? Number(currentWorkspace.used_storage_bytes ?? 0)
+  const usedBytes = activeWorkspace && activeWorkspace.workspace_type !== 'personal'
+    ? Number(activeWorkspace.used_storage_bytes ?? 0)
     : Number((user as any)?.storage_used_bytes ?? 0);
   const pct = Math.min((usedBytes / maxBytes) * 100, 100);
 

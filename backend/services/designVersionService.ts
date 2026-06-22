@@ -51,6 +51,21 @@ export const designVersionService = {
         return result.rows;
     },
 
+    // 2.5 Lấy chi tiết một snapshot (dành cho Preview)
+    getVersionSnapshot: async (designId: string, versionId: string) => {
+        const result = await db.query(`
+            SELECT snapshot
+            FROM design_versions
+            WHERE id = $1 AND design_id = $2
+        `, [versionId, designId]);
+        
+        if (result.rows.length === 0) {
+            return null;
+        }
+        
+        return result.rows[0].snapshot;
+    },
+
     // 3. KHÔI PHỤC BẰNG CÁCH WIPE & RESTORE
     restoreVersion: async (designId: string, versionId: string, userId: string) => {
         const client = await db.connect();

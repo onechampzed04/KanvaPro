@@ -4,7 +4,8 @@ import db from '../config/db';
 declare global {
   namespace Express {
     interface Request {
-      designRole?: 'owner' | 'editor' | 'commenter' | 'viewer';
+      designRole?: 'owner' | 'editor' | 'viewer';
+      isPublicAccess?: boolean; // true nếu truy cập bằng public link (không có share riêng)
     }
   }
 }
@@ -51,7 +52,7 @@ export const checkDesignAccess = async (req: Request, res: Response, next: NextF
       );
 
       if (shareResult.rows.length > 0) {
-        req.designRole = shareResult.rows[0].role as 'editor' | 'commenter' | 'viewer';
+        req.designRole = shareResult.rows[0].role as 'editor' | 'viewer';
         return next();
       }
     }
@@ -59,6 +60,7 @@ export const checkDesignAccess = async (req: Request, res: Response, next: NextF
     // 4. Fallback: Nếu design là public → cho vào với role viewer
     if (design.is_public) {
       req.designRole = 'viewer';
+      req.isPublicAccess = true; // Đánh dấu: chỉ có quyền vào nhờ public link, không có share riêng
       return next();
     }
 

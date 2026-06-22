@@ -1,7 +1,7 @@
 // src/components/editor/EditorTopBar.tsx
-import { ChevronLeft, Download, Save, History, PlusCircle, Share2, Eye, Pencil, MessageSquare, Crown, Play } from 'lucide-react';
+import { ChevronLeft, Download, Save, History, PlusCircle, Share2, Eye, Pencil, MessageSquare, Crown, Play, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import CollaboratorAvatars from './CollaboratorAvatars';
 import type { CollaboratorInfo } from '../../hooks/useCollaboration';
 
@@ -33,7 +33,7 @@ interface EditorTopBarProps {
   handleSaveVersion: () => void;
   handleOpenVersionHistory: () => void;
   // RBAC Props
-  currentRole: 'owner' | 'editor' | 'commenter' | 'viewer';
+  currentRole: 'owner' | 'editor' | 'viewer';
   onOpenShare: () => void;
   // Collaboration Props
   activeUsers: CollaboratorInfo[];
@@ -46,12 +46,12 @@ interface EditorTopBarProps {
   onResizeCanvas?: (w: number, h: number) => void;
   // === FIX #6: Force save khi navigate về Dashboard ===
   onGoBack?: () => void;
+  onLimitReached?: () => void;
 }
 
 const ROLE_BADGE: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string }> = {
   owner: { label: 'Owner', icon: <Crown size={11} />, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
   editor: { label: 'Editor', icon: <Pencil size={11} />, color: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-200' },
-  commenter: { label: 'Commenter', icon: <MessageSquare size={11} />, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
   viewer: { label: 'Viewer', icon: <Eye size={11} />, color: 'text-slate-600', bg: 'bg-slate-100 border-slate-200' },
 };
 
@@ -69,7 +69,8 @@ export default function EditorTopBar({
   currentPageType,
   onPresent, designType,
   onResizeCanvas,
-  onGoBack, // === FIX #6 ===
+  onGoBack,
+  onLimitReached,
 }: EditorTopBarProps) {
   const isOwner = currentRole === 'owner';
   const canEdit = currentRole === 'owner' || currentRole === 'editor';
@@ -78,6 +79,32 @@ export default function EditorTopBar({
   const [showResizePopover, setShowResizePopover] = useState(false);
   const [resizeW, setResizeW] = useState(stageWidth);
   const [resizeH, setResizeH] = useState(stageHeight);
+
+  const [openFormatDrop, setOpenFormatDrop] = useState(false);
+  const formatRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (formatRef.current && !formatRef.current.contains(e.target as Node)) {
+        setOpenFormatDrop(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const formatOptions = [];
+  if (currentPageType !== 'doc') {
+    formatOptions.push({ value: 'png', label: 'PNG (High Quality Image)' });
+    formatOptions.push({ value: 'jpeg', label: 'JPG (Small size)' });
+    if (designType === 'presentation') {
+      formatOptions.push({ value: 'pptx', label: 'PPTX (PowerPoint)' });
+    }
+  } else {
+    formatOptions.push({ value: 'docx', label: '📄 DOCX (Microsoft Word)' });
+    formatOptions.push({ value: 'pdf', label: '📋 PDF (In / Xem trực tiếp)' });
+  }
+  const currentFormatLabel = formatOptions.find(o => o.value === exportConfig.format)?.label || 'Chọn định dạng';
 
   // Sync state when stageWidth/stageHeight changes
   useEffect(() => {
@@ -208,26 +235,40 @@ export default function EditorTopBar({
                   <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Canvas Size</h3>
                   <div className="flex gap-3">
                     <div className="flex-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Width</label>
-                      <input
-                        type="number"
-                        value={resizeW}
-                        onChange={(e) => setResizeW(Number(e.target.value))}
-                        className="w-full mt-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-sm font-bold outline-none focus:border-emerald-500"
-                      />
+                      <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Width</label>
+                      <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
+                        <button onClick={() => setResizeW(Math.max(1, resizeW - 10))} className="px-2 hover:bg-slate-200 font-bold text-slate-600 transition-colors">-</button>
+                        <input
+                          type="number"
+                          value={resizeW}
+                          onChange={(e) => setResizeW(Number(e.target.value))}
+                          className="w-full text-xs font-bold text-slate-700 bg-transparent py-1.5 outline-none text-center"
+                          style={{ appearance: 'textfield', WebkitAppearance: 'none' }}
+                        />
+                        <button onClick={() => setResizeW(resizeW + 10)} className="px-2 hover:bg-slate-200 font-bold text-slate-600 transition-colors">+</button>
+                      </div>
                     </div>
                     <div className="flex-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Height</label>
-                      <input
-                        type="number"
-                        value={resizeH}
-                        onChange={(e) => setResizeH(Number(e.target.value))}
-                        className="w-full mt-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-sm font-bold outline-none focus:border-emerald-500"
-                      />
+                      <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Height</label>
+                      <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
+                        <button onClick={() => setResizeH(Math.max(1, resizeH - 10))} className="px-2 hover:bg-slate-200 font-bold text-slate-600 transition-colors">-</button>
+                        <input
+                          type="number"
+                          value={resizeH}
+                          onChange={(e) => setResizeH(Number(e.target.value))}
+                          className="w-full text-xs font-bold text-slate-700 bg-transparent py-1.5 outline-none text-center"
+                          style={{ appearance: 'textfield', WebkitAppearance: 'none' }}
+                        />
+                        <button onClick={() => setResizeH(resizeH + 10)} className="px-2 hover:bg-slate-200 font-bold text-slate-600 transition-colors">+</button>
+                      </div>
                     </div>
                   </div>
                   <button
                     onClick={() => {
+                      if (resizeW > 10000 || resizeH > 10000) {
+                        if (onLimitReached) onLimitReached();
+                        return;
+                      }
                       if (onResizeCanvas && resizeW > 0 && resizeH > 0) {
                         onResizeCanvas(resizeW, resizeH);
                       }
@@ -266,7 +307,7 @@ export default function EditorTopBar({
               Chỉ Owner mới có thể quản lý quyền chia sẻ
             </div>
           </div>
-        ) : null /* viewer/commenter không thấy nút share */}
+        ) : null /* viewer không thấy nút share */}
 
         {/* EXPORT POPOVER */}
         <div className="relative">
@@ -290,17 +331,41 @@ export default function EditorTopBar({
                 {/* File type */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-400 uppercase">File type</label>
-                  <select
-                    value={exportConfig.format}
-                    onChange={(e) => setExportConfig({ ...exportConfig, format: e.target.value })}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 cursor-pointer"
-                  >
-                    {currentPageType !== 'doc' && <option className="text-slate-900 font-bold" value="png">PNG (High Quality Image)</option>}
-                    {currentPageType !== 'doc' && <option className="text-slate-900 font-bold" value="jpeg">JPG (Small size)</option>}
-                    {currentPageType !== 'doc' && <option className="text-slate-900 font-bold" value="pptx">PPTX (PowerPoint)</option>}
-                    {currentPageType === 'doc' && <option className="text-slate-900 font-bold" value="docx">📄 DOCX (Microsoft Word)</option>}
-                    {currentPageType === 'doc' && <option className="text-slate-900 font-bold" value="pdf">📋 PDF (In / Xem trực tiếp)</option>}
-                  </select>
+                  <div className="relative" ref={formatRef}>
+                    <button
+                      type="button"
+                      onClick={() => setOpenFormatDrop(!openFormatDrop)}
+                      className={`w-full p-2.5 bg-white border rounded-xl text-sm font-bold flex items-center justify-between transition-all outline-none ${openFormatDrop ? 'border-indigo-500 ring-2 ring-indigo-100 text-indigo-700' : 'border-slate-200 text-slate-800 hover:border-slate-300'}`}
+                    >
+                      <span className="truncate">{currentFormatLabel}</span>
+                      <ChevronDown size={16} className={`text-slate-400 transition-transform ${openFormatDrop ? 'rotate-180 text-indigo-500' : ''}`} />
+                    </button>
+                    <AnimatePresence>
+                      {openFormatDrop && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 5 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-lg z-50 overflow-hidden"
+                        >
+                          {formatOptions.map(opt => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => {
+                                setExportConfig({ ...exportConfig, format: opt.value });
+                                setOpenFormatDrop(false);
+                              }}
+                              className={`w-full text-left px-3 py-2.5 text-sm font-bold transition-colors ${exportConfig.format === opt.value ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
 
                 {/* Scale — locked aspect ratio, preset buttons only */}
@@ -359,7 +424,24 @@ export default function EditorTopBar({
 
                 {/* Select pages */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Select Pages</label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Select Pages</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity">
+                      <input
+                        type="checkbox"
+                        checked={exportSelectedPages.length === pages.length && pages.length > 0}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setExportSelectedPages(pages.map(p => p.id));
+                          } else {
+                            setExportSelectedPages([]);
+                          }
+                        }}
+                        className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-[10px] font-bold text-slate-600">Chọn tất cả</span>
+                    </label>
+                  </div>
                   <div className="max-h-40 overflow-y-auto border border-slate-100 rounded-xl p-2 space-y-2 custom-scrollbar bg-slate-50/50">
                     {pages.map((p, idx) => (
                       <label key={p.id} className="flex items-center gap-3 p-1.5 hover:bg-slate-200/50 rounded-lg cursor-pointer transition">

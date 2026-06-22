@@ -58,7 +58,7 @@ export const shareDesign = async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Email và Role là bắt buộc' });
   }
 
-  const validRoles = ['editor', 'commenter', 'viewer'];
+  const validRoles = ['editor', 'viewer'];
   if (!validRoles.includes(role)) {
     return res.status(400).json({ error: `Role không hợp lệ. Chọn: ${validRoles.join(', ')}` });
   }
@@ -115,7 +115,7 @@ export const updateShareRole = async (req: Request, res: Response) => {
     return res.status(403).json({ error: 'Chỉ chủ sở hữu mới có thể thay đổi quyền' });
   }
 
-  const validRoles = ['editor', 'commenter', 'viewer'];
+  const validRoles = ['editor', 'viewer'];
   if (!role || !validRoles.includes(role)) {
     return res.status(400).json({ error: `Role không hợp lệ. Chọn: ${validRoles.join(', ')}` });
   }
@@ -131,7 +131,8 @@ export const updateShareRole = async (req: Request, res: Response) => {
     }
 
     if (globalIo) {
-      globalIo.to(`user-${userId}`).emit('design:access_revoked', { designId: id });
+      // Emit role_updated (not access_revoked) so the user stays on page and UI updates in real-time
+      globalIo.to(`user-${userId}`).emit('design:role_updated', { designId: id, role });
     }
 
     res.json({ message: 'Cập nhật quyền thành công' });
@@ -206,5 +207,5 @@ export const togglePublicLink = async (req: Request, res: Response) => {
 export const getShareLink = async (req: Request, res: Response) => {
   const { id } = req.params;
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-  res.json({ link: `${frontendUrl}/editor/${id}` });
+  res.json({ link: `${frontendUrl}/design/${id}` });
 };

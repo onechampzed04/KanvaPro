@@ -101,8 +101,9 @@ export default function SidebarDrawer({
   const GRID_ROW_HEIGHT = 165; // px — chiều cao 1 hàng (kể cả gap)
   const uploadScrollRef = useRef<HTMLDivElement | null>(null);
   const uploadRows = [];
-  for (let i = 0; i < uploadedImages.length; i += GRID_COLS) {
-    uploadRows.push(uploadedImages.slice(i, i + GRID_COLS));
+  const validUploads = uploadedImages.filter(img => img.type !== 'pptx');
+  for (let i = 0; i < validUploads.length; i += GRID_COLS) {
+    uploadRows.push(validUploads.slice(i, i + GRID_COLS));
   }
   const uploadVirtualizer = useVirtualizer({
     count: uploadRows.length,
@@ -126,17 +127,17 @@ export default function SidebarDrawer({
 
   // ── [MỚI] Virtualized 2-column grid cho Elements Tab (Recent & Default) ───────────
   const elementsScrollRef = useRef<HTMLDivElement | null>(null);
-  
+
   // Tạo mảng dẹt chứa cả Header và Grid Rows
   const elementsItems: { type: 'header' | 'row', title?: string, data?: any[] }[] = [];
-  
+
   if (recentStickers.length > 0) {
     elementsItems.push({ type: 'header', title: 'Recently Used' });
     for (let i = 0; i < recentStickers.length; i += GRID_COLS) {
       elementsItems.push({ type: 'row', data: recentStickers.slice(i, i + GRID_COLS) });
     }
   }
-  
+
   if (defaultStickers.length > 0) {
     elementsItems.push({ type: 'header', title: 'Stickers & Icons' });
     for (let i = 0; i < defaultStickers.length; i += GRID_COLS) {
@@ -217,21 +218,21 @@ export default function SidebarDrawer({
                 <div className="flex flex-col h-full space-y-4">
                   <form onSubmit={handleSearch} className="relative shrink-0">
                     <input
-                      type="text" placeholder="Search icons, stickers..."
+                      type="text" placeholder="Tìm kiếm hình ảnh, sticker,..."
                       value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 outline-none transition-all font-medium text-slate-700"
                     />
                     <Search className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
                   </form>
 
-                  <div 
-                    ref={elementsScrollRef} 
+                  <div
+                    ref={elementsScrollRef}
                     className="flex-1 overflow-y-auto custom-scrollbar pr-1"
                   >
                     <div style={{ height: `${elementsVirtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
                       {elementsVirtualizer.getVirtualItems().map((virtualRow) => {
                         const item = elementsItems[virtualRow.index];
-                        
+
                         if (item.type === 'header') {
                           return (
                             <div
@@ -259,9 +260,9 @@ export default function SidebarDrawer({
                               const url = typeof sticker === 'string' ? sticker : (sticker.thumbnail_url || sticker.url);
                               const isProAsset = typeof sticker === 'string' ? false : !!sticker.is_premium;
                               return (
-                                <button 
-                                  key={sticker.id || idx} 
-                                  onClick={() => addImage(typeof sticker === 'string' ? sticker : sticker.url, { isPro: isProAsset })} 
+                                <button
+                                  key={sticker.id || idx}
+                                  onClick={() => addImage(typeof sticker === 'string' ? sticker : sticker.url, { isPro: isProAsset })}
                                   title={isProAsset && !isPro ? 'Sticker Pro — sẽ có watermark khi xuất file. Nâng cấp Pro để xuất sạch!' : undefined}
                                   className="relative aspect-square bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-400 overflow-hidden transition flex items-center justify-center p-2 group shadow-sm hover:shadow-md"
                                 >
@@ -312,7 +313,7 @@ export default function SidebarDrawer({
                   </AnimatePresence>
 
                   {/* [FIX Vấn đề 5] Virtual grid — chỉ render rows trong viewport */}
-                  {uploadedImages.length === 0 ? (
+                  {validUploads.length === 0 ? (
                     <p className="text-[11px] text-slate-400 text-center py-4">Chưa có ảnh nào được tải lên</p>
                   ) : (
                     <div
@@ -468,9 +469,9 @@ export default function SidebarDrawer({
                       const url = typeof sticker === 'string' ? sticker : sticker.url;
                       const isProAsset = typeof sticker === 'string' ? false : !!sticker.is_premium;
                       return (
-                        <button 
-                          key={idx} 
-                          onClick={() => addImage(url, { isPro: isProAsset })} 
+                        <button
+                          key={idx}
+                          onClick={() => addImage(url, { isPro: isProAsset })}
                           title={isProAsset && !isPro ? 'Sticker Pro — sẽ có watermark khi xuất file. Nâng cấp Pro để xuất sạch!' : undefined}
                           className="relative aspect-square bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-400 overflow-hidden transition flex items-center justify-center p-1.5 group shadow-sm hover:shadow-md"
                         >

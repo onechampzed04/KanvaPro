@@ -2,7 +2,7 @@ import { Router } from 'express';
 import {
   createDesign, getUserDesigns, getDesignById, updateDesign,
   exportVideo, saveFullDesign, getRecentStickers,
-  saveDesignVersion, getDesignVersions, restoreDesignVersion,
+  saveDesignVersion, getDesignVersions, getDesignVersionSnapshot, restoreDesignVersion,
   deleteDesign, getTrashDesigns, restoreDesign, permanentlyDeleteDesign,
   bulkDeleteDesigns, emptyTrash,
   getDesignMeta, getPageElements, // === FIX #4: Lazy Loading ===
@@ -72,6 +72,7 @@ router.patch('/:id/rename', checkDesignAccess, requireRole('owner', 'editor'), r
 // Version History: chỉ owner và editor 
 router.post('/:id/versions', checkDesignAccess, requireRole('owner', 'editor'), saveDesignVersion);
 router.get('/:id/versions', checkDesignAccess, requireRole('owner', 'editor'), getDesignVersions);
+router.get('/:id/versions/:versionId', checkDesignAccess, getDesignVersionSnapshot); // Xem trước (cần tối thiểu viewer)
 router.post('/:id/versions/:versionId/restore', checkDesignAccess, requireRole('owner', 'editor'), restoreDesignVersion);
 
 // Lấy danh sách share (commenter+ được xem)

@@ -121,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       // ─── [REALTIME] Global Team Notifications ──────────────────────────────
-      const showGlobalToast = (icon: 'success' | 'warning' | 'info', title: string) => {
+      const showGlobalToast = (icon: 'success' | 'warning' | 'info' | 'error', title: string) => {
         import('sweetalert2').then((Swal) => {
           Swal.default.fire({
             toast: true,
@@ -141,6 +141,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       socket.on('team:you_were_removed', (data: { message: string }) => {
         showGlobalToast('warning', data.message);
+      });
+
+      socket.on('team:banned', (data: { teamId: string, message: string }) => {
+        showGlobalToast('error', data.message);
+        window.dispatchEvent(new CustomEvent('team:banned', { detail: data.teamId }));
+        // Bất kể ở trang nào, đều phải f5 về trang cá nhân
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1500);
+      });
+
+      socket.on('team:unbanned', (data: { teamId: string, message: string }) => {
+        showGlobalToast('success', data.message);
+        window.dispatchEvent(new CustomEvent('team:unbanned', { detail: data.teamId }));
       });
 
       socket.on('team:you_were_invited', (data: { message: string }) => {

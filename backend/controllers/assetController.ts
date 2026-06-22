@@ -521,6 +521,21 @@ export const forceDeleteUserAsset = async (req: Request, res: Response) => {
     );
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
+    // [NEW] Find affected designs before deleting
+    let elementsToDelete: Array<{ design_id: string, page_id: string, element_id: string }> = [];
+    const assetUsages = await db.query(
+      `SELECT DISTINCT de.id as element_id, dp.id as page_id, d.id as design_id
+       FROM designs d
+       JOIN design_pages dp ON d.id = dp.design_id
+       JOIN design_elements de ON dp.id = de.page_id
+       WHERE (
+         de.properties->>'src' = $1
+         OR de.properties->>'src' = $2
+       ) AND d.is_deleted = false`,
+      [asset.url, `http://localhost:3000${asset.url}`]
+    );
+    elementsToDelete.push(...assetUsages.rows);
+
     // Xóa các elements trong tất cả các designs đang sử dụng ảnh này
     // [FIX] Search cả URL tương đối và URL tuyệt đối (có http://localhost:3000 prefix)
     await db.execute(
@@ -543,6 +558,20 @@ export const forceDeleteUserAsset = async (req: Request, res: Response) => {
       if (metadata && Array.isArray(metadata.extracted_images)) {
         for (const imgUrl of metadata.extracted_images) {
           try {
+            // [NEW] Find usages for extracted images too
+            const childUsages = await db.query(
+              `SELECT DISTINCT de.id as element_id, dp.id as page_id, d.id as design_id
+               FROM designs d
+               JOIN design_pages dp ON d.id = dp.design_id
+               JOIN design_elements de ON dp.id = de.page_id
+               WHERE (
+                 de.properties->>'src' = $1
+                 OR de.properties->>'src' = $2
+               ) AND d.is_deleted = false`,
+              [imgUrl, `http://localhost:3000${imgUrl}`]
+            );
+            elementsToDelete.push(...childUsages.rows);
+
             // [FIX 404] Xóa design_elements đang tham chiếu đến ảnh con này
             // Search cả URL tương đối và tuyệt đối (có prefix http://localhost:3000)
             await db.execute(
@@ -566,6 +595,25 @@ export const forceDeleteUserAsset = async (req: Request, res: Response) => {
     const fileSizeBytes = Number(asset.file_size ?? 0);
     if (fileSizeBytes > 0) {
       await decrementStorageUsage(asset.uploaded_by, fileSizeBytes, asset.team_id).catch(() => { });
+    }
+
+    // Notify clients to remove the deleted elements in real-time
+    if (elementsToDelete.length > 0) {
+      try {
+        const { globalIo } = await import('../sockets/collaboration.js');
+        if (globalIo) {
+          for (const item of elementsToDelete) {
+            globalIo.to(`design:${item.design_id}`).emit('element-delta', {
+              pageId: item.page_id,
+              elementId: item.element_id,
+              action: 'delete',
+              userId: 'system'
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Lỗi khi gửi thông báo element-delta delete:', err);
+      }
     }
 
     res.json({ success: true, message: 'Ảnh đã được xóa khỏi hệ thống và tất cả dự án.' });
@@ -682,6 +730,97 @@ export const removeBgBrush = async (req: Request, res: Response) => {
 
 /**
  * POST /api/assets/clone-for-design
+ * Khi user kéo ảnh từ Thư viện Uploads vào Canvas, Frontend gọi API này.
+ * Hệ thống tạo Bản ghi B trỏ cùng URL với Bản ghi A (không copy file vật lý).
+ * Bản ghi B gán với design_id → ảnh tồn tại độc lập khỏi thư viện cá nhân.
+ *
+ * Body: { assetId: string, designId: string }
+ * Response: { clonedAssetId: string, url: string }
+ */
+export const cloneAssetForDesign = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    if (!user?.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { assetId, designId } = req.body;
+    if (!assetId || !designId) {
+      return res.status(400).json({ error: 'assetId và designId là bắt buộc' });
+    }
+
+    // [SECURITY FIX - BOLA/IDOR] 1. Kiểm tra quyền của User đối với Design (Phải là owner hoặc editor)
+    const designRes = await db.query('SELECT user_id, team_id FROM designs WHERE id = $1 AND is_deleted = false', [designId]);
+    if (designRes.rows.length === 0) return res.status(404).json({ error: 'Design không tồn tại' });
+
+    const design = designRes.rows[0];
+    let hasEditAccess = design.user_id === user.id;
+
+    if (!hasEditAccess) {
+      const shareRes = await db.query(
+        "SELECT role FROM design_shares WHERE design_id = $1 AND user_id = $2 AND role IN ('owner', 'editor')",
+        [designId, user.id]
+      );
+      if (shareRes.rows.length > 0) hasEditAccess = true;
+    }
+    if (!hasEditAccess) {
+      return res.status(403).json({ error: 'Bạn không có quyền chỉnh sửa bản thiết kế này' });
+    }
+
+    // Lấy thông tin Bản ghi A (asset gốc)
+    const original = await db.getOne(
+      `SELECT id, name, type, url, file_size, width, height, metadata, uploaded_by, team_id
+       FROM assets WHERE id = $1`,
+      [assetId]
+    );
+    if (!original) {
+      return res.status(404).json({ error: 'Asset không tồn tại' });
+    }
+
+    // [SECURITY FIX - BOLA/IDOR] 2. Kiểm tra quyền của User đối với Asset gốc
+    const isPublicAsset = !original.uploaded_by || original.uploaded_by === 'admin' || (original.metadata && original.metadata.is_public);
+    if (!isPublicAsset && original.uploaded_by !== user.id) {
+      // Nếu là asset của team, kiểm tra xem user có nằm trong team_id đó không
+      if (original.team_id) {
+        const teamCheck = await db.query('SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2', [original.team_id, user.id]);
+        if (teamCheck.rows.length === 0) {
+          return res.status(403).json({ error: 'Bạn không có quyền truy cập tài nguyên của team này' });
+        }
+      } else {
+        return res.status(403).json({ error: 'Bạn không có quyền sử dụng tài nguyên này' });
+      }
+    }
+
+    // Tạo Bản ghi B: trỏ cùng URL, gán design_id, đánh dấu là design_clone
+    const { v4: uuidv4 } = await import('uuid');
+    const cloneId = uuidv4();
+
+    await db.execute(
+      `INSERT INTO assets (id, name, type, url, uploaded_by, team_id, is_premium, file_size, width, height, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, NULL, false, $6, $7, $8,
+         COALESCE($9::jsonb, '{}'::jsonb) || $10::jsonb,
+         NOW())`,
+      [
+        cloneId,
+        original.name,
+        original.type,
+        original.url,
+        user.id,
+        original.file_size ?? 0,
+        original.width ?? null,
+        original.height ?? null,
+        JSON.stringify(original.metadata ?? {}),
+        // Ghi metadata đặc biệt: đây là bản clone cho design, không hiện trong Uploads
+        JSON.stringify({ design_clone: true, design_id: designId, source_asset_id: assetId }),
+      ]
+    );
+
+    console.log(`[CloneAsset] Bản ghi B created: clone=${cloneId}, source=${assetId}, design=${designId}`);
+
+    res.status(201).json({ clonedAssetId: cloneId, url: original.url });
+  } catch (error) {
+    console.error('Clone Asset For Design Error:', error);
+    res.status(500).json({ error: 'Không thể nhân bản tài nguyên cho design' });
+  }
+};
 
 /**
  * DELETE /api/assets/:id

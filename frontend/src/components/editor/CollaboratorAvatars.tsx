@@ -43,9 +43,8 @@ export default function CollaboratorAvatars({
       {/* Connection dot */}
       <div className="flex items-center gap-1.5">
         <div
-          className={`w-1.5 h-1.5 rounded-full transition-colors duration-500 ${
-            isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-300'
-          }`}
+          className={`w-1.5 h-1.5 rounded-full transition-colors duration-500 ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-300'
+            }`}
         />
         {others.length > 0 && (
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider hidden sm:block">

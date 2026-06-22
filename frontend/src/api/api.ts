@@ -160,6 +160,12 @@ export const fetchDesignVersions = async (designId: string) => {
   return res.json();
 };
 
+export const fetchDesignVersionSnapshot = async (designId: string, versionId: string) => {
+  const res = await fetch(`/api/designs/${designId}/versions/${versionId}`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch version snapshot');
+  return res.json();
+};
+
 export const restoreDesignVersion = async (designId: string, versionId: string) => {
   const res = await fetch(`/api/designs/${designId}/versions/${versionId}/restore`, { method: 'POST', headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to restore version');

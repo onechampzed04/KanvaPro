@@ -13,7 +13,7 @@ interface ElementToolbarProps {
   onMove: (direction: 'up' | 'down') => void;
   fontList: string[];
   onTogglePosition: () => void;
-  onToggleAnimate: () => void;
+  onToggleAnimate?: () => void;
   onAlign?: (alignment: 'left'|'center'|'right'|'top'|'middle'|'bottom') => void;
   onRemoveBackground?: (element: any) => void;
   onBrushErase?: (element: any) => void;
@@ -80,17 +80,24 @@ export default function ElementToolbar({
       {/* 1. TEXT CONTROLS */}
       {element.type === 'text' && (
         <>
-          <div className="flex items-center border-r border-slate-200 pr-3 gap-1.5 shrink-0">
-            <select value={element.fontFamily || 'Arial'} onChange={(e) => handleChange('fontFamily', e.target.value)} className="text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg py-1.5 px-2 w-28 font-bold text-slate-700 outline-none transition cursor-pointer">
-              {fontList.map(f => (<option key={f} value={f} style={{ fontFamily: f }}>{f}</option>))}
-            </select>
-            <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
-              <button onClick={() => handleChange('fontSize', Math.max(1, (element.fontSize || 24) - 1))} className="px-2 hover:bg-slate-200 font-bold">-</button>
-              <input type="number" value={Math.round(element.fontSize || 24)} onChange={(e) => handleChange('fontSize', parseInt(e.target.value))} className="w-10 text-xs font-bold text-slate-700 bg-transparent py-1 outline-none text-center" />
-              <button onClick={() => handleChange('fontSize', (element.fontSize || 24) + 1)} className="px-2 hover:bg-slate-200 font-bold">+</button>
+          <div className="flex items-center border-r border-slate-200 pr-3 gap-2 shrink-0">
+            <div className="relative">
+              <select value={element.fontFamily || 'Arial'} onChange={(e) => handleChange('fontFamily', e.target.value)} className="appearance-none text-[13px] h-[34px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl pl-3 pr-8 w-32 font-bold text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 shadow-sm transition cursor-pointer">
+                {fontList.map(f => (<option key={f} value={f} style={{ fontFamily: f }}>{f}</option>))}
+              </select>
+              <div className="absolute inset-y-0 right-2.5 flex items-center pointer-events-none text-slate-400">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </div>
             </div>
+            
+            <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-sm overflow-hidden h-[34px]">
+              <button onClick={() => handleChange('fontSize', Math.max(1, (element.fontSize || 24) - 1))} className="px-2.5 h-full flex items-center justify-center hover:bg-indigo-50 hover:text-indigo-600 transition-colors border-r border-slate-200 font-bold text-slate-600">-</button>
+              <input type="number" value={Math.round(element.fontSize || 24)} onChange={(e) => handleChange('fontSize', parseInt(e.target.value))} className="w-12 text-[13px] font-bold text-slate-800 bg-transparent py-1 outline-none text-center appearance-none" />
+              <button onClick={() => handleChange('fontSize', (element.fontSize || 24) + 1)} className="px-2.5 h-full flex items-center justify-center hover:bg-indigo-50 hover:text-indigo-600 transition-colors border-l border-slate-200 font-bold text-slate-600">+</button>
+            </div>
+            
             {/* Text Color */}
-            <input type="color" value={element.fill || '#000000'} onChange={(e) => handleChange('fill', e.target.value)} className="w-7 h-7 p-0 border border-slate-200 rounded cursor-pointer overflow-hidden shadow-sm shrink-0 ml-1" title="Text Color" />
+            <input type="color" value={element.fill || '#000000'} onChange={(e) => handleChange('fill', e.target.value)} className="w-8 h-8 p-0 border border-slate-200 rounded-lg cursor-pointer overflow-hidden shadow-sm shrink-0 ml-1 hover:border-slate-300 transition-colors" title="Text Color" />
           </div>
           
           <div className="flex items-center border-r border-slate-200 pr-3 gap-0.5 shrink-0">
@@ -174,14 +181,7 @@ export default function ElementToolbar({
                       <input type="range" min="0" max="100" value={element.cornerRadius || 0} onChange={(e) => handleChange('cornerRadius', Number(e.target.value))} className="w-full accent-indigo-500" />
                     </div>
                   )}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Style</label>
-                    <select value={element.dash ? element.dash.join(',') : ''} onChange={(e) => handleChange('dash', e.target.value ? e.target.value.split(',').map(Number) : null)} className="w-full p-1 border border-slate-200 rounded text-xs">
-                      <option value="">Solid</option>
-                      <option value="10,10">Dashed</option>
-                      <option value="2,6">Dotted</option>
-                    </select>
-                  </div>
+
                 </motion.div>
               )}
             </AnimatePresence>
@@ -212,33 +212,16 @@ export default function ElementToolbar({
           </AnimatePresence>
         </div>
 
-        <button onClick={() => { onToggleAnimate(); setActivePopover(null); }} className="p-1.5 hover:bg-slate-100 hover:text-amber-600 rounded-lg transition text-slate-500" title="Animate">
-          <Zap size={16} strokeWidth={2.5} />
-        </button>
+        {onToggleAnimate && (
+          <button onClick={() => { onToggleAnimate(); setActivePopover(null); }} className="p-1.5 hover:bg-slate-100 hover:text-amber-600 rounded-lg transition text-slate-500" title="Animate">
+            <Zap size={16} strokeWidth={2.5} />
+          </button>
+        )}
         <button onClick={() => { onTogglePosition(); setActivePopover(null); }} className="p-1.5 hover:bg-slate-100 hover:text-blue-600 rounded-lg transition text-slate-500" title="Layers & Position">
           <Layers size={16} strokeWidth={2.5} />
         </button>
 
-        {/* Align to Page Popover */}
-        {onAlign && (
-          <div className="relative">
-            <button onClick={() => togglePopover('align')} className={`p-1.5 rounded-lg transition ${activePopover === 'align' ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-slate-100 hover:text-slate-800 text-slate-500'}`} title="Align to Page">
-              <Maximize size={16} strokeWidth={2.5} />
-            </button>
-            <AnimatePresence>
-              {activePopover === 'align' && (
-                <motion.div {...popoverMotionUp} className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 bg-white rounded-xl shadow-xl border border-slate-200 p-2 z-50 grid grid-cols-3 gap-1">
-                  <button onClick={() => { onAlign('left'); setActivePopover(null); }} className="p-2 hover:bg-slate-100 rounded flex justify-center" title="Align Left"><AlignLeft size={14} /></button>
-                  <button onClick={() => { onAlign('center'); setActivePopover(null); }} className="p-2 hover:bg-slate-100 rounded flex justify-center" title="Align Center"><AlignCenter size={14} /></button>
-                  <button onClick={() => { onAlign('right'); setActivePopover(null); }} className="p-2 hover:bg-slate-100 rounded flex justify-center" title="Align Right"><AlignRight size={14} /></button>
-                  <button onClick={() => { onAlign('top'); setActivePopover(null); }} className="p-2 hover:bg-slate-100 rounded flex justify-center" title="Align Top"><ArrowUp size={14} /></button>
-                  <button onClick={() => { onAlign('middle'); setActivePopover(null); }} className="p-2 hover:bg-slate-100 rounded flex justify-center text-[10px] font-bold">MID</button>
-                  <button onClick={() => { onAlign('bottom'); setActivePopover(null); }} className="p-2 hover:bg-slate-100 rounded flex justify-center" title="Align Bottom"><ArrowDown size={14} /></button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )}
+
 
         <div className="w-[1px] h-5 bg-slate-200 mx-1"></div>
 

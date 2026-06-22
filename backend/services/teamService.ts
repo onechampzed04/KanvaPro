@@ -34,6 +34,8 @@ async function writeAuditLog(
   ipAddress?: string | null,
   actorSnapshot?: { name?: string; email?: string } | null,
 ): Promise<void> {
+  if (!teamId || teamId === 'personal') return;
+  
   try {
     // Lấy thông tin actor từ DB nếu không được truyền vào (để đảm bảo có snapshot)
     let actorInfo = actorSnapshot;

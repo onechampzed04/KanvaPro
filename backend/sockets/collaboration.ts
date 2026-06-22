@@ -475,6 +475,12 @@ export function setupCollaboration(io: Server) {
       });
     });
 
+    // ── 6a. Pages Reordered ──────────────────────────────────────────────────
+    socket.on('pages-reordered', ({ designId, pageIds }: { designId: string; pageIds: string[] }) => {
+      if (!currentUser || (currentUser.role !== 'owner' && currentUser.role !== 'editor')) return;
+      socket.to(`design:${designId}`).emit('pages-reordered', { pageIds });
+    });
+
     // ── 6b. Page Thumbnail Updated ───────────────────────────────────────────
     // [FIX 6] Khi 1 client upload thumbnail mới lên Cloud và phát sự kiện này,
     // server relay ngay cho tất cả collaborator khác trong phòng.

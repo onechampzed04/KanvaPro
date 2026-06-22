@@ -87,7 +87,18 @@ router.post(
   '/upload-thumbnail',
   authenticate,
   thumbnailRateLimit,
-  thumbnailUpload.single('thumbnail'),
+  (req: any, res: any, next: any) => {
+    thumbnailUpload.single('thumbnail')(req, res, (err: any) => {
+      if (err && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          error: 'FileTooLarge',
+          message: 'Thumbnail quá lớn (vượt quá 2MB).',
+        });
+      }
+      if (err) return next(err);
+      next();
+    });
+  },
   validateImageFile,
   uploadThumbnail
 );

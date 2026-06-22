@@ -13,7 +13,7 @@ import {
 // =============================================
 // TYPES
 // =============================================
-type ShareRole = 'editor' | 'commenter' | 'viewer';
+type ShareRole = 'editor' | 'viewer';
 
 interface SharePerson {
   user_id: string;
@@ -33,7 +33,7 @@ interface ShareOwner {
 
 interface ShareModalProps {
   designId: string;
-  currentRole: 'owner' | 'editor' | 'commenter' | 'viewer';
+  currentRole: 'owner' | 'editor' | 'viewer';
   onClose: () => void;
 }
 
@@ -43,7 +43,6 @@ interface ShareModalProps {
 const ROLE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string; desc: string }> = {
   owner:     { label: 'Owner',     icon: <Crown size={13} />,         color: 'text-amber-500',  desc: 'Toàn quyền' },
   editor:    { label: 'Editor',    icon: <Pencil size={13} />,        color: 'text-indigo-500', desc: 'Chỉnh sửa bản vẽ' },
-  commenter: { label: 'Commenter', icon: <MessageSquare size={13} />, color: 'text-emerald-500',desc: 'Bình luận' },
   viewer:    { label: 'Viewer',    icon: <Eye size={13} />,           color: 'text-slate-500',  desc: 'Chỉ xem' },
 };
 
@@ -135,7 +134,7 @@ function RoleDropdown({
             transition={{ duration: 0.12 }}
             className="absolute right-0 top-9 w-52 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden"
           >
-            {(['editor', 'commenter', 'viewer'] as ShareRole[]).map(r => {
+            {(['editor', 'viewer'] as ShareRole[]).map(r => {
               const rc = ROLE_CONFIG[r];
               return (
                 <button
@@ -159,6 +158,76 @@ function RoleDropdown({
             >
               <Trash2 size={12} /> Gỡ quyền truy cập
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Dropdown chọn role khi invite (giống hệt css của RoleDropdown) */
+function InviteRoleDropdown({
+  currentRole, onChange
+}: {
+  currentRole: ShareRole;
+  onChange: (role: ShareRole) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const config = ROLE_CONFIG[currentRole];
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  const handleSelect = (role: ShareRole) => {
+    setOpen(false);
+    onChange(role);
+  };
+
+  return (
+    <div className="relative h-full flex items-center" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`h-full flex items-center justify-between min-w-[120px] gap-2 text-sm font-semibold ${config.color} px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-all border border-white/10 hover:border-white/20 whitespace-nowrap`}
+      >
+        <span className="flex items-center gap-1.5">
+          {config.icon}
+          {config.label}
+        </span>
+        <ChevronDown size={14} className={`transition-transform text-slate-400 ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 6, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.96 }}
+            transition={{ duration: 0.12 }}
+            className="absolute right-0 top-[calc(100%+8px)] w-52 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden"
+          >
+            {(['editor', 'viewer'] as ShareRole[]).map(r => {
+              const rc = ROLE_CONFIG[r];
+              return (
+                <button
+                  type="button"
+                  key={r}
+                  onClick={() => handleSelect(r)}
+                  className={`w-full flex items-start gap-3 px-3 py-2.5 hover:bg-white/10 transition text-left ${r === currentRole ? 'bg-white/5' : ''}`}
+                >
+                  <span className={`mt-0.5 ${rc.color}`}>{rc.icon}</span>
+                  <div>
+                    <div className={`text-xs font-bold ${rc.color}`}>{rc.label}</div>
+                    <div className="text-[10px] text-slate-400">{rc.desc}</div>
+                  </div>
+                  {r === currentRole && <Check size={12} className="ml-auto mt-0.5 text-white/60 shrink-0" />}
+                </button>
+              );
+            })}
           </motion.div>
         )}
       </AnimatePresence>
@@ -307,19 +376,11 @@ export default function ShareModal({ designId, currentRole, onClose }: ShareModa
                       placeholder="Nhập địa chỉ email..."
                       className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500 focus:bg-white/8 transition"
                     />
-                    {/* Role picker */}
-                    <div className="relative">
-                      <select
-                        value={inviteRole}
-                        onChange={e => setInviteRole(e.target.value as ShareRole)}
-                        className="h-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500 transition appearance-none cursor-pointer pr-7"
-                      >
-                        <option value="editor" className="bg-slate-900">Editor</option>
-                        <option value="commenter" className="bg-slate-900">Commenter</option>
-                        <option value="viewer" className="bg-slate-900">Viewer</option>
-                      </select>
-                      <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                    </div>
+                    {/* Role picker styled exactly like the bottom one */}
+                    <InviteRoleDropdown 
+                      currentRole={inviteRole}
+                      onChange={(role) => setInviteRole(role)}
+                    />
                   </div>
 
                   <button

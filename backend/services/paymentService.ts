@@ -289,7 +289,7 @@ export const paymentService = {
 
     // 2. Tính toán Proration (Cấn trừ) nếu user đang có gói cũ còn hạn
     const currentSubRes = await db.query(
-      `SELECT us.plan_id, us.current_period_end, sp.monthly_price, sp.name,
+      `SELECT us.plan_id, us.current_period_end, sp.monthly_price, sp.name, sp.max_team_members,
               (SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false ORDER BY max_members DESC LIMIT 1) as current_max_members
        FROM user_subscriptions us 
        JOIN subscription_plans sp ON us.plan_id = sp.id
@@ -327,7 +327,10 @@ export const paymentService = {
         } else {
           // [FIX Vấn đề 2] Dùng shared util calculateChangePlanProration()
           const baseCurrentPrice = Number(currentSub.monthly_price);
-          const currentMembersCount = currentSub.current_max_members ? Number(currentSub.current_max_members) : 1;
+          let currentMembersCount = 1;
+          if (currentSub.max_team_members > 1) {
+            currentMembersCount = currentSub.current_max_members ? Number(currentSub.current_max_members) : 1;
+          }
           const currentPlanValue = baseCurrentPrice * currentMembersCount;
 
           const proration = calculateChangePlanProration(
@@ -510,7 +513,7 @@ export const paymentService = {
     let remainingDays = 0;
 
     const currentSubRes = await db.query(
-      `SELECT us.plan_id, us.current_period_end, sp.monthly_price, sp.name, us.cancel_at,
+      `SELECT us.plan_id, us.current_period_end, sp.monthly_price, sp.name, us.cancel_at, sp.max_team_members,
               (SELECT max_members FROM teams WHERE owner_id = $1 AND max_members > 1 AND is_deleted = false ORDER BY max_members DESC LIMIT 1) as current_max_members
        FROM user_subscriptions us
        JOIN subscription_plans sp ON us.plan_id = sp.id
@@ -530,7 +533,10 @@ export const paymentService = {
         const remainingDaysExact = remainingMs / (1000 * 60 * 60 * 24);
 
         const baseCurrentPrice = Number(currentSub.monthly_price);
-        const currentMembersCount = currentSub.current_max_members ? Number(currentSub.current_max_members) : 1;
+        let currentMembersCount = 1;
+        if (currentSub.max_team_members > 1) {
+          currentMembersCount = currentSub.current_max_members ? Number(currentSub.current_max_members) : 1;
+        }
         const currentPlanValue = baseCurrentPrice * currentMembersCount;
 
         if (currentSub.plan_id === newPlanId) {

@@ -121,9 +121,12 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
            sp.max_team_members AS plan_max_members,
            sp.features AS plan_features,
            CASE 
-             WHEN us.status = 'active' AND us.current_period_end > NOW() 
-                  AND (t.max_members = 1 OR COALESCE(sp.max_team_members, 1) > 1)
-             THEN true
+             WHEN us.status = 'active' AND us.current_period_end > NOW() THEN
+               CASE 
+                 WHEN t.max_members = 1 THEN (sp.max_team_members = 1)
+                 WHEN sp.max_team_members > 1 THEN true
+                 ELSE false
+               END
              ELSE false
            END AS is_pro
          FROM teams t
@@ -147,7 +150,7 @@ export const resolveWorkspace = async (req: Request, res: Response, next: NextFu
       // Dung lượng của chính Workspace (đếm riêng theo từng Workspace)
       usedStorageBytes: Number(workspace?.used_storage_bytes ?? 0),
       // Hạn mức theo gói cước của Workspace (Free = 5GB, Pro = theo plan, Custom = db)
-      maxStorageGb: Number(workspace?.max_storage_gb ?? 5),
+      maxStorageGb: workspace?.is_pro ? Number(workspace?.max_storage_gb ?? 5) : 5,
       isPro: workspace?.is_pro ?? false,
       planFeatures: workspace?.plan_features ?? [],
       maxMembers: Number(workspace?.max_members ?? 1),

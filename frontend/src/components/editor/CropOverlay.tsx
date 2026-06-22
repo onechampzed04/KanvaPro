@@ -61,49 +61,49 @@ export default function CropOverlay({ element, onApply, onCancel, onReset }: Cro
     const cdx = dx / scale;
     const cdy = dy / scale;
 
-    setCrop(() => {
-      let { x, y, width, height } = { ...r };
-      switch (dragRef.current!.type) {
-        case 'move':
-          x = Math.max(0, Math.min(imgW - width, r.x + cdx));
-          y = Math.max(0, Math.min(imgH - height, r.y + cdy));
-          break;
-        case 'tl':
-          x = Math.max(0, Math.min(r.x + r.width - MIN, r.x + cdx));
-          y = Math.max(0, Math.min(r.y + r.height - MIN, r.y + cdy));
-          width = r.width - (x - r.x); height = r.height - (y - r.y);
-          break;
-        case 'tc':
-          y = Math.max(0, Math.min(r.y + r.height - MIN, r.y + cdy));
-          height = r.height - (y - r.y);
-          break;
-        case 'tr':
-          y = Math.max(0, Math.min(r.y + r.height - MIN, r.y + cdy));
-          width = Math.max(MIN, Math.min(imgW - r.x, r.width + cdx));
-          height = r.height - (y - r.y);
-          break;
-        case 'ml':
-          x = Math.max(0, Math.min(r.x + r.width - MIN, r.x + cdx));
-          width = r.width - (x - r.x);
-          break;
-        case 'mr':
-          width = Math.max(MIN, Math.min(imgW - r.x, r.width + cdx));
-          break;
-        case 'bl':
-          x = Math.max(0, Math.min(r.x + r.width - MIN, r.x + cdx));
-          width = r.width - (x - r.x);
-          height = Math.max(MIN, Math.min(imgH - r.y, r.height + cdy));
-          break;
-        case 'bc':
-          height = Math.max(MIN, Math.min(imgH - r.y, r.height + cdy));
-          break;
-        case 'br':
-          width = Math.max(MIN, Math.min(imgW - r.x, r.width + cdx));
-          height = Math.max(MIN, Math.min(imgH - r.y, r.height + cdy));
-          break;
-      }
-      return { x, y, width, height };
-    });
+    let { x, y, width, height } = { ...r };
+    const type = dragRef.current.type;
+
+    switch (type) {
+      case 'move':
+        x = Math.max(0, Math.min(imgW - width, r.x + cdx));
+        y = Math.max(0, Math.min(imgH - height, r.y + cdy));
+        break;
+      case 'tl':
+        x = Math.max(0, Math.min(r.x + r.width - MIN, r.x + cdx));
+        y = Math.max(0, Math.min(r.y + r.height - MIN, r.y + cdy));
+        width = r.width - (x - r.x); height = r.height - (y - r.y);
+        break;
+      case 'tc':
+        y = Math.max(0, Math.min(r.y + r.height - MIN, r.y + cdy));
+        height = r.height - (y - r.y);
+        break;
+      case 'tr':
+        y = Math.max(0, Math.min(r.y + r.height - MIN, r.y + cdy));
+        width = Math.max(MIN, Math.min(imgW - r.x, r.width + cdx));
+        height = r.height - (y - r.y);
+        break;
+      case 'ml':
+        x = Math.max(0, Math.min(r.x + r.width - MIN, r.x + cdx));
+        width = r.width - (x - r.x);
+        break;
+      case 'mr':
+        width = Math.max(MIN, Math.min(imgW - r.x, r.width + cdx));
+        break;
+      case 'bl':
+        x = Math.max(0, Math.min(r.x + r.width - MIN, r.x + cdx));
+        width = r.width - (x - r.x);
+        height = Math.max(MIN, Math.min(imgH - r.y, r.height + cdy));
+        break;
+      case 'bc':
+        height = Math.max(MIN, Math.min(imgH - r.y, r.height + cdy));
+        break;
+      case 'br':
+        width = Math.max(MIN, Math.min(imgW - r.x, r.width + cdx));
+        height = Math.max(MIN, Math.min(imgH - r.y, r.height + cdy));
+        break;
+    }
+    setCrop({ x, y, width, height });
   }, [scale, imgW, imgH, MIN]);
 
   const onMouseUp = useCallback(() => {

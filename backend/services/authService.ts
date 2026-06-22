@@ -96,7 +96,7 @@ export const authService = {
          CASE 
            WHEN us.status = 'active' AND us.current_period_end > NOW() THEN
              CASE 
-               WHEN t.max_members = 1 AND t.owner_id = $1 THEN true
+               WHEN t.max_members = 1 AND t.owner_id = $1 THEN (sp.max_team_members = 1)
                WHEN sp.max_team_members > 1 THEN true
                ELSE false
              END

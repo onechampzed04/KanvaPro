@@ -431,14 +431,22 @@ export const ProWatermarkOverlay = ({ el }: { el: any }) => {
 
   if (!patternImg) return null;
 
+  const hasCrop = !!(el.cropRect && el.cropRect.width > 0 && el.cropRect.height > 0);
+  const initialX = hasCrop ? (el.x ?? 0) + el.cropRect.x : (el.x ?? 0);
+  const initialY = hasCrop ? (el.y ?? 0) + el.cropRect.y : (el.y ?? 0);
+  const baseW = hasCrop ? el.cropRect.width : (el.width ?? 200);
+  const baseH = hasCrop ? el.cropRect.height : (el.height ?? 200);
+  const initialW = Math.max(1, baseW * Math.abs(el.scaleX ?? 1));
+  const initialH = Math.max(1, baseH * Math.abs(el.scaleY ?? 1));
+
   // Props ban đầu đọc từ React state — sẽ bị override imperatively trong lúc drag
   return (
     <Rect
       ref={rectRef}
-      x={el.x ?? 0}
-      y={el.y ?? 0}
-      width={Math.max(1, el.width ?? 200)}
-      height={Math.max(1, el.height ?? 200)}
+      x={initialX}
+      y={initialY}
+      width={initialW}
+      height={initialH}
       rotation={el.rotation ?? 0}
       opacity={el.opacity ?? 1}
       fillPatternImage={patternImg as unknown as HTMLImageElement}

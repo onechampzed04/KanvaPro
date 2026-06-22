@@ -93,6 +93,11 @@ export default function AdminAssets() {
     if (!files) return;
     const fileArray = Array.from(files);
     
+    if (pendingFiles.length + fileArray.length > 50) {
+      showToast('Tối đa chỉ được upload 50 file mỗi lần!', 'error');
+      return;
+    }
+
     // Lọc file theo Asset Type đang chọn
     const isFontMode = uploadForm.type === 'font';
     const validFiles = fileArray.filter(file => {
@@ -228,24 +233,24 @@ export default function AdminAssets() {
       {/* ── Upload Zone ── */}
       <div className="admin-table-card" style={{ marginBottom: 20 }}>
         <div className="admin-table-toolbar">
-          <span className="admin-table-title">📦 Bulk Upload Assets</span>
+          <span className="admin-table-title">🚀 Tải lên Hàng loạt</span>
           {pendingFiles.length > 0 && (
             <button className="admin-btn admin-btn-primary" onClick={handleUpload} disabled={uploading}>
               <Upload size={14} />
-              {uploading ? `Uploading…` : `Upload ${pendingFiles.length} file(s)`}
+              {uploading ? `Đang tải lên…` : `Tải lên ${pendingFiles.length} file`}
             </button>
           )}
         </div>
         <div style={{ display: 'flex', gap: 16, padding: '16px 20px 16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <div style={{ flex: '0 0 180px' }}>
-            <label className="admin-label">Asset Type</label>
+            <label className="admin-label">Loại tài nguyên</label>
             <AdminSelect
               value={uploadForm.type}
               onChange={v => setUploadForm(f => ({ ...f, type: v }))}
               options={[
-                { value: 'image', label: '🖼 Image' },
-                { value: 'sticker', label: '🎨 Sticker' },
-                { value: 'font', label: '🔤 Font' },
+                { value: 'image', label: '🖼️ Ảnh' },
+                { value: 'sticker', label: '🎨 Nhãn dán' },
+                { value: 'font', label: '🔤 Phông chữ' },
               ]}
             />
           </div>
@@ -256,7 +261,7 @@ export default function AdminAssets() {
               <div className="admin-toggle-track" />
               <span style={{ fontSize: 13, color: 'var(--t2)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <Crown size={14} style={{ color: '#f59e0b' }} />
-                Pro Only
+                Gói Pro
               </span>
             </label>
           </div>
@@ -268,12 +273,12 @@ export default function AdminAssets() {
           onDrop={e => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}
           onClick={() => fileInputRef.current?.click()}
         >
-          <div className="admin-upload-icon">🗂️</div>
-          <div className="admin-upload-text">Drop files here or click to browse</div>
+          <div className="admin-upload-icon">☁️</div>
+          <div className="admin-upload-text">Kéo thả file vào đây hoặc bấm để chọn</div>
           <div className="admin-upload-hint">
             {uploadForm.type === 'font' 
-              ? 'Supports TTF, OTF, WOFF, WOFF2 • Max 50MB each' 
-              : 'Supports PNG, JPG, SVG, WEBP, GIF • Max 50MB each'}
+              ? 'Hỗ trợ TTF, OTF, WOFF, WOFF2 • Tối đa 50MB/file' 
+              : 'Hỗ trợ PNG, JPG, SVG, WEBP, GIF • Tối đa 50MB/file'}
           </div>
           <input ref={fileInputRef} type="file" multiple 
             accept={uploadForm.type === 'font' ? '.ttf,.otf,.woff,.woff2' : 'image/*'}
@@ -302,37 +307,37 @@ export default function AdminAssets() {
       {/* ── Assets Table ── */}
       <div className="admin-table-card">
         <div className="admin-table-toolbar">
-          <span className="admin-table-title">System Assets</span>
+          <span className="admin-table-title">Kho tài nguyên</span>
           <div className="admin-search">
             <Search size={14} color="var(--text-muted)" />
-            <input placeholder="Search assets…" value={search} onChange={e => setSearch(e.target.value)} />
+            <input placeholder="Tìm kiếm..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <AdminSelect
             value={typeFilter}
             onChange={setTypeFilter}
             options={[
-              { value: '', label: 'All Types' },
-              { value: 'image', label: 'Image' },
-              { value: 'sticker', label: 'Sticker' },
-              { value: 'font', label: 'Font' },
+              { value: '', label: 'Tất cả loại' },
+              { value: 'image', label: 'Ảnh' },
+              { value: 'sticker', label: 'Nhãn dán' },
+              { value: 'font', label: 'Phông chữ' },
             ]}
           />
           <AdminSelect
             value={premiumFilter}
             onChange={setPremiumFilter}
             options={[
-              { value: '', label: 'All Tiers' },
-              { value: 'true', label: 'Pro Only' },
-              { value: 'false', label: 'Free' },
+              { value: '', label: 'Tất cả gói' },
+              { value: 'true', label: 'Pro' },
+              { value: 'false', label: 'Miễn phí' },
             ]}
           />
           <AdminSelect
             value={activeFilter}
             onChange={setActiveFilter}
             options={[
-              { value: '', label: 'All Status' },
-              { value: 'true', label: '✅ Active' },
-              { value: 'false', label: '🔕 Deactivated' },
+              { value: '', label: 'Tất cả trạng thái' },
+              { value: 'true', label: '✅ Hoạt động' },
+              { value: 'false', label: '🔕 Đã ẩn' },
             ]}
           />
         </div>
@@ -363,7 +368,7 @@ export default function AdminAssets() {
                 opacity: bulkLoading ? 0.6 : 1,
               }}
             >
-              <Crown size={12} /> Set Pro
+              <Crown size={12} /> Chuyển thành Pro
             </button>
             <button
               onClick={() => bulkSetPremium(false)}
@@ -376,7 +381,7 @@ export default function AdminAssets() {
                 opacity: bulkLoading ? 0.6 : 1,
               }}
             >
-              Set Free
+              Chuyển thành Free
             </button>
             <button
               onClick={() => setSelectedIds(new Set())}
@@ -399,7 +404,7 @@ export default function AdminAssets() {
                   <button
                     onClick={toggleAll}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}
-                    title={allSelected ? 'Deselect all' : 'Select all'}
+                    title={allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                   >
                     {allSelected
                       ? <CheckSquare size={16} color="var(--accent)" />
@@ -409,13 +414,13 @@ export default function AdminAssets() {
                     }
                   </button>
                 </th>
-                <th>Preview</th>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Tier</th>
-                <th>Status</th>
-                <th>Size</th>
-                <th>Actions</th>
+                <th>Xem trước</th>
+                <th>Tên</th>
+                <th>Loại</th>
+                <th>Gói</th>
+                <th>Trạng thái</th>
+                <th>Kích thước</th>
+                <th>Hành động</th>
               </tr>
             </thead>
             <tbody>
@@ -427,7 +432,7 @@ export default function AdminAssets() {
                 <tr><td colSpan={9}>
                   <div className="admin-empty">
                     <span className="admin-empty-icon">🖼️</span>
-                    <span className="admin-empty-text">No assets found</span>
+                    <span className="admin-empty-text">Không tìm thấy tài nguyên nào</span>
                   </div>
                 </td></tr>
               ) : assets.map(a => {
@@ -508,10 +513,10 @@ export default function AdminAssets() {
                     <td>
                       {a.is_active
                         ? <span className="badge badge-free" style={{ color: '#10b981', borderColor: 'rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.1)' }}>
-                            <Eye size={10} /> Active
+                            <Eye size={10} /> Hoạt động
                           </span>
                         : <span className="badge badge-free" style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)' }}>
-                            <EyeOff size={10} /> Deactivated
+                            <EyeOff size={10} /> Đã ẩn
                           </span>
                       }
                     </td>
@@ -542,11 +547,11 @@ export default function AdminAssets() {
 
         <div className="admin-pagination">
           <span className="admin-pagination-info">
-            Showing {Math.min((page - 1) * LIMIT + 1, total)}–{Math.min(page * LIMIT, total)} of {total}
+            Hiển thị từ {Math.min((page - 1) * LIMIT + 1, total)}–{Math.min(page * LIMIT, total)} của {total}
           </span>
           <div className="admin-pagination-btns">
-            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-            <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Next →</button>
+            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← Trước</button>
+            <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Sau →</button>
           </div>
         </div>
       </div>
@@ -555,9 +560,9 @@ export default function AdminAssets() {
       {editAsset && (
         <div className="admin-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setEditAsset(null); }}>
           <div className="admin-modal">
-            <h2 className="admin-modal-title">✏️ Edit Asset</h2>
+            <h2 className="admin-modal-title">🖊️ Chỉnh sửa tài nguyên</h2>
             <div className="admin-form-group">
-              <label className="admin-label">Name</label>
+              <label className="admin-label">Tên</label>
               <input className="admin-input" value={editForm.name}
                 onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
             </div>
@@ -568,13 +573,13 @@ export default function AdminAssets() {
                 <div className="admin-toggle-track" />
                 <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                   <Crown size={12} style={{ display: 'inline', marginRight: 4, color: '#f59e0b' }} />
-                  Requires Pro Plan
+                  Yêu cầu gói Pro
                 </span>
               </label>
             </div>
-            <div className="admin-modal-footer">
-              <button className="admin-btn admin-btn-ghost" onClick={() => setEditAsset(null)}>Cancel</button>
-              <button className="admin-btn admin-btn-primary" onClick={handleSaveEdit}>Save Changes</button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
+              <button className="admin-btn admin-btn-ghost" onClick={() => setEditAsset(null)}>Hủy</button>
+              <button className="admin-btn admin-btn-primary" onClick={handleSaveEdit}>Lưu thay đổi</button>
             </div>
           </div>
         </div>

@@ -55,6 +55,9 @@ interface CanvasEditorProps {
   setEditingId: (id: string | null) => void;
   updateElement: (el: any) => void;
   updateElementImmediate: (el: any) => void;
+  // Bulk update: cập nhật nhiều element cùng lúc trong 1 React state call (tránh stale closure)
+  updateElementsBatch?: (updatedEls: any[]) => void;
+  updateElementsBatchImmediate?: (updatedEls: any[]) => void;
   selectionRect: any;
   handleMouseDown: (e: any) => void;
   handleMouseMove: (e: any) => void;
@@ -84,17 +87,20 @@ interface CanvasEditorProps {
   animPreviewProgress?: number;
   // Free user flag: if true, Pro stickers will show a watermark overlay
   isFreeUser?: boolean;
+  onLimitReached?: () => void;
 }
 
 // ─── CACHED LINE COMPONENT ────────────────────────────────────────────────────
 // Memo: chỉ re-render khi el thay đổi thực sự. Sau mount gọi .cache() để tạo bitmap GPU.
-const CachedLine = memo(({ el, activeTool, onDragStart, onDragMove, onDragEnd, onClick }: {
+const CachedLine = memo(({ el, activeTool, onDragStart, onDragMove, onDragEnd, onClick, onTransformStart, onTransformEnd }: {
   el: any;
   activeTool?: string;
   onDragStart?: (e: any) => void;
   onDragMove: (e: any) => void;
   onDragEnd: (e: any) => void;
   onClick: (e: any) => void;
+  onTransformStart?: (e: any) => void;
+  onTransformEnd?: (e: any) => void;
 }) => {
   const lineRef = useRef<any>(null);
 
@@ -131,7 +137,7 @@ const CachedLine = memo(({ el, activeTool, onDragStart, onDragMove, onDragEnd, o
       node.clearCache();
     }
     node.getLayer()?.batchDraw();
-  }, [el.points, el.stroke, el.strokeWidth]);
+  }, [el.points, el.stroke, el.strokeWidth, el.dash]);
 
   return (
     <Line
@@ -144,12 +150,18 @@ const CachedLine = memo(({ el, activeTool, onDragStart, onDragMove, onDragEnd, o
       tension={el.tension || 0}
       lineCap={el.lineCap || 'round'}
       lineJoin={el.lineJoin || 'round'}
+      dash={el.dash || undefined}
       x={el.x || 0}
       y={el.y || 0}
+      rotation={el.rotation || 0}
+      scaleX={el.scaleX || 1}
+      scaleY={el.scaleY || 1}
       draggable={activeTool === 'select' || !activeTool}
       onDragStart={onDragStart}
       onDragMove={onDragMove}
       onDragEnd={onDragEnd}
+      onTransformStart={onTransformStart}
+      onTransformEnd={onTransformEnd}
       onClick={onClick}
       perfectDrawEnabled={!el.points || el.points.length <= 150}
       // Bắt click trên toàn bộ bounding box của nét vẽ (cộng thêm 10px lề xung quanh)
@@ -197,6 +209,8 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       canvas.height = 40;
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 40, 40);
         ctx.fillStyle = '#cbd5e1'; // slate-300
         ctx.beginPath();
         ctx.arc(4, 4, 2, 0, Math.PI * 2);
@@ -223,6 +237,8 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
     if (props.isWhiteboard) {
       newScale = 1; // Default to 100% zoom cho whiteboard để khung trông rất to
+    } else {
+      newScale = Math.max(0.5, newScale);
     }
 
     setScale(newScale);
@@ -266,7 +282,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     if (textareaRef.current && editingElement) {
       if (textareaRef.current.innerText !== editingElement.text) {
         textareaRef.current.innerText = editingElement.text;
-        
+
         // Focus and place cursor at the end
         const el = textareaRef.current;
         el.focus();
@@ -480,17 +496,49 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
     const PADDING = 150;
     const STEP = 500;
-    let newW = stageWidth;
-    let newH = stageHeight;
+    const currentW = Number(stageWidth);
+    const currentH = Number(stageHeight);
+    let newW = currentW;
+    let newH = currentH;
     let dx = 0;
     let dy = 0;
 
-    if (box.x + box.width > stageWidth - PADDING) newW = stageWidth + STEP;
-    if (box.y + box.height > stageHeight - PADDING) newH = stageHeight + STEP;
-    if (box.x < PADDING) { newW += STEP; dx = -STEP; }
-    if (box.y < PADDING) { newH += STEP; dy = -STEP; }
+    const LIMIT = 10000;
+    let limitReached = false;
 
-    if (newW !== stageWidth || newH !== stageHeight) {
+    if (box.x + box.width > currentW - PADDING) newW = Math.max(currentW + STEP, Math.ceil((box.x + box.width + PADDING) / STEP) * STEP);
+    if (box.y + box.height > currentH - PADDING) newH = Math.max(currentH + STEP, Math.ceil((box.y + box.height + PADDING) / STEP) * STEP);
+    if (box.x < PADDING) {
+      const diff = Math.ceil((PADDING - box.x) / STEP) * STEP;
+      newW += diff; dx = -diff;
+    }
+    if (box.y < PADDING) {
+      const diff = Math.ceil((PADDING - box.y) / STEP) * STEP;
+      newH += diff; dy = -diff;
+    }
+
+    if (newW > LIMIT) {
+      if (dx < 0) {
+        const maxDiff = LIMIT - currentW;
+        dx = maxDiff >= 0 ? -maxDiff : 0;
+      }
+      newW = LIMIT;
+      limitReached = true;
+    }
+    if (newH > LIMIT) {
+      if (dy < 0) {
+        const maxDiff = LIMIT - currentH;
+        dy = maxDiff >= 0 ? -maxDiff : 0;
+      }
+      newH = LIMIT;
+      limitReached = true;
+    }
+
+    if (limitReached && props.onLimitReached) {
+      props.onLimitReached();
+    }
+
+    if (newW !== currentW || newH !== currentH) {
       // SỬA LỖI GIẬT CAMERA: Di chuyển camera tương ứng với độ tịnh tiến của vật thể
       setPosition(prev => ({
         x: prev.x + dx * scale,
@@ -591,16 +639,48 @@ export default function CanvasEditor(props: CanvasEditorProps) {
 
           const PADDING = 150;
           const STEP = 500;
-          let newW = stageWidth;
-          let newH = stageHeight;
+          const currentW = Number(stageWidth);
+          const currentH = Number(stageHeight);
+          let newW = currentW;
+          let newH = currentH;
           let dx = 0; let dy = 0;
 
-          if (maxX > stageWidth - PADDING) newW = stageWidth + STEP;
-          if (maxY > stageHeight - PADDING) newH = stageHeight + STEP;
-          if (minX < PADDING) { newW += STEP; dx = -STEP; }
-          if (minY < PADDING) { newH += STEP; dy = -STEP; }
+          const LIMIT = 10000;
+          let limitReached = false;
 
-          if (newW !== stageWidth || newH !== stageHeight) {
+          if (maxX > currentW - PADDING) newW = Math.max(currentW + STEP, Math.ceil((maxX + PADDING) / STEP) * STEP);
+          if (maxY > currentH - PADDING) newH = Math.max(currentH + STEP, Math.ceil((maxY + PADDING) / STEP) * STEP);
+          if (minX < PADDING) {
+            const diff = Math.ceil((PADDING - minX) / STEP) * STEP;
+            newW += diff; dx = -diff;
+          }
+          if (minY < PADDING) {
+            const diff = Math.ceil((PADDING - minY) / STEP) * STEP;
+            newH += diff; dy = -diff;
+          }
+
+          if (newW > LIMIT) {
+            if (dx < 0) {
+              const maxDiff = LIMIT - currentW;
+              dx = maxDiff >= 0 ? -maxDiff : 0;
+            }
+            newW = LIMIT;
+            limitReached = true;
+          }
+          if (newH > LIMIT) {
+            if (dy < 0) {
+              const maxDiff = LIMIT - currentH;
+              dy = maxDiff >= 0 ? -maxDiff : 0;
+            }
+            newH = LIMIT;
+            limitReached = true;
+          }
+
+          if (limitReached && props.onLimitReached) {
+            props.onLimitReached();
+          }
+
+          if (newW !== currentW || newH !== currentH) {
             // SỬA LỖI GIẬT CAMERA KHI ĐANG VẼ
             setPosition(prev => ({
               x: prev.x + dx * scale,
@@ -870,6 +950,66 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           : 'default'
   };
 
+  // --- Scrollbar calculations ---
+  const SCROLL_PADDING = 200;
+  const virtualWidth = Math.max(containerSize.width, stageWidth * scale + SCROLL_PADDING * 2);
+  const virtualHeight = Math.max(containerSize.height, stageHeight * scale + SCROLL_PADDING * 2);
+
+  const showScrollX = virtualWidth > containerSize.width;
+  const showScrollY = virtualHeight > containerSize.height;
+
+  const maxScrollX = virtualWidth - containerSize.width;
+  const scrollRatioX = maxScrollX === 0 ? 0 : Math.max(0, Math.min(1, (SCROLL_PADDING - position.x) / maxScrollX));
+  const trackWidthX = containerSize.width - (showScrollY ? 12 : 0);
+  const thumbWidthX = Math.max(40, (trackWidthX / virtualWidth) * trackWidthX);
+  const thumbLeftX = scrollRatioX * (trackWidthX - thumbWidthX);
+
+  const maxScrollY = virtualHeight - containerSize.height;
+  const scrollRatioY = maxScrollY === 0 ? 0 : Math.max(0, Math.min(1, (SCROLL_PADDING - position.y) / maxScrollY));
+  const trackHeightY = containerSize.height - (showScrollX ? 12 : 0);
+  const thumbHeightY = Math.max(40, (trackHeightY / virtualHeight) * trackHeightY);
+  const thumbTopY = scrollRatioY * (trackHeightY - thumbHeightY);
+
+  const handleThumbXDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startRatio = scrollRatioX;
+    const trackSize = trackWidthX - thumbWidthX;
+    if (trackSize <= 0) return;
+    const handleMove = (ev: PointerEvent) => {
+      const delta = ev.clientX - startX;
+      const newRatio = Math.max(0, Math.min(1, startRatio + delta / trackSize));
+      setPosition(prev => ({ ...prev, x: SCROLL_PADDING - newRatio * maxScrollX }));
+    };
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+  };
+
+  const handleThumbYDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startRatio = scrollRatioY;
+    const trackSize = trackHeightY - thumbHeightY;
+    if (trackSize <= 0) return;
+    const handleMove = (ev: PointerEvent) => {
+      const delta = ev.clientY - startY;
+      const newRatio = Math.max(0, Math.min(1, startRatio + delta / trackSize));
+      setPosition(prev => ({ ...prev, y: SCROLL_PADDING - newRatio * maxScrollY }));
+    };
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+  };
+
   return (
     <div
       ref={containerRef}
@@ -886,21 +1026,22 @@ export default function CanvasEditor(props: CanvasEditorProps) {
         scaleX={scale}
         scaleY={scale}
         onWheel={handleWheel}
-        onMouseDown={onStageMouseDown}
+        onMouseDown={props.canEdit === false ? undefined : onStageMouseDown}
+        onTouchStart={props.canEdit === false ? undefined : onStageMouseDown}
       >
         {/* ── STATIC LAYER: background + tất cả vật thể tĩnh ── */}
         <Layer ref={layerRef} onDragEnd={handleDragEnd}>
           <Rect
             id="bg"
-            width={props.isWhiteboard ? 100000 : stageWidth}
-            height={props.isWhiteboard ? 100000 : stageHeight}
+            width={stageWidth}
+            height={stageHeight}
             fill={currentPage?.background_color || "#ffffff"}
             fillPatternImage={props.isWhiteboard ? (dotPattern || undefined) : undefined}
             fillPatternRepeat="repeat"
             shadowBlur={props.isWhiteboard ? 0 : 15}
             shadowColor="rgba(0,0,0,0.1)"
-            x={props.isWhiteboard ? -50000 : pageAnim.x}
-            y={props.isWhiteboard ? -50000 : pageAnim.y}
+            x={props.isWhiteboard ? 0 : pageAnim.x}
+            y={props.isWhiteboard ? 0 : pageAnim.y}
             opacity={pageAnim.opacity}
             scaleX={pageAnim.scaleX} scaleY={pageAnim.scaleY}
             offsetX={props.isWhiteboard ? 0 : pageAnim.offsetX}
@@ -908,14 +1049,14 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           />
 
           <Group
-            clipX={props.isWhiteboard ? -50000 : 0}
-            clipY={props.isWhiteboard ? -50000 : 0}
-            clipWidth={props.isWhiteboard ? 100000 : stageWidth}
-            clipHeight={props.isWhiteboard ? 100000 : stageHeight}
+            clipX={0}
+            clipY={0}
+            clipWidth={stageWidth}
+            clipHeight={stageHeight}
             x={pageAnim.x} y={pageAnim.y} opacity={pageAnim.opacity}
             scaleX={pageAnim.scaleX} scaleY={pageAnim.scaleY}
             offsetX={pageAnim.offsetX} offsetY={pageAnim.offsetY}
-            listening={!props.activeTool || props.activeTool === 'select'}
+            listening={props.canEdit === false ? false : (!props.activeTool || props.activeTool === 'select')}
           >
             {animatedElements.map((el) => {
               const isActive = selectedIds.includes(el.id) || editingId === el.id;
@@ -992,12 +1133,24 @@ export default function CanvasEditor(props: CanvasEditorProps) {
                   el={el}
                   activeTool={props.activeTool}
                   onDragStart={() => props.onActionStart?.()}
+                  onTransformStart={() => props.onActionStart?.()}
                   onDragMove={(e: any) => {
                     updateElement({ ...el, x: e.target.x(), y: e.target.y() });
                     handleDragMove(e);
                   }}
                   onDragEnd={(e: any) => {
                     updateElementImmediate({ ...el, x: e.target.x(), y: e.target.y() });
+                  }}
+                  onTransformEnd={(e: any) => {
+                    const node = e.target;
+                    updateElementImmediate({
+                      ...el,
+                      x: node.x(),
+                      y: node.y(),
+                      scaleX: node.scaleX(),
+                      scaleY: node.scaleY(),
+                      rotation: node.rotation()
+                    });
                   }}
                   onClick={(e: any) => props.handleMouseDown({ target: e.target })}
                 />
@@ -1023,7 +1176,112 @@ export default function CanvasEditor(props: CanvasEditorProps) {
             />
           )}
 
-          <Transformer ref={trRef} borderStroke="#6366f1" anchorStroke="#6366f1" anchorFill="#ffffff" anchorSize={8} boundBoxFunc={(oldBox, newBox) => newBox.width < 5 || newBox.height < 5 ? oldBox : newBox} />
+          <Transformer
+            ref={trRef}
+            borderStroke="#6366f1"
+            anchorStroke="#6366f1"
+            anchorFill="#ffffff"
+            anchorSize={8}
+            boundBoxFunc={(oldBox, newBox) => newBox.width < 5 || newBox.height < 5 ? oldBox : newBox}
+            onTransformEnd={() => {
+              // Chỉ xử lý multi-select (nodes.length > 1).
+              // Single element đã được xử lý bởi onTransformEnd của từng element component.
+              // KHÔNG cập nhật React state trong onTransform — Konva tự xử lý visual realtime.
+              if (!trRef.current) return;
+              const nodes = trRef.current.nodes();
+              if (nodes.length <= 1) return;
+
+              // Đọc giá trị TRƯỚC khi bị individual handlers reset scale.
+              // Vì Transformer.onTransformEnd fires AFTER mỗi node.onTransformEnd,
+              // các individual handlers đã gọi node.scaleX(1) rồi, nên ta đọc từ props.elements
+              // (React state chưa update vì đang cùng batch) để lấy giá trị gốc.
+              const commitedEls: any[] = [];
+
+              nodes.forEach((node: any) => {
+                const el = props.elements.find((e: any) => e.id === node.id());
+                if (!el) return;
+
+                // node.rotation() luôn đúng (rotation không bị reset bởi individual handlers)
+                const finalRotation = node.rotation();
+                // node.x(), node.y() cũng luôn đúng
+                const finalX = node.x();
+                const finalY = node.y();
+                // scaleX/scaleY: đọc trực tiếp từ node.
+                // Nếu individual handler đã reset về 1 và bake vào width, ta lấy từ node.
+                const scX = node.scaleX();
+                const scY = node.scaleY();
+
+                if (el.type === 'text') {
+                  node.scaleX(1); node.scaleY(1);
+                  const newFontSize = Math.max(8, Math.round((el.fontSize || 16) * Math.abs(scY)));
+                  const newWidth = Math.max(20, Math.round((node.width() || el.width || 100) * Math.abs(scX)));
+                  commitedEls.push({
+                    ...el,
+                    x: finalX, y: finalY,
+                    fontSize: newFontSize, width: newWidth,
+                    scaleX: Math.sign(scX) || 1, scaleY: Math.sign(scY) || 1,
+                    rotation: finalRotation,
+                  });
+                } else if (el.type === 'image') {
+                  node.scaleX(1); node.scaleY(1);
+                  if (el.cropRect) {
+                    const cr = el.cropRect;
+                    commitedEls.push({
+                      ...el,
+                      x: finalX - cr.x, y: finalY - cr.y,
+                      width: Math.max(5, el.width * Math.abs(scX)),
+                      height: Math.max(5, el.height * Math.abs(scY)),
+                      cropRect: { ...cr, width: Math.max(5, cr.width * Math.abs(scX)), height: Math.max(5, cr.height * Math.abs(scY)) },
+                      scaleX: Math.sign(scX) || 1, scaleY: Math.sign(scY) || 1,
+                      rotation: finalRotation,
+                    });
+                  } else {
+                    commitedEls.push({
+                      ...el,
+                      x: finalX, y: finalY,
+                      width: Math.max(5, (node.width() || el.width || 100) * Math.abs(scX)),
+                      height: Math.max(5, (node.height() || el.height || 100) * Math.abs(scY)),
+                      scaleX: Math.sign(scX) || 1, scaleY: Math.sign(scY) || 1,
+                      rotation: finalRotation,
+                    });
+                  }
+                } else if (el.type === 'circle') {
+                  node.scaleX(1); node.scaleY(1);
+                  commitedEls.push({
+                    ...el,
+                    x: finalX, y: finalY,
+                    radius: Math.max(5, (el.radius || 50) * Math.abs(scX)),
+                    scaleX: Math.sign(scX) || 1, scaleY: Math.sign(scY) || 1,
+                    rotation: finalRotation,
+                  });
+                } else if (el.type === 'line') {
+                  commitedEls.push({
+                    ...el,
+                    x: finalX, y: finalY,
+                    scaleX: node.scaleX(), scaleY: node.scaleY(),
+                    rotation: finalRotation,
+                  });
+                } else {
+                  // rect / shape
+                  node.scaleX(1); node.scaleY(1);
+                  commitedEls.push({
+                    ...el,
+                    x: finalX, y: finalY,
+                    width: Math.max(5, (node.width() || el.width || 100) * Math.abs(scX)),
+                    height: Math.max(5, (node.height() || el.height || 100) * Math.abs(scY)),
+                    scaleX: Math.sign(scX) || 1, scaleY: Math.sign(scY) || 1,
+                    rotation: finalRotation,
+                  });
+                }
+              });
+
+              if (commitedEls.length > 0) {
+                props.updateElementsBatchImmediate?.(commitedEls);
+              }
+            }}
+          />
+
+
           {selectedIds.length > 1 && selectedIds.filter(id => id !== editingId).map(id => <IndividualBorder key={`border-${id}`} nodeId={id} />)}
         </Layer>
 
@@ -1043,6 +1301,26 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           ))}
         </Layer>
       </Stage>
+
+      {/* --- Custom Scrollbars --- */}
+      {showScrollX && (
+        <div className={`absolute bottom-0 left-0 h-3 bg-slate-800/10 hover:bg-slate-800/20 z-50 ${showScrollY ? 'right-3' : 'right-0'}`} onPointerDown={e => e.stopPropagation()}>
+          <div
+            className="absolute top-0 bottom-0 bg-slate-800/40 rounded-full cursor-pointer hover:bg-slate-800/60 transition-colors"
+            style={{ width: thumbWidthX, left: thumbLeftX }}
+            onPointerDown={handleThumbXDown}
+          />
+        </div>
+      )}
+      {showScrollY && (
+        <div className={`absolute top-0 right-0 w-3 bg-slate-800/10 hover:bg-slate-800/20 z-50 ${showScrollX ? 'bottom-3' : 'bottom-0'}`} onPointerDown={e => e.stopPropagation()}>
+          <div
+            className="absolute left-0 right-0 bg-slate-800/40 rounded-full cursor-pointer hover:bg-slate-800/60 transition-colors"
+            style={{ height: thumbHeightY, top: thumbTopY }}
+            onPointerDown={handleThumbYDown}
+          />
+        </div>
+      )}
 
       {editingElement && (
         <div
@@ -1100,5 +1378,3 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     </div>
   );
 }
-
-

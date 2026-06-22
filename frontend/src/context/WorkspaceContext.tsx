@@ -73,16 +73,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [applyWorkspaces]);
 
-  // ─── Lắng nghe event workspaces:updated từ AuthContext ──────────────────────
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const list = (e as CustomEvent).detail as Workspace[];
-      if (Array.isArray(list)) applyWorkspaces(list);
-    };
-    window.addEventListener('workspaces:updated', handler);
-    return () => window.removeEventListener('workspaces:updated', handler);
-  }, [applyWorkspaces]);
-
   const refreshWorkspaces = useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
@@ -95,6 +85,30 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
     } catch { }
   }, [applyWorkspaces]);
+
+  // ─── Lắng nghe event workspaces:updated từ AuthContext ──────────────────────
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const list = (e as CustomEvent).detail as Workspace[];
+      if (Array.isArray(list)) applyWorkspaces(list);
+    };
+    const banHandler = (e: Event) => {
+      // Trì hoãn một chút để đảm bảo toast hiện ra
+      setTimeout(() => {
+        refreshWorkspaces();
+      }, 100);
+    };
+    window.addEventListener('workspaces:updated', handler);
+    window.addEventListener('team:banned', banHandler);
+    window.addEventListener('team:unbanned', banHandler);
+    return () => {
+      window.removeEventListener('workspaces:updated', handler);
+      window.removeEventListener('team:banned', banHandler);
+      window.removeEventListener('team:unbanned', banHandler);
+    };
+  }, [applyWorkspaces, refreshWorkspaces]);
+
+
 
   const switchWorkspace = useCallback((workspaceId: string | null) => {
     if (workspaceId === null) {

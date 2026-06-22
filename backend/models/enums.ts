@@ -21,7 +21,8 @@ export enum AssetType {
     FONT = 'font',
     TEMPLATE = 'template',
     BACKGROUND = 'background',
-    STICKER = 'sticker'
+    STICKER = 'sticker',
+    PPTX = 'pptx'
 }
 
 export enum DesignType {

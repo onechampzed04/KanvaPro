@@ -1,14 +1,15 @@
 // src/components/editor/VersionHistoryModal.tsx
-import { History, RotateCcw, Clock, CheckCircle2 } from 'lucide-react';
+import { History, RotateCcw, Clock, CheckCircle2, Eye } from 'lucide-react';
 
 interface VersionHistoryModalProps {
+  designId: string;
   versions: any[];
   isRestoring: boolean;
   onClose: () => void;
   onRestore: (versionId: string) => void;
 }
 
-export default function VersionHistoryModal({ versions, isRestoring, onClose, onRestore }: VersionHistoryModalProps) {
+export default function VersionHistoryModal({ designId, versions, isRestoring, onClose, onRestore }: VersionHistoryModalProps) {
   return (
     <div className="fixed inset-0 bg-slate-900/40 z-[9999] flex items-center justify-center backdrop-blur-md transition-all">
       <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] w-[480px] overflow-hidden flex flex-col border border-white/50 relative">
@@ -79,14 +80,23 @@ export default function VersionHistoryModal({ versions, isRestoring, onClose, on
                         </div>
 
                         {!isCurrent && (
-                          <button
-                            onClick={() => onRestore(v.id)}
-                            disabled={isRestoring}
-                            className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 rounded-xl opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow"
-                          >
-                            <RotateCcw size={14} />
-                            Khôi phục
-                          </button>
+                          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all focus-within:opacity-100">
+                            <button
+                              onClick={() => window.open(`/design/${designId}?versionId=${v.id}`, '_blank')}
+                              className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 rounded-xl active:scale-95 shadow-sm hover:shadow"
+                            >
+                              <Eye size={14} />
+                              Xem trước
+                            </button>
+                            <button
+                              onClick={() => onRestore(v.id)}
+                              disabled={isRestoring}
+                              className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 rounded-xl active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow"
+                            >
+                              <RotateCcw size={14} />
+                              Khôi phục
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>

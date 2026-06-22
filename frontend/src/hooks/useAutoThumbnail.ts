@@ -35,7 +35,7 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
 }
 
 // Render 1 trang elements lên offscreen canvas, trả về Blob
-async function renderPageToBlob(
+export async function renderPageToBlob(
   elements: any[],
   bgColor: string,
   pageWidth = CANVAS_W,
@@ -166,6 +166,7 @@ export function useAutoThumbnail({
   const generateAllPagesThumbnails = useCallback(async (
     pages: Page[],
     currentPageId: string | null,
+    forceUpdatePageIds: string[] = []
   ) => {
     if (isRunningRef.current) return; // Tránh chạy song song
     isRunningRef.current = true;
@@ -173,16 +174,18 @@ export function useAutoThumbnail({
     const canvasPages = pages.filter(p => (p.type || 'canvas') === 'canvas');
 
     for (const page of canvasPages) {
-      // Bỏ qua trang hiện tại — Konva đã upload rồi
-      if (page.id === currentPageId) continue;
+      const isForceUpdate = forceUpdatePageIds.includes(page.id);
 
-      // Bỏ qua nếu thumbnail còn mới (< 5 phút)
-      if (page.thumbnail && page._lastThumbAt && Date.now() - page._lastThumbAt < THUMB_STALE_MS) {
+      // Bỏ qua trang hiện tại — Konva đã upload rồi (trừ khi force update)
+      if (page.id === currentPageId && !isForceUpdate) continue;
+
+      // Bỏ qua nếu thumbnail còn mới (< 5 phút) (trừ khi force update)
+      if (!isForceUpdate && page.thumbnail && page._lastThumbAt && Date.now() - page._lastThumbAt < THUMB_STALE_MS) {
         continue;
       }
 
       // [FIX] Cờ giới hạn số lần thử, ngăn chặn vòng lặp vô tận (đặc biệt khi lỗi 404 không update được thumbnail)
-      if (attemptMap.current[page.id] && Date.now() - attemptMap.current[page.id] < THUMB_STALE_MS) {
+      if (!isForceUpdate && attemptMap.current[page.id] && Date.now() - attemptMap.current[page.id] < THUMB_STALE_MS) {
         continue;
       }
       attemptMap.current[page.id] = Date.now();
@@ -190,7 +193,7 @@ export function useAutoThumbnail({
       try {
         // Lấy elements — ưu tiên từ LRU cache, fallback fetch API
         const elements = await lazyPageLoader.loadPageElements(page.id);
-        if (!elements || elements.length === 0) continue;
+        if (!elements) continue; // Nếu null/lỗi thì bỏ qua, nhưng nếu rỗng ([]) thì VẪN RENDER để có thumbnail trắng
 
         const blob = await renderPageToBlob(
           elements,

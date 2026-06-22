@@ -190,10 +190,10 @@ export default function AdminTeams() {
             <thead className="bg-black/20 text-gray-400">
               <tr>
                 <th className="px-6 py-4 font-medium">Team</th>
-                <th className="px-6 py-4 font-medium">Owner</th>
+                <th className="px-6 py-4 font-medium">Chủ sở hữu</th>
                 <th className="px-6 py-4 font-medium">Thành viên</th>
                 <th className="px-6 py-4 font-medium">Lưu trữ</th>
-                <th className="px-6 py-4 font-medium">Gói</th>
+                <th className="px-6 py-4 font-medium">Gói cước</th>
                 <th className="px-6 py-4 font-medium">Trạng thái</th>
                 <th className="px-6 py-4 font-medium text-right">Hành động</th>
               </tr>
@@ -251,7 +251,7 @@ export default function AdminTeams() {
                       {t.plan_name ? (
                         <span className="px-2 py-1 rounded-md text-xs font-semibold bg-indigo-500/20 text-indigo-300">{t.plan_name}</span>
                       ) : (
-                        <span className="px-2 py-1 rounded-md text-xs font-semibold bg-gray-500/20 text-gray-400">Free</span>
+                        <span className="px-2 py-1 rounded-md text-xs font-semibold bg-gray-500/20 text-gray-400">Miễn phí</span>
                       )}
                     </td>
                     <td className="px-6 py-4">
@@ -335,11 +335,11 @@ export default function AdminTeams() {
               {/* Info grid */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {[
-                  { label: 'Owner', value: `${detailTeam.owner_name} (${detailTeam.owner_email})` },
+                  { label: 'Chủ sở hữu', value: `${detailTeam.owner_name} (${detailTeam.owner_email})` },
                   { label: 'Thành viên', value: `${detailTeam.member_count} / ${detailTeam.max_members}` },
-                  { label: 'Designs', value: String(detailTeam.design_count) },
+                  { label: 'Thiết kế', value: String(detailTeam.design_count) },
                   { label: 'Lưu trữ', value: `${formatBytes(detailTeam.used_storage_bytes)} / ${detailTeam.max_storage_gb} GB` },
-                  { label: 'Gói cước', value: detailTeam.plan_name || 'Free' },
+                  { label: 'Gói cước', value: detailTeam.plan_name || 'Miễn phí' },
                   { label: 'Ngày tạo', value: formatDate(detailTeam.created_at) },
                 ].map(({ label, value }) => (
                   <div key={label} className="bg-white/5 rounded-xl p-4">
@@ -412,7 +412,7 @@ export default function AdminTeams() {
               {banTarget.is_deleted ? 'Mở khóa (Khôi phục) Team' : 'Khóa Team'}
             </h3>
             <p className="text-gray-400 text-sm mb-5">
-              Bạn đang thao tác với team <strong className="text-white">"{banTarget.name}"</strong> (Owner: {banTarget.owner_email}).
+              Bạn đang thao tác với team <strong className="text-white">"{banTarget.name}"</strong> (Chủ sở hữu: {banTarget.owner_email}).
               {!banTarget.is_deleted && ' Khi khóa, team sẽ không thể sử dụng các tính năng cộng tác.'}
             </p>
 

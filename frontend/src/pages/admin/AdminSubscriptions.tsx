@@ -5,7 +5,7 @@ import {
   fetchAdminPlans, createPlan, updatePlan, deletePlan,
   fetchAdminPayments, adminRevokeSubscription, adminForceSuccessPayment,
 } from '../../api/adminApi';
-import { Search, Crown, CheckCircle, XCircle, Clock, Plus, Edit, Trash2, DollarSign, Activity, Ban } from 'lucide-react';
+import { Search, Crown, CheckCircle, XCircle, Clock, Plus, Edit, Trash2, DollarSign, Activity, Ban, Package } from 'lucide-react';
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n);
@@ -31,31 +31,48 @@ export default function AdminSubscriptions() {
     <div>
       <div className="admin-page-header">
         <div>
-          <h1 className="admin-page-title">Subscription Management</h1>
-          <p className="admin-page-subtitle">Manage users' billing, plans, and revenue</p>
+          <h1 className="admin-page-title">Quản lý Gói cước & Doanh thu</h1>
+          <p className="admin-page-subtitle">Quản lý hóa đơn, gói cước và doanh thu người dùng</p>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 20, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
-        {(['subscriptions', 'plans', 'payments'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              padding: '10px 16px',
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: 14,
-              color: activeTab === tab ? 'var(--primary)' : 'var(--text-muted)',
-              borderBottom: activeTab === tab ? '2px solid var(--primary)' : '2px solid transparent',
-              textTransform: 'capitalize'
-            }}
-          >
-            {tab}
-          </button>
-        ))}
+      {/* TABS DESIGN AS 3 NICE CARDS */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+        {[
+          { id: 'subscriptions', title: 'Thuê bao', desc: 'Quản lý người dùng đang dùng gói', icon: Crown, color: '#8b5cf6', bg: '#f3e8ff' },
+          { id: 'plans', title: 'Gói cước', desc: 'Cấu hình và giá các gói', icon: Package, color: '#f59e0b', bg: '#fef3c7' },
+          { id: 'payments', title: 'Doanh thu & Hóa đơn', desc: 'Lịch sử giao dịch thanh toán', icon: DollarSign, color: '#10b981', bg: '#d1fae5' },
+        ].map(tab => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <div
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              style={{
+                background: isActive ? 'var(--bg-panel)' : 'var(--bg-panel)',
+                border: isActive ? `2px solid ${tab.color}` : '1px solid var(--border)',
+                borderRadius: '12px',
+                padding: '20px',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                boxShadow: isActive ? `0 4px 12px ${tab.color}33` : '0 1px 3px rgba(0,0,0,0.05)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '16px',
+                transform: isActive ? 'translateY(-2px)' : 'none'
+              }}
+            >
+              <div style={{ width: 48, height: 48, borderRadius: '12px', background: tab.bg, color: tab.color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon size={24} />
+              </div>
+              <div>
+                <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', fontWeight: 600, color: isActive ? tab.color : 'var(--text-primary)' }}>{tab.title}</h3>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>{tab.desc}</p>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="admin-table-card">
@@ -86,7 +103,7 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
       const data = await fetchAdminSubscriptions({ page, limit: LIMIT, search, status });
       setSubs(data.subscriptions || []);
       setTotal(data.total || 0);
-    } catch { showToast('Failed to load subscriptions', 'error'); }
+    } catch { showToast('Không thể tải danh sách thuê bao', 'error'); }
     finally { setLoading(false); }
   }, [page, search, status]);
 
@@ -103,9 +120,9 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
   };
 
   const getStatusBadge = (s: string) => {
-    if (s === 'active') return <span className="badge badge-active"><CheckCircle size={10} /> Active</span>;
-    if (s === 'canceled') return <span className="badge badge-banned"><XCircle size={10} /> Canceled</span>;
-    if (s === 'expired') return <span className="badge badge-banned"><Clock size={10} /> Expired</span>;
+    if (s === 'active') return <span className="badge badge-active"><CheckCircle size={10} /> Hoạt động</span>;
+    if (s === 'canceled') return <span className="badge badge-banned"><XCircle size={10} /> Đã hủy</span>;
+    if (s === 'expired') return <span className="badge badge-banned"><Clock size={10} /> Hết hạn</span>;
     return <span className="badge">{s}</span>;
   };
 
@@ -114,16 +131,16 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
       <div className="admin-table-toolbar">
         <div className="admin-search">
           <Search size={14} color="var(--text-muted)" />
-          <input placeholder="Search user..." value={search} onChange={e => setSearch(e.target.value)} />
+          <input placeholder="Tìm người dùng..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <AdminSelect
           value={status}
           onChange={setStatus}
           options={[
-            { value: '', label: 'All Statuses' },
-            { value: 'active', label: 'Active' },
-            { value: 'canceled', label: 'Canceled' },
-            { value: 'expired', label: 'Expired' },
+            { value: '', label: 'Tất cả trạng thái' },
+            { value: 'active', label: 'Hoạt động' },
+            { value: 'canceled', label: 'Đã hủy' },
+            { value: 'expired', label: 'Hết hạn' },
           ]}
         />
       </div>
@@ -132,18 +149,18 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
         <table className="admin-table">
           <thead>
             <tr>
-              <th>User</th>
-              <th>Plan</th>
-              <th>Status</th>
-              <th>Period Start</th>
-              <th>Period End</th>
-              <th>Stripe ID</th>
-              <th>Actions</th>
+              <th>Người dùng</th>
+              <th>Gói</th>
+              <th>Trạng thái</th>
+              <th>Bắt đầu</th>
+              <th>Kết thúc</th>
+              <th>Mã Stripe</th>
+              <th>Hành động</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr> :
-              subs.length === 0 ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20 }}>No subscriptions found</td></tr> :
+            {loading ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20 }}>Đang tải...</td></tr> :
+              subs.length === 0 ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20 }}>Không có đăng ký nào</td></tr> :
                 subs.map(s => (
                   <tr key={s.id}>
                     <td>
@@ -154,11 +171,10 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
                     <td>{getStatusBadge(s.status)}</td>
                     <td>{formatDate(s.current_period_start)}</td>
                     <td>{formatDate(s.current_period_end)}</td>
-                    <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.stripe_subscription_id || 'Manual'}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.stripe_subscription_id || 'Thủ công'}</td>
                     <td>
                       {s.status === 'active' && (
                         <div style={{ display: 'flex', gap: 6 }}>
-                          {/* [MỚI] Nút Ngắt ngay — thay thế nút Terminate cũ */}
                           <button
                             className="admin-btn admin-btn-ghost admin-btn-sm"
                             style={{ color: 'var(--accent-red)', fontSize: 11 }}
@@ -177,10 +193,10 @@ function SubscriptionsTab({ showToast }: { showToast: Function }) {
         </table>
       </div>
       <div className="admin-pagination">
-        <span>Showing {subs.length} of {total}</span>
+        <span>Hiển thị {subs.length} / {total}</span>
         <div className="admin-pagination-btns">
-          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Prev</button>
-          <button disabled={page >= Math.ceil(total / LIMIT)} onClick={() => setPage(p => p + 1)}>Next</button>
+          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Trước</button>
+          <button disabled={page >= Math.ceil(total / LIMIT)} onClick={() => setPage(p => p + 1)}>Sau</button>
         </div>
       </div>
     </>
@@ -198,7 +214,7 @@ function PlansTab({ showToast }: { showToast: Function }) {
     try {
       const data = await fetchAdminPlans();
       setPlans(data.plans || []);
-    } catch { showToast('Failed to load plans', 'error'); }
+    } catch { showToast('Không thể tải danh sách gói cước', 'error'); }
     finally { setLoading(false); }
   }, []);
 
@@ -207,13 +223,11 @@ function PlansTab({ showToast }: { showToast: Function }) {
   const handleSavePlan = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validation
     if (!editingPlan.name?.trim()) return showToast('Vui lòng nhập tên gói', 'error');
     if (!editingPlan.slug?.trim()) return showToast('Vui lòng nhập slug', 'error');
     if (editingPlan.monthly_price === undefined || editingPlan.monthly_price < 0) return showToast('Giá tháng không hợp lệ', 'error');
     if (editingPlan.yearly_price === undefined || editingPlan.yearly_price < 0) return showToast('Giá năm không hợp lệ', 'error');
 
-    // Force default values for unused fields
     const payload = {
       ...editingPlan,
       max_storage_gb: 0,
@@ -227,38 +241,38 @@ function PlansTab({ showToast }: { showToast: Function }) {
         showToast('Đã lưu thành phiên bản mới');
       } else {
         await createPlan(payload);
-        showToast('Plan created');
+        showToast('Đã tạo gói mới');
       }
       setEditingPlan(null);
       load();
-    } catch { showToast('Failed to save plan', 'error'); }
+    } catch { showToast('Lỗi khi lưu gói cước', 'error'); }
   };
 
   const handleToggleActive = async (p: any) => {
     try {
       await updatePlan(p.id, { is_active: !p.is_active });
-      showToast(p.is_active ? 'Plan deactivated' : 'Plan activated');
+      showToast(p.is_active ? 'Đã hủy kích hoạt gói' : 'Đã kích hoạt gói');
       load();
-    } catch { showToast('Failed to change status', 'error'); }
+    } catch { showToast('Lỗi thay đổi trạng thái', 'error'); }
   };
 
   if (editingPlan) {
     return (
       <div style={{ padding: 20 }}>
-        <h3>New Plan</h3>
+        <h3>Gói Cước Mới</h3>
         <form onSubmit={handleSavePlan} style={{ display: 'flex', flexDirection: 'column', gap: 15, maxWidth: 400, marginTop: 20 }}>
-          <input className="admin-input" placeholder="Name (e.g. Pro)" required value={editingPlan.name || ''} onChange={e => setEditingPlan({ ...editingPlan, name: e.target.value })} />
-          <input className="admin-input" placeholder="Slug (e.g. pro)" required value={editingPlan.slug || ''} onChange={e => setEditingPlan({ ...editingPlan, slug: e.target.value })} />
-          <input className="admin-input" type="number" placeholder="Monthly Price" required value={editingPlan.monthly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, monthly_price: Number(e.target.value) })} />
-          <input className="admin-input" type="number" placeholder="Yearly Price" required value={editingPlan.yearly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, yearly_price: Number(e.target.value) })} />
+          <input className="admin-input" placeholder="Tên gói (VD: Pro)" required value={editingPlan.name || ''} onChange={e => setEditingPlan({ ...editingPlan, name: e.target.value })} />
+          <input className="admin-input" placeholder="Slug (VD: pro)" required value={editingPlan.slug || ''} onChange={e => setEditingPlan({ ...editingPlan, slug: e.target.value })} />
+          <input className="admin-input" type="number" placeholder="Giá Tháng" required value={editingPlan.monthly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, monthly_price: Number(e.target.value) })} />
+          <input className="admin-input" type="number" placeholder="Giá Năm" required value={editingPlan.yearly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, yearly_price: Number(e.target.value) })} />
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={editingPlan.is_active !== false} onChange={e => setEditingPlan({ ...editingPlan, is_active: e.target.checked })} /> Active
+            <input type="checkbox" checked={editingPlan.is_active !== false} onChange={e => setEditingPlan({ ...editingPlan, is_active: e.target.checked })} /> Đang hoạt động
           </label>
           <div style={{ display: 'flex', gap: 10 }}>
             <button type="submit" className="admin-btn admin-btn-primary">
-              {editingPlan.id ? 'Lưu thành phiên bản mới' : 'Save'}
+              {editingPlan.id ? 'Lưu thành phiên bản mới' : 'Lưu lại'}
             </button>
-            <button type="button" className="admin-btn admin-btn-ghost" onClick={() => setEditingPlan(null)}>Cancel</button>
+            <button type="button" className="admin-btn admin-btn-ghost" onClick={() => setEditingPlan(null)}>Hủy</button>
           </div>
         </form>
       </div>
@@ -268,9 +282,9 @@ function PlansTab({ showToast }: { showToast: Function }) {
   return (
     <>
       <div className="admin-table-toolbar">
-        <span className="admin-table-title">Pricing Plans</span>
+        <span className="admin-table-title">Danh sách Gói cước (Mới nhất)</span>
         <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => setEditingPlan({})}>
-          <Plus size={14} /> Add Plan
+          <Plus size={14} /> Thêm Gói
         </button>
       </div>
 
@@ -278,22 +292,22 @@ function PlansTab({ showToast }: { showToast: Function }) {
         <table className="admin-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Monthly</th>
-              <th>Yearly</th>
-              <th>Status</th>
-              <th>Actions</th>
+              <th>Tên (Slug)</th>
+              <th>Giá Tháng</th>
+              <th>Giá Năm</th>
+              <th>Trạng thái</th>
+              <th>Hành động</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr> :
-              plans.length === 0 ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 20 }}>No plans found</td></tr> :
+            {loading ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 20 }}>Đang tải...</td></tr> :
+              plans.length === 0 ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 20 }}>Không có gói cước nào</td></tr> :
                 plans.map(p => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: 600 }}>{p.name} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({p.slug})</span></td>
                     <td>{formatCurrency(p.monthly_price)}</td>
                     <td>{formatCurrency(p.yearly_price)}</td>
-                    <td>{p.is_active ? <span className="badge badge-active">Active</span> : <span className="badge badge-banned">Inactive</span>}</td>
+                    <td>{p.is_active ? <span className="badge badge-active">Hoạt động</span> : <span className="badge badge-banned">Ngừng</span>}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 5 }}>
                         <button
@@ -301,7 +315,7 @@ function PlansTab({ showToast }: { showToast: Function }) {
                           onClick={() => handleToggleActive(p)}
                           style={{ color: p.is_active ? 'var(--accent-red)' : 'var(--accent-green)' }}
                         >
-                          {p.is_active ? 'Deactivate' : 'Activate'}
+                          {p.is_active ? 'Hủy kích hoạt' : 'Kích hoạt'}
                         </button>
                       </div>
                     </td>
@@ -322,6 +336,7 @@ function PaymentsTab({ showToast }: { showToast: Function }) {
   const [totalRev, setTotalRev] = useState(0);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   const LIMIT = 20;
@@ -329,21 +344,21 @@ function PaymentsTab({ showToast }: { showToast: Function }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchAdminPayments({ page, limit: LIMIT, status });
+      const data = await fetchAdminPayments({ page, limit: LIMIT, status, search });
       setPayments(data.payments || []);
       setTotal(data.total || 0);
       setTotalRev(data.totalRevenue || 0);
-    } catch { showToast('Failed to load payments', 'error'); }
+    } catch { showToast('Không thể tải danh sách hóa đơn', 'error'); }
     finally { setLoading(false); }
-  }, [page, status]);
+  }, [page, status, search]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [status]);
+  useEffect(() => { setPage(1); }, [status, search]);
 
   const getStatusBadge = (s: string) => {
-    if (s === 'succeeded') return <span className="badge badge-active"><CheckCircle size={10} /> Succeeded</span>;
-    if (s === 'failed') return <span className="badge badge-banned"><XCircle size={10} /> Failed</span>;
-    if (s === 'pending') return <span className="badge badge-pro"><Clock size={10} /> Pending</span>;
+    if (s === 'succeeded') return <span className="badge badge-active"><CheckCircle size={10} /> Thành công</span>;
+    if (s === 'failed') return <span className="badge badge-banned"><XCircle size={10} /> Thất bại</span>;
+    if (s === 'pending') return <span className="badge badge-pro"><Clock size={10} /> Đang chờ</span>;
     return <span className="badge">{s}</span>;
   };
 
@@ -351,17 +366,21 @@ function PaymentsTab({ showToast }: { showToast: Function }) {
     <>
       <div className="admin-table-toolbar" style={{ justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span className="admin-table-title">Revenue & Invoices</span>
-          <span className="badge badge-pro" style={{ fontSize: 14 }}><DollarSign size={14} /> Total: {formatCurrency(totalRev)}</span>
+          <span className="admin-table-title">Doanh thu & Hóa đơn</span>
+          <span className="badge badge-pro" style={{ fontSize: 14 }}><DollarSign size={14} /> Tổng: {formatCurrency(totalRev)}</span>
+        </div>
+        <div className="admin-search">
+          <Search size={14} color="var(--text-muted)" />
+          <input placeholder="Tìm kiếm giao dịch..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <AdminSelect
           value={status}
           onChange={setStatus}
           options={[
-            { value: '', label: 'All Statuses' },
-            { value: 'succeeded', label: 'Succeeded' },
-            { value: 'failed', label: 'Failed' },
-            { value: 'pending', label: 'Pending' },
+            { value: '', label: 'Tất cả trạng thái' },
+            { value: 'succeeded', label: 'Thành công' },
+            { value: 'failed', label: 'Thất bại' },
+            { value: 'pending', label: 'Đang chờ xử lý' },
           ]}
         />
       </div>
@@ -370,19 +389,19 @@ function PaymentsTab({ showToast }: { showToast: Function }) {
         <table className="admin-table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>User</th>
-              <th>Plan</th>
-              <th>Amount</th>
-              <th>Status</th>
-              <th>Gateway</th>
-              <th>Transaction ID</th>
-              <th>Actions</th>
+              <th>Ngày</th>
+              <th>Người dùng</th>
+              <th>Gói</th>
+              <th>Số tiền</th>
+              <th>Trạng thái</th>
+              <th>Cổng TT</th>
+              <th>Mã giao dịch</th>
+              <th>Hành động</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr> :
-              payments.length === 0 ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20 }}>No payments found</td></tr> :
+            {loading ? <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20 }}>Đang tải...</td></tr> :
+              payments.length === 0 ? <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20 }}>Không có giao dịch nào</td></tr> :
                 payments.map(p => (
                   <tr key={p.id}>
                     <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{formatDate(p.created_at)}</td>
@@ -395,7 +414,6 @@ function PaymentsTab({ showToast }: { showToast: Function }) {
                     <td>{getStatusBadge(p.status)}</td>
                     <td style={{ textTransform: 'capitalize' }}>{p.gateway}</td>
                     <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{p.transaction_id || p.id.split('-')[0]}</td>
-                    {/* [MỚI] Cột Actions: Nút Duyệt thủ công cho đơn Pending */}
                     <td>
                       {p.status === 'pending' && (
                         <button
@@ -423,10 +441,10 @@ function PaymentsTab({ showToast }: { showToast: Function }) {
         </table>
       </div>
       <div className="admin-pagination">
-        <span>Showing {payments.length} of {total}</span>
+        <span>Hiển thị {payments.length} / {total}</span>
         <div className="admin-pagination-btns">
-          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Prev</button>
-          <button disabled={page >= Math.ceil(total / LIMIT)} onClick={() => setPage(p => p + 1)}>Next</button>
+          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Trước</button>
+          <button disabled={page >= Math.ceil(total / LIMIT)} onClick={() => setPage(p => p + 1)}>Sau</button>
         </div>
       </div>
     </>

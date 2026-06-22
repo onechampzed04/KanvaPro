@@ -13,7 +13,7 @@ interface EditorSidebarProps {
 export default function EditorSidebar({
   activeTab, setActiveTab, currentPageType, showPositionBox, onTogglePositionBox
 }: EditorSidebarProps) {
-  const isCanvas = currentPageType === 'canvas';
+  const isCanvas = currentPageType !== 'doc' && currentPageType !== 'sheet';
 
   const tabs = [
     { id: 'tools', icon: PenTool, label: 'Tools', show: isCanvas },
@@ -48,7 +48,7 @@ export default function EditorSidebar({
           <button
             onClick={onTogglePositionBox}
             className={`w-14 h-14 flex flex-col items-center justify-center gap-1 rounded-xl transition-all duration-200 group ${showPositionBox
-                ? 'bg-indigo-100 text-indigo-600 shadow-sm border border-indigo-200'
+              ? 'bg-indigo-100 text-indigo-600 shadow-sm border border-indigo-200'
               : 'hover:bg-white/80 hover:text-indigo-500 hover:shadow-sm hover:scale-105'
               }`}
             title="Layer Panel"

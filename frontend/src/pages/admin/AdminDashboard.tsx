@@ -57,50 +57,50 @@ export default function AdminDashboard() {
 
   const cards = [
     {
-      icon: Users, label: 'Total Users', value: m.users?.total?.toLocaleString() ?? '—',
-      sub: `+${m.users?.newThisMonth ?? 0} this month`,
+      icon: Users, label: 'Tổng người dùng', value: m.users?.total?.toLocaleString() ?? '—',
+      sub: `+${m.users?.newThisMonth ?? 0} tháng này`,
       iconBg: 'rgba(124,58,237,0.15)', iconColor: '#8b5cf6',
       accent: 'linear-gradient(90deg,#7c3aed,#8b5cf6)',
     },
     {
-      icon: UserCheck, label: 'Active Users', value: m.users?.active?.toLocaleString() ?? '—',
-      sub: `${m.users?.proUsers ?? 0} Pro subscribers`,
+      icon: UserCheck, label: 'Đang hoạt động', value: m.users?.active?.toLocaleString() ?? '—',
+      sub: `${m.users?.proUsers ?? 0} tài khoản Pro`,
       iconBg: 'rgba(6,182,212,0.15)', iconColor: '#06b6d4',
       accent: 'linear-gradient(90deg,#0891b2,#06b6d4)',
     },
     {
-      icon: DollarSign, label: 'Total Revenue', value: formatVND(m.revenue?.total ?? 0),
-      sub: `${m.revenue?.totalPayments ?? 0} payments`,
+      icon: DollarSign, label: 'Tổng doanh thu', value: formatVND(m.revenue?.total ?? 0),
+      sub: `${m.revenue?.totalPayments ?? 0} giao dịch`,
       iconBg: 'rgba(16,185,129,0.15)', iconColor: '#10b981',
       accent: 'linear-gradient(90deg,#059669,#10b981)',
     },
     {
-      icon: TrendingUp, label: 'Conversion Rate', value: `${conversionRate}%`,
+      icon: TrendingUp, label: 'Tỉ lệ chuyển đổi', value: `${conversionRate}%`,
       sub: 'Free → Pro',
       iconBg: 'rgba(245,158,11,0.15)', iconColor: '#f59e0b',
       accent: 'linear-gradient(90deg,#d97706,#f59e0b)',
     },
     {
-      icon: HardDrive, label: 'Storage Used', value: formatBytes(m.storage?.totalBytes ?? 0),
-      sub: 'Across all users',
+      icon: HardDrive, label: 'Dung lượng đã dùng', value: formatBytes(m.storage?.totalBytes ?? 0),
+      sub: 'Toàn hệ thống',
       iconBg: 'rgba(239,68,68,0.15)', iconColor: '#ef4444',
       accent: 'linear-gradient(90deg,#dc2626,#ef4444)',
     },
     {
-      icon: FileStack, label: 'Designs', value: m.content?.designs?.toLocaleString() ?? '—',
-      sub: 'Active designs',
+      icon: FileStack, label: 'Bản thiết kế', value: m.content?.designs?.toLocaleString() ?? '—',
+      sub: 'Đang lưu trữ',
       iconBg: 'rgba(124,58,237,0.15)', iconColor: '#a78bfa',
       accent: 'linear-gradient(90deg,#6d28d9,#a78bfa)',
     },
     {
-      icon: Images, label: 'Assets', value: m.content?.assets?.toLocaleString() ?? '—',
-      sub: 'System stock',
+      icon: Images, label: 'Tài nguyên (Assets)', value: m.content?.assets?.toLocaleString() ?? '—',
+      sub: 'Thư viện hệ thống',
       iconBg: 'rgba(6,182,212,0.12)', iconColor: '#22d3ee',
       accent: 'linear-gradient(90deg,#0891b2,#22d3ee)',
     },
     {
-      icon: LayoutTemplate, label: 'Templates', value: m.content?.templates?.toLocaleString() ?? '—',
-      sub: 'Public templates',
+      icon: LayoutTemplate, label: 'Mẫu thiết kế (Templates)', value: m.content?.templates?.toLocaleString() ?? '—',
+      sub: 'Công khai',
       iconBg: 'rgba(16,185,129,0.12)', iconColor: '#34d399',
       accent: 'linear-gradient(90deg,#059669,#34d399)',
     },
@@ -110,8 +110,8 @@ export default function AdminDashboard() {
     <div>
       <div className="admin-page-header">
         <div>
-          <h1 className="admin-page-title">Dashboard Overview</h1>
-          <p className="admin-page-subtitle">Real-time KanvaPro platform metrics</p>
+          <h1 className="admin-page-title">Tổng quan Hệ thống</h1>
+          <p className="admin-page-subtitle">Số liệu thực tế nền tảng KanvaPro</p>
         </div>
       </div>
 
@@ -133,7 +133,7 @@ export default function AdminDashboard() {
       <div className="admin-charts-row">
         {/* Revenue chart */}
         <div className="admin-chart-card">
-          <p className="admin-chart-title">📈 Monthly Revenue (Last 6 Months)</p>
+          <p className="admin-chart-title">💰 Doanh thu hàng tháng (6 tháng qua)</p>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={m.charts?.monthlyRevenue ?? []} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
               <defs>
@@ -146,21 +146,21 @@ export default function AdminDashboard() {
               <XAxis dataKey="month" tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#8b5cf6" strokeWidth={2} fill="url(#revGrad)" />
+              <Area type="monotone" dataKey="revenue" name="Doanh thu" stroke="#8b5cf6" strokeWidth={2} fill="url(#revGrad)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
 
         {/* Daily new users */}
         <div className="admin-chart-card">
-          <p className="admin-chart-title">👥 New Users (Last 7 Days)</p>
+          <p className="admin-chart-title">🚀 Người dùng mới (7 ngày qua)</p>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={m.charts?.dailyUsers ?? []} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
               <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis dataKey="day" tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#475569', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="count" name="Users" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="count" name="Người dùng" fill="#06b6d4" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

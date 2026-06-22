@@ -49,7 +49,7 @@ export const checkStorageQuota = async (req: Request, res: Response, next: NextF
     const usedBytes: number = Number(userRes.storage_used_bytes) || 0;
 
     const subRes = await db.getOne(
-      `SELECT sp.max_storage_gb
+      `SELECT sp.max_storage_gb, sp.max_team_members
        FROM user_subscriptions us
        JOIN subscription_plans sp ON sp.id = us.plan_id
        WHERE us.user_id = $1 AND us.status = 'active'
@@ -59,7 +59,10 @@ export const checkStorageQuota = async (req: Request, res: Response, next: NextF
       [userId]
     );
 
-    const maxStorageGb: number = subRes ? Number(subRes.max_storage_gb) : FREE_PLAN_STORAGE_GB;
+    let maxStorageGb: number = FREE_PLAN_STORAGE_GB;
+    if (subRes && Number(subRes.max_team_members) === 1) {
+      maxStorageGb = Number(subRes.max_storage_gb);
+    }
     const maxBytes = maxStorageGb * 1024 * 1024 * 1024;
 
     const contentLength = parseInt(req.headers['content-length'] || '0', 10);

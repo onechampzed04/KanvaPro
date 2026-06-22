@@ -56,21 +56,21 @@ export default function AdminTemplates() {
     <div>
       <div className="admin-page-header">
         <div>
-          <h1 className="admin-page-title">Template Management</h1>
-          <p className="admin-page-subtitle">Review designs and publish them as public templates</p>
+          <h1 className="admin-page-title">Quản lý Mẫu thiết kế</h1>
+          <p className="admin-page-subtitle">Duyệt và xuất bản các thiết kế thành mẫu công khai</p>
         </div>
         <button className="admin-btn admin-btn-ghost" onClick={load}>
-          <RefreshCw size={14} /> Refresh
+          <RefreshCw size={14} /> Làm mới
         </button>
       </div>
 
       <div className="admin-table-card">
         <div className="admin-table-toolbar">
-          <span className="admin-table-title">All Designs</span>
+          <span className="admin-table-title">Tất cả thiết kế</span>
           <div className="admin-search">
             <Search size={14} color="var(--text-muted)" />
             <input
-              placeholder="Search by title or author…"
+              placeholder="Tìm kiếm theo tiêu đề hoặc tác giả…"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -81,14 +81,14 @@ export default function AdminTemplates() {
           <table className="admin-table">
             <thead>
               <tr>
-                <th>Thumbnail</th>
-                <th>Title</th>
-                <th>Type</th>
-                <th>Dimensions</th>
-                <th>Author</th>
-                <th>Last Modified</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th>Ảnh thu nhỏ</th>
+                <th>Tiêu đề</th>
+                <th>Loại</th>
+                <th>Kích thước</th>
+                <th>Tác giả</th>
+                <th>Cập nhật lần cuối</th>
+                <th>Trạng thái</th>
+                <th>Hành động</th>
               </tr>
             </thead>
             <tbody>
@@ -100,7 +100,7 @@ export default function AdminTemplates() {
                 <tr><td colSpan={8}>
                   <div className="admin-empty">
                     <span className="admin-empty-icon">🎨</span>
-                    <span className="admin-empty-text">No designs found</span>
+                    <span className="admin-empty-text">Không tìm thấy thiết kế nào</span>
                   </div>
                 </td></tr>
               ) : designs.map(d => (
@@ -141,9 +141,9 @@ export default function AdminTemplates() {
                   <td>
                     {d.is_published
                       ? <span className="badge badge-active">
-                          <CheckCircle2 size={10} /> Published
+                          <CheckCircle2 size={10} /> Đã xuất bản
                         </span>
-                      : <span className="badge badge-free">Draft</span>
+                      : <span className="badge badge-free">Bản nháp</span>
                     }
                   </td>
                   <td>
@@ -152,17 +152,17 @@ export default function AdminTemplates() {
                         <button
                           className="admin-btn admin-btn-danger admin-btn-sm"
                           onClick={() => handleUnpublish(d)}
-                          title="Remove from public templates"
+                          title="Gỡ khỏi mẫu công khai"
                         >
-                          <GlobeLock size={13} /> Unpublish
+                          <GlobeLock size={13} /> Gỡ xuống
                         </button>
                       ) : (
                         <button
                           className="admin-btn admin-btn-primary admin-btn-sm"
                           onClick={() => setConfirmDesign(d)}
-                          title="Publish as public template"
+                          title="Xuất bản làm mẫu công khai"
                         >
-                          <Globe size={13} /> Publish
+                          <Globe size={13} /> Xuất bản
                         </button>
                       )}
                       <a
@@ -170,7 +170,7 @@ export default function AdminTemplates() {
                         target="_blank"
                         rel="noreferrer"
                         className="admin-btn admin-btn-ghost admin-btn-sm"
-                        title="Preview design"
+                        title="Xem trước thiết kế"
                       >
                         <Eye size={13} />
                       </a>
@@ -183,13 +183,13 @@ export default function AdminTemplates() {
         </div>
 
         <div className="admin-pagination">
-          <span className="admin-pagination-info">Page {page}</span>
+          <span className="admin-pagination-info">Trang {page}</span>
           <div className="admin-pagination-btns">
-            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
+            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← Trước</button>
             <button
               disabled={designs.length < LIMIT}
               onClick={() => setPage(p => p + 1)}
-            >Next →</button>
+            >Sau →</button>
           </div>
         </div>
       </div>
@@ -198,24 +198,24 @@ export default function AdminTemplates() {
       {confirmDesign && (
         <div className="admin-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setConfirmDesign(null); }}>
           <div className="admin-modal">
-            <h2 className="admin-modal-title">🚀 Publish Template</h2>
+            <h2 className="admin-modal-title">🚀 Xuất bản Mẫu</h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6 }}>
-              You're about to publish <strong style={{ color: 'var(--text-primary)' }}>"{confirmDesign.title}"</strong> as
-              a public template. All users will be able to clone and use this design.
+              Bạn sắp xuất bản <strong style={{ color: 'var(--text-primary)' }}>"{confirmDesign.title}"</strong> thành
+              một mẫu công khai. Tất cả người dùng sẽ có thể sao chép và sử dụng thiết kế này.
             </p>
             <div style={{
               marginTop: 16, padding: 12, background: 'var(--bg-hover)',
               borderRadius: 8, border: '1px solid var(--border)'
             }}>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Design by: {confirmDesign.user_name}</p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Thiết kế bởi: {confirmDesign.user_name}</p>
               <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                Type: {confirmDesign.design_type} · {confirmDesign.width}×{confirmDesign.height}px
+                Loại: {confirmDesign.design_type} · {confirmDesign.width}×{confirmDesign.height}px
               </p>
             </div>
             <div className="admin-modal-footer">
-              <button className="admin-btn admin-btn-ghost" onClick={() => setConfirmDesign(null)}>Cancel</button>
+              <button className="admin-btn admin-btn-ghost" onClick={() => setConfirmDesign(null)}>Hủy</button>
               <button className="admin-btn admin-btn-primary" onClick={() => handlePublish(confirmDesign)}>
-                <Globe size={14} /> Publish Now
+                <Globe size={14} /> Xuất bản ngay
               </button>
             </div>
           </div>

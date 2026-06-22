@@ -1286,7 +1286,8 @@ export const getAdminTeams = async (req: Request, res: Response) => {
         (SELECT COUNT(*)::int FROM team_members WHERE team_id = t.id) AS member_count,
         (SELECT COUNT(*)::int FROM designs WHERE team_id = t.id AND is_deleted = false) AS design_count,
         us.status AS sub_status, us.current_period_end,
-        sp.name AS plan_name, sp.slug AS plan_slug
+        CASE WHEN sp.max_team_members > 1 THEN sp.name ELSE NULL END AS plan_name,
+        CASE WHEN sp.max_team_members > 1 THEN sp.slug ELSE NULL END AS plan_slug
       FROM teams t
       JOIN users u ON u.id = t.owner_id
       LEFT JOIN user_subscriptions us ON us.user_id = t.owner_id AND us.status = 'active'
@@ -1317,7 +1318,8 @@ export const getAdminTeamDetail = async (req: Request, res: Response) => {
     const team = await db.getOne(`
       SELECT t.*, u.name AS owner_name, u.email AS owner_email,
         us.status AS sub_status, us.current_period_end,
-        sp.name AS plan_name, sp.max_storage_gb AS plan_storage_gb,
+        CASE WHEN sp.max_team_members > 1 THEN sp.name ELSE NULL END AS plan_name,
+        CASE WHEN sp.max_team_members > 1 THEN sp.max_storage_gb ELSE NULL END AS plan_storage_gb,
         (SELECT COUNT(*)::int FROM team_members WHERE team_id = t.id) AS member_count,
         (SELECT COUNT(*)::int FROM designs WHERE team_id = t.id AND is_deleted = false) AS design_count
       FROM teams t
@@ -1366,12 +1368,30 @@ export const banTeam = async (req: Request, res: Response) => {
         `UPDATE teams SET is_deleted = true, deleted_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [id]
       );
+      if (globalIo) {
+        const members = await db.query('SELECT user_id FROM team_members WHERE team_id = $1', [id]);
+        members.rows.forEach(member => {
+          globalIo!.to(`user-${member.user_id}`).emit('team:banned', { 
+            teamId: id, 
+            message: `Team "${team.name}" của bạn đã bị khóa bởi Quản trị viên. Lý do: ${reason || 'Vi phạm chính sách'}` 
+          });
+        });
+      }
     } else {
       // Mở khóa: restore lại team
       await db.execute(
         `UPDATE teams SET is_deleted = false, deleted_at = NULL, updated_at = NOW() WHERE id = $1`,
         [id]
       );
+      if (globalIo) {
+        const members = await db.query('SELECT user_id FROM team_members WHERE team_id = $1', [id]);
+        members.rows.forEach(member => {
+          globalIo!.to(`user-${member.user_id}`).emit('team:unbanned', { 
+            teamId: id, 
+            message: `Team "${team.name}" của bạn đã được Quản trị viên khôi phục!` 
+          });
+        });
+      }
     }
 
     await db.execute(

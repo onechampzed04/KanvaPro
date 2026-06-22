@@ -19,7 +19,7 @@ export default function AdminSelect({
   value,
   onChange,
   options,
-  placeholder = 'Select...',
+  placeholder = 'Chọn...',
   className = '',
   size = 'md',
 }: AdminSelectProps) {

@@ -180,7 +180,7 @@ export const deletePlan = async (id: string) => {
 
 // ── Payments ───────────────────────────────────────────────────────────────
 export const fetchAdminPayments = async (params: {
-  page?: number; limit?: number; status?: string; gateway?: string;
+  page?: number; limit?: number; status?: string; gateway?: string; search?: string;
 }) => {
   const q = new URLSearchParams(params as any).toString();
   const res = await fetch(`/api/admin/payments?${q}`, { headers: getHeaders() });

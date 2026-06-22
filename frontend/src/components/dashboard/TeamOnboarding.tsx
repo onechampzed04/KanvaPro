@@ -28,7 +28,7 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
 
   // Số thành viên = số lượng mua
   const membersCount = seats;
-  
+
   // Tự động tăng số chỗ nếu mời nhiều hơn số chỗ hiện tại
   useEffect(() => {
     const requiredSeats = 1 + emails.length;
@@ -130,8 +130,8 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
                 </span>
               </h1>
               <p className="text-slate-500 text-base">
-                {isUpgrade 
-                  ? 'Mở rộng đội ngũ của bạn để cùng nhau tạo ra những thiết kế tuyệt vời.' 
+                {isUpgrade
+                  ? 'Mở rộng đội ngũ của bạn để cùng nhau tạo ra những thiết kế tuyệt vời.'
                   : 'Tạo nhóm làm việc, chia sẻ thiết kế và cộng tác cùng nhau ngay hôm nay.'}
               </p>
             </div>
@@ -142,7 +142,7 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
                 Số lượng thành viên (Bao gồm cả bạn)
               </label>
               <div className="flex items-center gap-3">
-                <button 
+                <button
                   onClick={() => setSeats(Math.max(1 + emails.length, Math.max(isUpgrade ? currentMaxMembers + 1 : 1, seats - 1)))}
                   className="w-12 h-12 rounded-2xl bg-white border-2 border-slate-200 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center text-slate-500 font-black text-xl transition"
                 >
@@ -151,7 +151,7 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
                 <div className="w-20 h-12 bg-slate-50 border-2 border-slate-200 rounded-2xl flex items-center justify-center font-black text-xl text-slate-700">
                   {seats}
                 </div>
-                <button 
+                <button
                   onClick={() => setSeats(seats + 1)}
                   className="w-12 h-12 rounded-2xl bg-white border-2 border-slate-200 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center text-slate-500 font-black text-xl transition"
                 >
@@ -163,70 +163,70 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
 
             {/* Tags Input */}
             {!isUpgrade && (
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">
-                Mời người tham gia
-              </label>
-              <div
-                className="flex flex-wrap gap-2 items-center p-3 bg-white border-2 border-slate-200 rounded-2xl focus-within:border-violet-400 focus-within:ring-4 focus-within:ring-violet-100 transition min-h-[52px] cursor-text"
-                onClick={() => inputRef.current?.focus()}
-              >
-                {emails.map((email, idx) => (
-                  <span
-                    key={idx}
-                    className="flex items-center gap-1.5 bg-violet-100 text-violet-700 text-sm font-semibold px-3 py-1 rounded-full"
-                  >
-                    <span className="w-5 h-5 rounded-full bg-violet-400 text-white text-[10px] font-black flex items-center justify-center">
-                      {email[0].toUpperCase()}
-                    </span>
-                    {email}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeEmail(idx); }}
-                      className="text-violet-400 hover:text-violet-700 transition"
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  Mời người tham gia
+                </label>
+                <div
+                  className="flex flex-wrap gap-2 items-center p-3 bg-white border-2 border-slate-200 rounded-2xl focus-within:border-violet-400 focus-within:ring-4 focus-within:ring-violet-100 transition min-h-[52px] cursor-text"
+                  onClick={() => inputRef.current?.focus()}
+                >
+                  {emails.map((email, idx) => (
+                    <span
+                      key={idx}
+                      className="flex items-center gap-1.5 bg-violet-100 text-violet-700 text-sm font-semibold px-3 py-1 rounded-full"
                     >
-                      <X size={13} />
+                      <span className="w-5 h-5 rounded-full bg-violet-400 text-white text-[10px] font-black flex items-center justify-center">
+                        {email[0].toUpperCase()}
+                      </span>
+                      {email}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeEmail(idx); }}
+                        className="text-violet-400 hover:text-violet-700 transition"
+                      >
+                        <X size={13} />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    ref={inputRef}
+                    type="email"
+                    value={inputVal}
+                    onChange={e => { setInputVal(e.target.value); setError(''); }}
+                    onKeyDown={handleKeyDown}
+                    onBlur={addEmail}
+                    placeholder={emails.length === 0 ? 'Nhập địa chỉ email, nhấn Enter...' : 'Thêm email...'}
+                    className="flex-1 min-w-[180px] bg-transparent outline-none text-sm text-slate-700 placeholder:text-slate-400"
+                  />
+                  {inputVal && (
+                    <button
+                      onClick={addEmail}
+                      className="p-1 text-violet-500 hover:text-violet-700 hover:bg-violet-100 rounded-lg transition"
+                    >
+                      <Plus size={16} />
                     </button>
-                  </span>
-                ))}
-                <input
-                  ref={inputRef}
-                  type="email"
-                  value={inputVal}
-                  onChange={e => { setInputVal(e.target.value); setError(''); }}
-                  onKeyDown={handleKeyDown}
-                  onBlur={addEmail}
-                  placeholder={emails.length === 0 ? 'Nhập địa chỉ email, nhấn Enter...' : 'Thêm email...'}
-                  className="flex-1 min-w-[180px] bg-transparent outline-none text-sm text-slate-700 placeholder:text-slate-400"
-                />
-                {inputVal && (
-                  <button
-                    onClick={addEmail}
-                    className="p-1 text-violet-500 hover:text-violet-700 hover:bg-violet-100 rounded-lg transition"
-                  >
-                    <Plus size={16} />
-                  </button>
+                  )}
+                </div>
+                {error && (
+                  <p className="mt-1.5 text-xs text-red-500 font-medium">{error}</p>
                 )}
+                <p className="mt-2 text-xs text-slate-400">
+                  Nhấn <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-500 font-mono text-[10px]">Enter</kbd> sau mỗi email để thêm vào danh sách
+                </p>
               </div>
-              {error && (
-                <p className="mt-1.5 text-xs text-red-500 font-medium">{error}</p>
-              )}
-              <p className="mt-2 text-xs text-slate-400">
-                Nhấn <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-500 font-mono text-[10px]">Enter</kbd> sau mỗi email để thêm vào danh sách
-              </p>
-            </div>
             )}
 
             {/* FAQ */}
             {!isUpgrade && (
-            <details className="group bg-white rounded-2xl border border-slate-100 p-5 cursor-pointer hover:border-slate-200 transition">
-              <summary className="flex items-center justify-between font-semibold text-slate-700 text-sm list-none">
-                Các thành viên có xem được thiết kế của tôi không?
-                <ChevronRight size={16} className="text-slate-400 group-open:rotate-90 transition-transform" />
-              </summary>
-              <p className="mt-3 text-sm text-slate-500 leading-relaxed">
-                Chỉ các thiết kế bạn chia sẻ cho thành viên mới hiển thị với họ. Thiết kế của bạn trong team này vẫn hoàn toàn riêng tư.
-              </p>
-            </details>
+              <details className="group bg-white rounded-2xl border border-slate-100 p-5 cursor-pointer hover:border-slate-200 transition">
+                <summary className="flex items-center justify-between font-semibold text-slate-700 text-sm list-none">
+                  Các thành viên có xem được thiết kế của tôi không?
+                  <ChevronRight size={16} className="text-slate-400 group-open:rotate-90 transition-transform" />
+                </summary>
+                <p className="mt-3 text-sm text-slate-500 leading-relaxed">
+                  Chỉ các thiết kế bạn chia sẻ cho thành viên mới hiển thị với họ. Thiết kế của bạn trong team này vẫn hoàn toàn riêng tư.
+                </p>
+              </details>
             )}
           </div>
 
@@ -293,12 +293,6 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
               {teamPlan && (
                 <div className="flex items-end justify-between">
                   <div>
-                    {!isUpgrade && (
-                      <>
-                        <p className="text-xs text-slate-400">Tiết kiệm với gói năm</p>
-                        <p className="text-sm text-emerald-600 font-bold">{formatVND(totalYearly)}/năm</p>
-                      </>
-                    )}
                     {isUpgrade && (
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Thực tế phải thanh toán</p>
                     )}

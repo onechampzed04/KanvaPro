@@ -95,8 +95,9 @@ export const getDesignById = async (req: Request, res: Response) => {
 
         const pages = await designPageService.getPagesWithElementsByDesignId(id);
         const currentUserRole = (req as any).designRole || null;
+        const isPublicAccess = (req as any).isPublicAccess || false;
 
-        res.json({ ...design, pages, current_user_role: currentUserRole });
+        res.json({ ...design, pages, current_user_role: currentUserRole, is_public_access: isPublicAccess });
     } catch (error) {
         console.error("Lỗi getDesignById:", error);
         res.status(500).json({ error: 'Internal server error' });
@@ -113,8 +114,9 @@ export const getDesignMeta = async (req: Request, res: Response) => {
 
         const pages = await designPageService.getPagesByDesignIdWithoutElements(id);
         const currentUserRole = (req as any).designRole || null;
+        const isPublicAccess = (req as any).isPublicAccess || false;
 
-        res.json({ ...design, pages, current_user_role: currentUserRole });
+        res.json({ ...design, pages, current_user_role: currentUserRole, is_public_access: isPublicAccess });
     } catch (error) {
         console.error("Lỗi getDesignMeta:", error);
         res.status(500).json({ error: 'Internal server error' });
@@ -445,6 +447,20 @@ export const getDesignVersions = async (req: Request, res: Response) => {
         res.json({ versions });
     } catch (error) {
         res.status(500).json({ error: "Lỗi lấy lịch sử" });
+    }
+};
+
+export const getDesignVersionSnapshot = async (req: Request, res: Response) => {
+    try {
+        const { id, versionId } = req.params;
+        const snapshot = await designVersionService.getVersionSnapshot(id, versionId);
+        if (!snapshot) {
+            return res.status(404).json({ error: "Version not found" });
+        }
+        res.json({ snapshot });
+    } catch (error) {
+        console.error("Lỗi lấy snapshot:", error);
+        res.status(500).json({ error: "Lỗi lấy snapshot" });
     }
 };
 

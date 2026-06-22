@@ -8,12 +8,12 @@ import {
 import './admin.css';
 
 const NAV_ITEMS = [
-  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/admin/users', label: 'Users', icon: Users },
-  { to: '/admin/assets', label: 'Asset Library', icon: Images },
-  { to: '/admin/templates', label: 'Templates', icon: LayoutTemplate },
-  { to: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCard },
-  { to: '/admin/teams', label: 'Teams', icon: Users2 },
+  { to: '/admin', label: 'Tổng quan', icon: LayoutDashboard, end: true },
+  { to: '/admin/users', label: 'Người dùng', icon: Users },
+  { to: '/admin/assets', label: 'Thư viện', icon: Images },
+  { to: '/admin/templates', label: 'Mẫu thiết kế', icon: LayoutTemplate },
+  { to: '/admin/subscriptions', label: 'Gói cước', icon: CreditCard },
+  { to: '/admin/teams', label: 'Nhóm', icon: Users2 },
 ];
 
 export default function AdminLayout() {
@@ -49,7 +49,7 @@ export default function AdminLayout() {
         </div>
 
         <nav className="admin-nav">
-          <p className="admin-nav-section">NAVIGATION</p>
+          <p className="admin-nav-section">ĐIỀU HƯỚNG</p>
           {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
@@ -65,10 +65,10 @@ export default function AdminLayout() {
             </NavLink>
           ))}
           <div style={{ marginTop: 'auto' }}></div>
-          <p className="admin-nav-section">APP</p>
+          <p className="admin-nav-section">ỨNG DỤNG</p>
           <button className="admin-nav-item" onClick={() => navigate('/')} style={{ width: '100%' }}>
             <ArrowLeft size={18} />
-            <span>Về Kanva Web</span>
+            <span>Về Trang chủ</span>
           </button>
         </nav>
 
@@ -84,7 +84,7 @@ export default function AdminLayout() {
               </span>
             </div>
           </div>
-          <button className="admin-logout-btn" onClick={logout} title="Logout">
+          <button className="admin-logout-btn" onClick={logout} title="Đăng xuất">
             <LogOut size={16} />
           </button>
         </div>

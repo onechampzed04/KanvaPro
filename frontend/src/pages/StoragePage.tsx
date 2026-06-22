@@ -9,7 +9,7 @@ import { useWorkspace } from '../context/WorkspaceContext';
 
 export default function StoragePage() {
   const { user, refreshUser } = useAuth();
-  const { currentWorkspace, refreshWorkspaces } = useWorkspace();
+  const { currentWorkspace, workspaces, refreshWorkspaces } = useWorkspace();
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
@@ -91,9 +91,12 @@ export default function StoragePage() {
     return () => window.removeEventListener('storage:updated', handleStorageUpdate);
   }, [refreshUser, refreshWorkspaces]);
 
-  // Tính toán hạn mức lưu trữ dựa trên Workspace hiện tại
-  let maxGb = currentWorkspace?.is_pro 
-    ? Number(currentWorkspace?.plan_storage_gb || 5) 
+  // Tính toán hạn mức lưu trữ dựa trên Workspace hiện tại (lấy personal workspace nếu current là null)
+  const personalWorkspace = workspaces.find((w: any) => w.workspace_type === 'personal');
+  const activeWorkspace = currentWorkspace || personalWorkspace;
+
+  let maxGb = activeWorkspace?.is_pro 
+    ? Number(activeWorkspace?.plan_storage_gb || activeWorkspace?.max_storage_gb || 5) 
     : 5;
   
   if (!maxGb || isNaN(maxGb) || maxGb === 0) {
@@ -101,8 +104,8 @@ export default function StoragePage() {
   }
 
   const maxStorageBytes = maxGb * 1024 * 1024 * 1024;
-  const storageUsedBytes = currentWorkspace && currentWorkspace.workspace_type !== 'personal'
-    ? Number(currentWorkspace.used_storage_bytes ?? 0) 
+  const storageUsedBytes = activeWorkspace && activeWorkspace.workspace_type !== 'personal'
+    ? Number(activeWorkspace.used_storage_bytes ?? 0) 
     : Number(user?.storage_used_bytes ?? 0);
   const percentage = Math.min((storageUsedBytes / maxStorageBytes) * 100, 100);
 
@@ -156,7 +159,7 @@ export default function StoragePage() {
             
             <div className="mt-6">
               <div className="flex justify-between text-xs font-extrabold text-slate-600 mb-2">
-                <span>Đã dùng: {formatResourceSize(storageUsedBytes)} (DB: {user?.storage_used_bytes || '0'}, Team: {currentWorkspace?.used_storage_bytes || '0'}, CW: {currentWorkspace ? 'yes' : 'no'})</span>
+                <span>Đã dùng: {formatResourceSize(storageUsedBytes)}</span>
                 <span>Hạn mức: {maxStorageBytes / (1024 ** 3)} GB</span>
               </div>
               

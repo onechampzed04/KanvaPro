@@ -32,7 +32,15 @@ router.put('/users/:id/ban', toggleUserBan);
 
 // Assets
 router.get('/assets', getAdminAssets);
-router.post('/assets/bulk', adminUpload.array('files', 100), validateMagicNumber, bulkUploadAssets);
+router.post('/assets/bulk', (req: any, res: any, next: any) => {
+  adminUpload.array('files', 50)(req, res, (err: any) => {
+    if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ error: 'Tối đa chỉ được tải lên 50 file mỗi lần' });
+    }
+    if (err) return next(err);
+    next();
+  });
+}, validateMagicNumber, bulkUploadAssets);
 router.patch('/assets/:id', updateAsset);
 router.put('/assets/:id/toggle-active', toggleAssetActive);
 

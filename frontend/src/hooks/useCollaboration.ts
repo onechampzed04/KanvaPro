@@ -47,6 +47,7 @@ interface UseCollaborationOptions {
   onRemoteUpdate: (pageId: string, elements: any[]) => void;
   onRemotePageAdded?: (newPage: any, addedByName: string) => void;
   onRemotePageDeleted?: (pageId: string, deletedByName: string) => void;
+  onRemotePagesReordered?: (pageIds: string[]) => void;
   onRemoteCursorMove?: (userId: string, name: string, color: string, x: number, y: number) => void;
   onRemotePageResized?: (pageId: string, width: number, height: number, isLive: boolean, userName: string) => void;
   onRemoteDelta?: (delta: ElementDelta) => void;
@@ -54,6 +55,7 @@ interface UseCollaborationOptions {
   // [FIX 6] Callback khi nhận thumbnail mới từ collaborator khác
   onRemotePageThumbnailUpdated?: (pageId: string, thumbUrl: string) => void;
   onRemotePageBackgroundUpdated?: (pageId: string, background_color: string, userName: string) => void;
+  onRemoteRoleUpdated?: (role: string) => void;
 }
 
 interface UseCollaborationReturn {
@@ -67,6 +69,7 @@ interface UseCollaborationReturn {
   emitPageChanged: (pageId: string) => void;
   emitPageAdded: (newPage: any) => void;
   emitPageDeleted: (pageId: string) => void;
+  emitPagesReordered: (pageIds: string[]) => void;
   emitCursorMove: (designId: string, x: number, y: number) => void;
   emitPageResize: (pageId: string, width: number, height: number, isLive: boolean) => void;
   // [FIX 6] Emitter broadcast thumbnail mới cho tất cả collaborator
@@ -84,12 +87,14 @@ export function useCollaboration({
   onRemoteUpdate,
   onRemotePageAdded,
   onRemotePageDeleted,
+  onRemotePagesReordered,
   onRemoteCursorMove,
   onRemotePageResized,
   onRemoteDelta,
   onInitialRevision,
   onRemotePageThumbnailUpdated,
   onRemotePageBackgroundUpdated,
+  onRemoteRoleUpdated,
 }: UseCollaborationOptions): UseCollaborationReturn {
 
   const socketRef = useRef<Socket | null>(null);
@@ -102,12 +107,14 @@ export function useCollaboration({
     onRemoteUpdate,
     onRemotePageAdded,
     onRemotePageDeleted,
+    onRemotePagesReordered,
     onRemoteCursorMove,
     onRemotePageResized,
     onRemoteDelta,
     onInitialRevision,
     onRemotePageThumbnailUpdated,
     onRemotePageBackgroundUpdated,
+    onRemoteRoleUpdated,
   });
   // Đồng bộ tất cả callbacks trong 1 useEffect duy nhất — tránh dependency hell
   useEffect(() => {
@@ -115,12 +122,14 @@ export function useCollaboration({
       onRemoteUpdate,
       onRemotePageAdded,
       onRemotePageDeleted,
+      onRemotePagesReordered,
       onRemoteCursorMove,
       onRemotePageResized,
       onRemoteDelta,
       onInitialRevision,
       onRemotePageThumbnailUpdated,
       onRemotePageBackgroundUpdated,
+      onRemoteRoleUpdated,
     };
   }); // Không có dependency array → chạy mỗi render để luôn sync mới nhất
 
@@ -253,6 +262,10 @@ export function useCollaboration({
       callbacksRef.current.onRemotePageDeleted?.(pageId, deletedBy.name);
     });
 
+    socket.on('pages-reordered', ({ pageIds }: { pageIds: string[] }) => {
+      callbacksRef.current.onRemotePagesReordered?.(pageIds);
+    });
+
     // ── Cursor Events ──────────────────────────────────────────────────────
     socket.on('cursor-moved', ({ userId, name, avatarColor, x, y }: {
       userId: string; name: string; avatarColor: string; x: number; y: number;
@@ -286,16 +299,29 @@ export function useCollaboration({
     });
 
     // ── [FIX] Permissions Revoked Events (Real-time Kick) ────────────────
+    // Fired when user is COMPLETELY removed from the design (not just role change)
     socket.on('design:access_revoked', ({ designId: dId }: { designId: string }) => {
       if (dId === designId) {
-        alert('Quyền truy cập của bạn vào bản vẽ này đã bị thay đổi hoặc thu hồi.');
-        window.location.href = '/dashboard';
+        // Dispatch a custom event so EditorPage can handle save + navigate
+        // without triggering the browser's "Leave site?" popup
+        window.dispatchEvent(new CustomEvent('design:access_revoked', { detail: { designId: dId } }));
+      }
+    });
+
+    // Handle real-time role updates without kicking the user out
+    socket.on('design:role_updated', ({ designId: dId, role }: { designId: string, role: string }) => {
+      if (dId === designId) {
+        callbacksRef.current.onRemoteRoleUpdated?.(role);
       }
     });
 
     socket.on('design:public_link_revoked', () => {
-      alert('Chủ sở hữu đã tắt tính năng chia sẻ công khai cho bản vẽ này.');
-      window.location.href = '/dashboard';
+      window.dispatchEvent(new CustomEvent('design:public_link_revoked'));
+    });
+
+    // [NEW] Force reload for deleted assets
+    socket.on('design:force_reload', ({ message }: { message: string }) => {
+      window.dispatchEvent(new CustomEvent('design:force_reload', { detail: { message } }));
     });
 
     // ── Cleanup ────────────────────────────────────────────────────
@@ -355,8 +381,14 @@ export function useCollaboration({
   }, [designId]);
 
   const emitPageDeleted = useCallback((pageId: string) => {
-    if (socketRef.current?.connected && designId) {
+    if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('page-deleted', { designId, pageId });
+    }
+  }, [designId]);
+
+  const emitPagesReordered = useCallback((pageIds: string[]) => {
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('pages-reordered', { designId, pageIds });
     }
   }, [designId]);
 
@@ -433,6 +465,7 @@ export function useCollaboration({
     emitPageChanged,
     emitPageAdded,
     emitPageDeleted,
+    emitPagesReordered,
     emitCursorMove,
     emitPageResize,
     emitPageThumbnailUpdated,
@@ -446,6 +479,7 @@ export function useCollaboration({
     emitPageChanged,
     emitPageAdded,
     emitPageDeleted,
+    emitPagesReordered,
     emitCursorMove,
     emitPageResize,
     emitPageThumbnailUpdated,

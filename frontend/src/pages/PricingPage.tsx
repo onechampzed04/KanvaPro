@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useSubscription } from '../hooks/useSubscription';
 import { fetchActiveSubscriptions, createCheckoutSession, previewUpgrade } from '../api/api';
+import TeamOnboarding from '../components/dashboard/TeamOnboarding';
 
 function formatVND(n: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n);
@@ -13,12 +14,13 @@ function formatVND(n: number) {
 export default function PricingPage() {
   const { user } = useAuth();
   const { isPro: isUserPro, planSlug } = useSubscription();
-  const { currentWorkspace } = useWorkspace();
+  const { currentWorkspace, workspaces } = useWorkspace();
   const navigate = useNavigate();
 
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCheckingOut, setIsCheckingOut] = useState<string | null>(null);
+  const [showTeamOnboarding, setShowTeamOnboarding] = useState(false);
 
   const [previewModal, setPreviewModal] = useState<{
     show: boolean;
@@ -64,10 +66,21 @@ export default function PricingPage() {
     let targetTeamId = undefined;
     let targetMembersCount = undefined;
 
-    // Nếu đang chọn gói Team và đang ở trong 1 Team Workspace
-    if (isTeamPlan && currentWorkspace && currentWorkspace.workspace_type !== 'personal') {
-      targetTeamId = currentWorkspace.id;
-      targetMembersCount = currentWorkspace.max_members || 1;
+    const userOwnedTeam = workspaces.find(w => w.workspace_type !== 'personal' && w.my_role === 'owner');
+
+    if (isTeamPlan) {
+      if (currentWorkspace && currentWorkspace.workspace_type !== 'personal') {
+        targetTeamId = currentWorkspace.id;
+        targetMembersCount = currentWorkspace.max_members || 1;
+      } else if (userOwnedTeam) {
+        // User is in personal workspace but already owns a team
+        targetTeamId = userOwnedTeam.id;
+        targetMembersCount = userOwnedTeam.max_members || 1;
+      } else {
+        // User does not own any team, show onboarding
+        setShowTeamOnboarding(true);
+        return;
+      }
     }
 
     // Mở modal với trạng thái loading
@@ -109,6 +122,20 @@ export default function PricingPage() {
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
         <Loader2 className="w-10 h-10 text-indigo-500 animate-spin" />
         <p className="text-slate-500 font-medium">Đang tải bảng giá...</p>
+      </div>
+    );
+  }
+
+  if (showTeamOnboarding) {
+    return (
+      <div className="relative w-full h-full min-h-screen bg-slate-50">
+        <button
+          onClick={() => setShowTeamOnboarding(false)}
+          className="absolute top-4 left-4 z-50 bg-white p-2 rounded-full shadow-md text-slate-500 hover:text-indigo-600 transition"
+        >
+          <X size={24} />
+        </button>
+        <TeamOnboarding />
       </div>
     );
   }
@@ -245,7 +272,8 @@ export default function PricingPage() {
           }
 
           const isTeamPlan = sub.slug === 'pro_team';
-          const isTeamRenewal = isTeamPlan && currentWorkspace && currentWorkspace.workspace_type !== 'personal';
+          const userOwnedTeam = workspaces.find(w => w.workspace_type !== 'personal' && w.my_role === 'owner');
+          const isTeamRenewal = isTeamPlan && !!userOwnedTeam;
 
           return (
             <div

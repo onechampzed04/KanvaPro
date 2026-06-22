@@ -181,8 +181,8 @@ export default function AdminUsers() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
           <input
             type="text"
-            placeholder="Tìm theo tên, email..."
-            className="w-full pl-10 pr-4 py-2.5 bg-black/20 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+            placeholder="Tìm kiếm người dùng theo tên hoặc email..."
+            className="w-full pl-10 pr-4 py-2 bg-black/20 border border-white/10 rounded-xl text-white placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
             value={search} onChange={e => setSearch(e.target.value)}
           />
         </div>
@@ -259,7 +259,7 @@ export default function AdminUsers() {
                       <span className={`flex items-center gap-1.5 ${u.status === 'active' ? 'text-green-400' : 'text-red-400'
                         }`}>
                         {u.status === 'active' ? <UserCheck size={16} /> : <Ban size={16} />}
-                        {u.status === 'active' ? 'Active' : 'Banned'}
+                        {u.status === 'active' ? 'Đang hoạt động' : 'Bị khóa'}
                       </span>
                     </td>
                     <td className="px-6 py-4">

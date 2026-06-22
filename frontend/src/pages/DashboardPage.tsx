@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth, isSubscriptionActive } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { useToast } from '../context/ToastContext';
 import {
   Plus, LogOut, Layout, Image as ImageIcon, Video,
   FileText, Monitor, Table, UploadCloud, Crown, Receipt, Shield,
@@ -97,16 +98,19 @@ export default function DashboardPage() {
     return (mb / 1024).toFixed(2) + ' GB';
   };
 
-  let maxGb = currentWorkspace?.is_pro 
-    ? Number(currentWorkspace?.plan_storage_gb || 5) 
+  const personalWorkspace = workspaces.find((w: any) => w.workspace_type === 'personal');
+  const activeWorkspace = currentWorkspace || personalWorkspace;
+
+  let maxGb = activeWorkspace?.is_pro 
+    ? Number(activeWorkspace?.plan_storage_gb || activeWorkspace?.max_storage_gb || 5) 
     : 5;
     
   if (!maxGb || isNaN(maxGb) || maxGb === 0) {
     maxGb = 5;
   }
   const maxStorageBytes = maxGb * 1024 * 1024 * 1024;
-  const storageUsedBytes = currentWorkspace && currentWorkspace.workspace_type !== 'personal'
-    ? Number(currentWorkspace.used_storage_bytes ?? 0) 
+  const storageUsedBytes = activeWorkspace && activeWorkspace.workspace_type !== 'personal'
+    ? Number(activeWorkspace.used_storage_bytes ?? 0) 
     : Number(user?.storage_used_bytes ?? 0);
   const storagePercentage = Math.min((storageUsedBytes / maxStorageBytes) * 100, 100);
   const isStorageWarning = storagePercentage > 90;
@@ -127,7 +131,7 @@ export default function DashboardPage() {
   const templatesPerPage = 10;
 
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
-  const [avatarToast, setAvatarToast] = useState('');
+  const { showSuccess, showError, showWarning } = useToast();
 
   useEffect(() => {
     const loadData = async () => {
@@ -156,7 +160,7 @@ export default function DashboardPage() {
       setPreviewTemplate(null);
       navigate(`/design/${data.designId}`);
     } catch (err: any) {
-      alert(`Lỗi: ${err.message}`);
+      showError(`Lỗi: ${err.message}`);
     } finally {
       setUsingTemplateId(null);
     }
@@ -330,6 +334,10 @@ export default function DashboardPage() {
   }, [selectionRect.visible, selectionRect.startX, selectionRect.startY]);
 
   const handleCreateDesign = async (template: any, customWidth?: number, customHeight?: number) => {
+    if ((customWidth && customWidth > 10000) || (customHeight && customHeight > 10000)) {
+      showWarning('Kích thước tối đa cho phép là 10000x10000 px');
+      return;
+    }
     try {
       const payload = {
         title: `Untitled ${template.label}`,
@@ -340,8 +348,8 @@ export default function DashboardPage() {
       };
       const data = await createDesign(payload);
       if (data.id) navigate(`/design/${data.id}`);
-    } catch {
-      alert('Không thể tạo thiết kế mới, vui lòng thử lại.');
+    } catch (err) {
+      showError('Không thể tạo thiết kế mới, vui lòng thử lại.');
     }
   };
 
@@ -388,7 +396,7 @@ export default function DashboardPage() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) { alert('Vui lòng chọn file hình ảnh!'); return; }
+    if (!file.type.startsWith('image/')) { showError('Vui lòng chọn file hình ảnh!'); return; }
     e.target.value = '';
 
     try {
@@ -440,14 +448,14 @@ export default function DashboardPage() {
     } catch (err: any) {
       console.error('Upload image error:', err);
       setUploadStatus({ loading: false, message: '' });
-      alert(`Không thể tải ảnh lên: ${err.message || 'Vui lòng thử lại.'}`);
+      showError(`Không thể tải ảnh lên: ${err.message || 'Vui lòng thử lại.'}`);
     }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) { alert('Vui lòng chọn file hình ảnh!'); return; }
+    if (!file.type.startsWith('image/')) { showError('Vui lòng chọn file hình ảnh!'); return; }
 
     setIsUploadingAvatar(true);
     try {
@@ -461,10 +469,9 @@ export default function DashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       updateAvatar(data.avatar_url);
-      setAvatarToast('Cập nhật ảnh đại diện thành công!');
-      setTimeout(() => setAvatarToast(''), 3000);
+      showSuccess('Cập nhật ảnh đại diện thành công!');
     } catch (err: any) {
-      alert(`Lỗi: ${err.message}`);
+      showError(`Lỗi: ${err.message}`);
     } finally {
       setIsUploadingAvatar(false);
       e.target.value = '';
@@ -486,7 +493,7 @@ export default function DashboardPage() {
       setDesigns(prev => prev.filter(d => d.id !== deleteModalDesign.id));
       setDeleteModalDesign(null);
     } catch (err: any) {
-      alert(`Lỗi: ${err.message}`);
+      showError(`Lỗi: ${err.message}`);
     } finally {
       setIsDeleting(false);
     }
@@ -538,7 +545,7 @@ export default function DashboardPage() {
       setDesigns(prev => prev.map(d => d.id === renameModalDesign.id ? { ...d, title: newDesignName.trim() } : d));
       setRenameModalDesign(null);
     } catch (err: any) {
-      alert(err.message);
+      showError(err.message);
     }
   };
 
@@ -564,9 +571,9 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error(data.message || data.error || 'Không thể nhân bản');
       const updated = await fetchDesigns('all');
       setDesigns(updated.designs);
-      alert(`Đã tạo: "${newTitle}" vào ${workspaceName}.`);
+      showSuccess(`Đã tạo: "${newTitle}" vào ${workspaceName}.`);
     } catch (err: any) {
-      alert(`Lỗi nhân bản: ${err.message}`);
+      showError(`Lỗi nhân bản: ${err.message}`);
     } finally {
       setCloningId(null);
     }
@@ -595,7 +602,7 @@ export default function DashboardPage() {
       // Navigate vào design mới luôn
       navigate(`/design/${data.designId}`);
     } catch (err: any) {
-      alert(`Lỗi sao chép: ${err.message}`);
+      showError(`Lỗi sao chép: ${err.message}`);
     } finally {
       setCloningId(null);
     }
@@ -614,10 +621,10 @@ export default function DashboardPage() {
       setDesigns(prev => prev.filter(d => !deletedIds.includes(d.id)));
       setSelectedIds([]);
       if (deletedIds.length < selectedIds.length) {
-        alert('Có ' + (selectedIds.length - deletedIds.length) + ' bản thiết kế không thể xóa vì bạn không phải là chủ sở hữu.');
+        showWarning('Có ' + (selectedIds.length - deletedIds.length) + ' bản thiết kế không thể xóa vì bạn không phải là chủ sở hữu.');
       }
     } catch (err: any) {
-      alert(`Lỗi: ${err.message}`);
+      showError(`Lỗi: ${err.message}`);
     }
   };
 
@@ -744,32 +751,12 @@ export default function DashboardPage() {
                     </button>
                   ))}
                 </div>
-                <div className="p-2">
-                   <button
-                    onClick={() => { avatarInputRef.current?.click(); setIsWorkspaceDropdownOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                  >
-                    <Camera size={14} className="text-slate-400" />
-                    Đổi ảnh đại diện
-                  </button>
-                </div>
               </motion.div>
             )}
           </AnimatePresence>
-
-          <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
         </div>
 
-        {/* Create Button */}
-        <div className={`pb-4 shrink-0 ${isSidebarCollapsed ? 'px-2' : 'px-6'}`}>
-          <button onClick={() => setIsCustomSizeOpen(true)}
-            className={`w-full flex items-center justify-center gap-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 text-white py-3 rounded-2xl font-bold shadow-lg shadow-sky-500/30 transition-all hover:-translate-y-0.5 ${isSidebarCollapsed ? 'px-2' : 'px-4'
-              }`}
-            title={isSidebarCollapsed ? 'Tạo thiết kế mới' : ''}>
-            <Plus size={20} strokeWidth={3} />
-            {!isSidebarCollapsed && 'Tạo thiết kế mới'}
-          </button>
-        </div>
+
 
         {/* Navigation */}
         <nav className={`flex-1 overflow-y-auto py-2 space-y-1 custom-scrollbar ${isSidebarCollapsed ? 'px-2' : 'px-4'}`}>
@@ -826,7 +813,6 @@ export default function DashboardPage() {
                   <span className="text-xs font-bold text-slate-500">Lưu trữ cá nhân</span>
                   <span className="text-[10px] font-bold text-slate-400">
                     {formatResourceSize(storageUsedBytes)} / {maxStorageBytes / (1024 ** 3)}GB 
-                    (DB: {user?.storage_used_bytes || '0'}, Team: {currentWorkspace?.used_storage_bytes || '0'}, CW: {currentWorkspace ? 'yes' : 'no'})
                   </span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
@@ -893,6 +879,7 @@ export default function DashboardPage() {
         )}
 
         <div className="relative z-10 flex-1 flex flex-col">
+          {/* Removed generic toast */}
           {activePage === 'teams' && <TeamsPanel />}
           {activePage === 'storage' && <StoragePanel />}
           {activePage === 'trash' && <TrashPanel />}
@@ -904,15 +891,7 @@ export default function DashboardPage() {
 
         {/* Chỉ hiện home content khi activePage === 'home' */}
         {activePage !== 'home' ? null : <>
-          {/* Avatar toast */}
-          <AnimatePresence>
-            {avatarToast && (
-              <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                className="fixed top-6 right-8 z-50 bg-emerald-500 text-white px-5 py-3 rounded-2xl shadow-xl font-bold text-sm">
-                ✓ {avatarToast}
-              </motion.div>
-            )}
-          </AnimatePresence>
+
 
           <div className="max-w-[1400px] w-full mx-auto px-6 md:px-10 py-8">
 
