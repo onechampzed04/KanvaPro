@@ -728,6 +728,7 @@ export const removeBgBrush = async (req: Request, res: Response) => {
 // CLONE ASSET FOR DESIGN (Tham chiếu ảo - Virtual Referencing)
 // ─────────────────────────────────────────────────────────────────────────────
 
+
 /**
  * POST /api/assets/clone-for-design
  * Khi user kéo ảnh từ Thư viện Uploads vào Canvas, Frontend gọi API này.

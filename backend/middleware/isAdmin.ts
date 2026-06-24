@@ -1,10 +1,3 @@
-// backend/middleware/isAdmin.ts
-// [FIX Vấn đề 10] Bỏ verify JWT + query DB lần 2.
-//   TRƯỚC: authenticate (verify JWT + DB) → isAdmin (verify JWT lần 2 + DB lần 2) → controller
-//   SAU:   authenticate đã gán req.user.role → isAdmin chỉ đọc role từ đó
-//   Lợi ích: Giảm 1 DB roundtrip trên mọi admin request.
-//
-// [FIX Vấn đề 20] Không cần JWT_SECRET ở đây nữa sau khi bỏ re-verify.
 
 import { Request, Response, NextFunction } from 'express';
 

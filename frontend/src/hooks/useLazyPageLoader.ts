@@ -1,5 +1,5 @@
 // frontend/src/hooks/useLazyPageLoader.ts
-// === FIX #7: LRU Cache — Tránh Memory Leak do Cache "Không Đáy" ===
+// Tránh Memory Leak do Cache "Không Đáy" ===
 // Thay vì lưu trữ elements của TẤT CẢ trang vào Map không giới hạn,
 // hook này dùng thuật toán LRU (Least Recently Used) để chỉ giữ tối đa
 // MAX_CACHED_PAGES trang gần nhất. Các trang cũ hơn sẽ bị "evict" (giải phóng)

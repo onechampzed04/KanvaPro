@@ -10,17 +10,12 @@ import {
 
 dotenv.config();
 
-// SDK v2: constructor nhận options object thay vì 3 tham số riêng lẻ
 const payos = new PayOS({
   clientId: process.env.PAYOS_CLIENT_ID!,
   apiKey: process.env.PAYOS_API_KEY!,
   checksumKey: process.env.PAYOS_CHECKSUM_KEY!,
 });
 
-// =========================================================================
-// Logic cốt lõi: Kích hoạt subscription sau khi xác nhận giao dịch thành công
-// Được dùng chung bởi cả Webhook lẫn Verify endpoint
-// =========================================================================
 async function activateSubscription(orderCode: string): Promise<boolean> {
   // SQL Transaction: đảm bảo atomicity và chống Race Condition (Row-level Lock)
   await db.query('BEGIN');
@@ -48,9 +43,9 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
     const planName = metadata.planName;
     const membersCount = metadata.membersCount;
     const inviteEmails = metadata.inviteEmails || [];
-    const targetTeamId = metadata.teamId || null; // [FIX] teamId cụ thể để gia hạn đúng nhóm
+    const targetTeamId = metadata.teamId || null;
 
-    // [FIX Vấn đề 7] Chỉ lấy subscription đang active để tránh logic sai
+    // Chỉ lấy subscription đang active để tránh logic sai
     // khi user có subscription đã expired từ trước.
     const subCheck = await db.query(
       `SELECT id, plan_id, current_period_end FROM user_subscriptions
@@ -226,20 +221,20 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
         `SELECT id FROM teams WHERE owner_id = $1 AND max_members = 1 AND is_deleted = false LIMIT 1`,
         [userId]
       );
-      
+
       if (existingPersonalRes.rows.length === 0) {
         // Tạo Personal Workspace
         const personalTeamId = crypto.randomUUID();
         const userNameRes = await db.query(`SELECT name FROM users WHERE id = $1`, [userId]);
         const userName = userNameRes.rows[0]?.name || 'Cá nhân';
         const personalTeamName = `Không gian của ${userName}`;
-        
+
         await db.query(
           `INSERT INTO teams (id, name, owner_id, max_members, is_deleted, created_at, updated_at)
            VALUES ($1, $2, $3, 1, false, NOW(), NOW())`,
           [personalTeamId, personalTeamName, userId]
         );
-        
+
         // Thêm Owner vào nhóm
         await db.query(
           `INSERT INTO team_members (id, team_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
@@ -312,7 +307,7 @@ export const paymentService = {
         if (currentSub.plan_id === planId) {
           const currentMembersCount = currentSub.current_max_members ? Number(currentSub.current_max_members) : 1;
           if (count > currentMembersCount) {
-            // [FIX Vấn đề 2] Dùng shared util calculateAddSeatsProration()
+            //Dùng shared util calculateAddSeatsProration()
             const newSeats = count - currentMembersCount;
             const proration = calculateAddSeatsProration(
               Number(newPlan.monthly_price), newSeats, remainingDays,
@@ -325,7 +320,7 @@ export const paymentService = {
             description = `Gia han ${planName}`.replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 25);
           }
         } else {
-          // [FIX Vấn đề 2] Dùng shared util calculateChangePlanProration()
+          //  Dùng shared util calculateChangePlanProration()
           const baseCurrentPrice = Number(currentSub.monthly_price);
           let currentMembersCount = 1;
           if (currentSub.max_team_members > 1) {

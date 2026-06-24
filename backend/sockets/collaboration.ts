@@ -548,8 +548,7 @@ export function setupCollaboration(io: Server) {
         if (dbUser) email = dbUser.email || email;
       } catch { }
 
-      // [SECURITY FIX - BOLA/IDOR in WebSockets]
-      // Verify RBAC trước khi cho phép user join vào document room để nghe lén.
+      // Verify RBAC trước khi cho phép user join vào document room
       let designRole: 'owner' | 'editor' | 'commenter' | 'viewer' | null = null;
       try {
         const designRes = await db.query('SELECT user_id, is_public FROM designs WHERE id = $1 AND is_deleted = false', [dId]);

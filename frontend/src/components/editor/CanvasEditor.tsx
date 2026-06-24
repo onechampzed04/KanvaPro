@@ -75,11 +75,8 @@ interface CanvasEditorProps {
   onActionStart?: () => void;
   // Được gọi khi người dùng xong chỉnh sửa text (để push undo snapshot thông minh)
   onTextEditEnd?: (finalText: string, elementId: string) => void;
-  // [FIX #8] Callback khi bắt đầu chỉnh sửa text — để EditorPage phát element-lock
   onTextEditStart?: (elementId: string) => void;
-  // [FIX #8] Map elementId → { name, avatarColor } của người đang lock
   elementLocks?: Map<string, { userId: string; name: string; avatarColor: string; pageId: string }>;
-  // Preview animation: IDs of elements that should be hidden (not yet "appeared")
   animPreviewHiddenIds?: Set<string>;
   // Which animationOrder step is currently animating in (for applying the correct effect)
   animPreviewCurrentStep?: number;

@@ -20,7 +20,7 @@ export const createDesign = async (req: Request, res: Response) => {
     const { title, width, height, design_type, page_type, team_id } = req.body;
     const userId = (req as any).user?.id;
     const workspaceId = req.headers['x-workspace-id'] as string;
-    
+
     // Nếu tạo từ Dashboard, frontend có thể không gửi team_id mà gửi qua X-Workspace-Id
     const finalTeamId = team_id || (workspaceId && workspaceId !== 'personal' ? workspaceId : null);
 
@@ -125,8 +125,8 @@ export const getDesignMeta = async (req: Request, res: Response) => {
     }
 };
 
-// === FIX #4: LAZY LOADING - LẤY ELEMENTS CỦA MỘT TRANG ===
-// [SECURITY FIX - IDOR] Verify rằng pageId PHẢI thuộc về designId trong URL.
+// LAZY LOADING - LẤY ELEMENTS CỦA MỘT TRANG ===
+// Verify rằng pageId PHẢI thuộc về designId trong URL.
 // Nếu không check: Alice dùng designId của mình + pageId của Bob → đọc trộm data.
 export const getPageElements = async (req: Request, res: Response) => {
     const { id: designId, pageId } = req.params;
@@ -471,7 +471,7 @@ export const restoreDesignVersion = async (req: Request, res: Response) => {
         const { id, versionId } = req.params;
         const userId = (req as any).user?.id;
         await designVersionService.restoreVersion(id, versionId, userId);
-        
+
         // Notify all connected clients to reload the design to sync the restored state
         if (globalIo) {
             revisionStore.evict(id);

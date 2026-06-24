@@ -646,7 +646,7 @@ export default function EditorPage() {
     if (design?.title) setTempTitle(design.title);
   }, [design?.title]);
 
-  // === FIX #4: Khởi tạo Lazy Page Loader ===
+  //  Khởi tạo Lazy Page Loader 
   // lazyPageLoader hoisted to top
 
   // Cập nhật LRU cache khi elements của trang hiện tại thay đổi để tránh stale cache khi chuyển trang
@@ -1064,7 +1064,7 @@ export default function EditorPage() {
   const handlePageChange = (newPageId: string) => {
     if (newPageId === currentPageId) return;
 
-    // === FIX #1: Dùng toBlob() upload thumbnail âm thầm thay vì nhồi base64 vào state ===
+    // Dùng toBlob() upload thumbnail âm thầm thay vì nhồi base64 vào state 
     if (stageRef.current && currentPageType !== 'doc' && currentPageType !== 'sheet' && currentPageId) {
       setSelectedIds([]);
       const capturedPageId = currentPageId;
@@ -1364,9 +1364,9 @@ export default function EditorPage() {
       return;
     }
     draggingElementIdsRef.current.add(newAttrs.id);
-    
+
     const oldAttrs = elementsRef.current.find(el => el.id === newAttrs.id);
-    
+
     // Cập nhật State cục bộ nhưng KHÔNG gửi update-elements để tối ưu
     syncElements(elementsRef.current.map(el => el.id === newAttrs.id ? newAttrs : el), true);
 
@@ -1809,7 +1809,7 @@ export default function EditorPage() {
     };
 
     window.addEventListener('design:force_reload', onForceReload);
-    
+
     const onDesignRestored = () => {
       showSuccess('Thiết kế đã được khôi phục về phiên bản cũ. Đang tải lại...');
       // Đánh dấu đã lưu để beforeunload không chặn F5 nếu có unsaved changes

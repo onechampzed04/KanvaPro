@@ -39,7 +39,7 @@ router.get('/recent-stickers', getRecentStickers);
 // ── TRASH BIN ──────────────────────────────────────────────────────────────
 router.get('/trash', getTrashDesigns);
 router.delete('/trash/empty', emptyTrash);
-// [FIX 4 - Trash RBAC] Dùng checkTrashedDesignAccess thay vì hard-code user_id
+// Dùng checkTrashedDesignAccess thay vì hard-code user_id
 // Đảm bảo chuẩn RBAC và hỗ trợ Transfer Ownership tương lai
 router.put('/trash/:id/restore', checkTrashedDesignAccess, requireRole('owner'), restoreDesign);
 router.delete('/trash/:id/permanent', checkTrashedDesignAccess, requireRole('owner'), permanentlyDeleteDesign);
@@ -54,10 +54,10 @@ router.post('/templates/:templateId/use', useTemplate);
 // viewer+ được xem (checkDesignAccess cho phép public viewer)
 router.get('/:id', checkDesignAccess, getDesignById);
 
-// === FIX #4: API mỏng - chỉ lấy metadata, không có elements ===
+// chỉ lấy metadata, không có elements 
 router.get('/:id/meta', checkDesignAccess, getDesignMeta);
 
-// === FIX #4: Lazy load elements của 1 trang cụ thể ===
+// Lazy load elements của 1 trang cụ thể 
 router.get('/:id/pages/:pageId/elements', checkDesignAccess, getPageElements);
 
 // (save): chỉ owner và editor được lưu

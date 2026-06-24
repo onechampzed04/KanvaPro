@@ -25,16 +25,11 @@ export const register = async (req: Request, res: Response) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const id = uuidv4();
 
-    // [FIX Vấn đề 17] Thêm await đầy đủ.
-    // TRƯỚC: Thiếu await → nếu create() fail (email trùng, DB lỗi), code vẫn
-    //         chạy tiếp createOtp() + gửi email → OTP cho tài khoản không tồn tại.
     await authService.create({ id, email, password_hash: hashedPassword, name, is_verified: false });
 
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    // [FIX Vấn đề 17] Thêm await: nếu createOtp thất bại, user sẽ biết ngay,
-    //         không gử email rồi mới lỗi nhập OTP.
     await authService.createOtp(id, otp, 'registration', expiresAt);
 
     try {
@@ -62,7 +57,7 @@ export const verifyOtp = async (req: Request, res: Response) => {
 
     if (type === 'registration') {
       await db.execute('UPDATE users SET is_verified = true WHERE id = $1', [userId]);
-      // [NEW] Không còn tạo Personal Workspace tự động nữa.
+      // Không còn tạo Personal Workspace tự động nữa.
       // User muốn tạo Team phải mua gói pro_team theo flow Onboarding mới.
     }
 
@@ -137,7 +132,7 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    // [FIX 5 - Admin 2FA] Nếu là admin/moderator → bắt buộc xác thực OTP email trước khi cấp token
+    //  Nếu là admin → bắt buộc xác thực OTP email trước khi cấp token
     if (user.role === 'admin' || user.role === 'moderator') {
       const otp2fa = generateOtp();
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // TTL 5 phút
@@ -181,7 +176,7 @@ export const login = async (req: Request, res: Response) => {
   }
 };
 
-// [FIX 5] Verify Admin 2FA OTP
+//  Verify Admin 2FA OTP
 export const verifyAdmin2FA = async (req: Request, res: Response) => {
   const { userId, otp } = req.body;
   if (!userId || !otp) return res.status(400).json({ error: 'userId và otp là bắt buộc' });
@@ -274,12 +269,7 @@ export const logout = (req: Request, res: Response) => {
   res.json({ message: 'Logged out' });
 };
 
-// ─── Forgot Password ──────────────────────────────────────────────────────────
-
-/**
- * POST /api/auth/forgot-password
- * Bước 1: Nhận email, tạo OTP loại 'forgot_password' và gửi mail
- */
+// ─── Forgot Password
 export const forgotPassword = async (req: Request, res: Response) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email là bắt buộc' });
