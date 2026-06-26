@@ -80,6 +80,9 @@ export default function PaymentSuccessPage() {
   const [status, setStatus] = useState<Status>('verifying');
   const [errorMsg, setErrorMsg] = useState('');
   const [countdown, setCountdown] = useState(8);
+  const [paymentType, setPaymentType] = useState<'plan' | 'token'>('plan');
+  const [tokenAmount, setTokenAmount] = useState<number>(0);
+  const [purchasedPlanName, setPurchasedPlanName] = useState<string>('');
   const hasRun = useRef(false);
 
   useEffect(() => {
@@ -91,26 +94,28 @@ export default function PaymentSuccessPage() {
     const run = async () => {
       try {
         if (!orderCode) {
-          // Không có orderCode → có thể user vào thẳng URL này
-          // Vẫn thử refresh user để lấy subscription mới nhất
           await refreshUser();
           setStatus('success');
           return;
         }
 
-        // Bước 1: Gọi backend xác minh với PayOS + kích hoạt DB
         console.log(`[PaymentSuccess] Đang verify orderCode=${orderCode}...`);
-        await verifyPayment(orderCode);
+        const result = await verifyPayment(orderCode);
 
-        // Bước 2: Refresh user state để app nhận diện VIP ngay lập tức
+        // Lưu lại metadata để hiển thị cho đúng loại sản phẩm
+        if (result.metadata?.type === 'token') {
+          setPaymentType('token');
+          setTokenAmount(result.metadata.tokenAmount);
+        } else if (result.metadata?.planName) {
+          setPurchasedPlanName(result.metadata.planName);
+        }
+
         await refreshUser();
-
         setStatus('success');
       } catch (err: any) {
         console.error('[PaymentSuccess] Lỗi verify:', err);
         setErrorMsg(err?.message || 'Không thể xác minh giao dịch');
         setStatus('error');
-        // Dù lỗi vẫn refresh để đảm bảo state mới nhất
         await refreshUser().catch(() => {});
       }
     };
@@ -118,7 +123,6 @@ export default function PaymentSuccessPage() {
     run();
   }, [searchParams, refreshUser]);
 
-  // Đếm ngược tự động về Dashboard khi thành công
   useEffect(() => {
     if (status !== 'success') return;
     const timer = setInterval(() => {
@@ -134,7 +138,8 @@ export default function PaymentSuccessPage() {
     return () => clearInterval(timer);
   }, [status, navigate]);
 
-  const planName = user?.subscription?.plan_name;
+  // Nếu không có metadata.planName, lấy dự phòng từ user.subscription
+  const displayPlanName = purchasedPlanName || user?.subscription?.plan_name;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 flex items-center justify-center p-4 relative overflow-hidden">
@@ -174,15 +179,24 @@ export default function PaymentSuccessPage() {
                 Thanh toán thành công! 🎉
               </h1>
 
-              {planName && (
-                <div className="mt-4 inline-flex items-center gap-2 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-400/30 text-indigo-300 text-sm font-semibold px-5 py-2.5 rounded-full">
-                  <Sparkles className="w-4 h-4" />
-                  Gói <span className="text-white font-black">{planName}</span> đã được kích hoạt
+              {paymentType === 'token' ? (
+                <div className="mt-4 inline-flex items-center gap-2 bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-400/30 text-amber-300 text-sm font-semibold px-5 py-2.5 rounded-full">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  Bạn đã nạp thành công <span className="text-white font-black">{tokenAmount}</span> Token AI
                 </div>
+              ) : (
+                displayPlanName && (
+                  <div className="mt-4 inline-flex items-center gap-2 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-400/30 text-indigo-300 text-sm font-semibold px-5 py-2.5 rounded-full">
+                    <Sparkles className="w-4 h-4" />
+                    Gói <span className="text-white font-black">{displayPlanName}</span> đã được kích hoạt
+                  </div>
+                )
               )}
 
               <p className="mt-6 text-white/60 text-base leading-relaxed">
-                Tài khoản của bạn đã được nâng cấp. Tất cả tính năng premium đang chờ bạn khám phá!
+                {paymentType === 'token' 
+                  ? 'Số lượng token đã được cộng vào tài khoản. Hãy mở tính năng Tạo ảnh AI để trải nghiệm ngay!'
+                  : 'Tài khoản của bạn đã được nâng cấp. Tất cả tính năng premium đang chờ bạn khám phá!'}
               </p>
 
               <p className="mt-4 text-white/40 text-sm">

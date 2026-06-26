@@ -55,6 +55,7 @@ export const authService = {
       `SELECT 
          u.id, u.email, u.name, u.role, u.is_verified, u.avatar_url,
          u.storage_used_bytes, u.max_storage_gb,
+         COALESCE(u.ai_tokens, 0) AS ai_tokens,
          us.id AS sub_id,
          us.plan_id,
          us.status AS sub_status,

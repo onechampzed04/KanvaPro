@@ -6,7 +6,8 @@ import {
   forgotPassword, verifyForgotOtp, resetPassword,
   updateAvatar, updateProfile,
   sendChangePasswordOtp, verifyChangePasswordOtp, changePassword,
-  verifyAdmin2FA, // [FIX 5] Admin 2FA
+  verifyAdmin2FA,       // [FIX 5] Admin 2FA
+  refreshAccessToken,   // [Refresh Token] Cấp lại Access Token khi hết hạn
 } from '../controllers/authController';
 import { authenticate } from '../middleware/authMiddleware';
 import { validateImageFile } from '../middleware/validateImageFile';
@@ -56,6 +57,15 @@ router.post('/verify-otp', otpLimiter, verifyOtp);
 router.post('/admin-verify-2fa', otpLimiter, verifyAdmin2FA); // [FIX 5] Admin 2FA step 2
 router.get('/me', getMe);
 router.post('/logout', logout);
+
+// Refresh Token: Frontend Interceptor gọi ngầm khi Access Token hết hạn (401)
+// withCredentials: true để cookie refreshToken được gửi kèm tự động
+const refreshLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,  // 5 phút
+  max: 30,                   // tối đa 30 request / IP (một tab nặng = 1-2 lần / 15 phút)
+  message: { error: 'TooManyRequests', message: 'Quá nhiều yêu cầu refresh. Vui lòng đăng nhập lại.' },
+});
+router.post('/refresh-token', refreshLimiter, refreshAccessToken);
 
 // Forgot Password flow
 router.post('/forgot-password', forgotPasswordLimiter, forgotPassword);

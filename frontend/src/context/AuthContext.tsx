@@ -22,6 +22,7 @@ export interface User {
   avatar_url?: string | null;
   storage_used_bytes?: number;
   max_storage_gb?: number;
+  ai_tokens?: number;
 }
 
 interface AuthContextType {
@@ -31,6 +32,7 @@ interface AuthContextType {
   logout: () => void;
   refreshUser: () => Promise<void>;
   updateAvatar: (avatarUrl: string) => void;
+  updateAiTokens: (newCount: number) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -171,15 +173,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [user?.id]);
 
+  // ─── Lắng nghe apiFetch bắn ra khi Refresh Token hết hạn (30 ngày) ──────────
+  // Giúp AuthContext biết cập nhật state user = null người dùng được thông báo lý do rõ ràng
+  useEffect(() => {
+    const handler = () => setUser(null);
+    window.addEventListener('auth:session_expired', handler);
+    return () => window.removeEventListener('auth:session_expired', handler);
+  }, []);
+
+
   const login = async (userData: User) => {
     setUser(userData);
     await fetchCurrentUser();
   };
 
   const logout = () => {
-    fetch('/api/auth/logout', { method: 'POST' }).then(() => {
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).then(() => {
       setUser(null);
+      // ─── Xóa Sạch Toàn bộ localStorage liên quan đến phiên đăng nhập ───
+      // Trước đây chỉ xóa 'token', dẫn đến lệch Workspace khi người dùng kế tiếp đăng nhập
       localStorage.removeItem('token');
+      localStorage.removeItem('kanva_workspaces');
+      localStorage.removeItem('kanva_current_workspace_id');
     });
   };
 
@@ -192,8 +207,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(prev => prev ? { ...prev, avatar_url: avatarUrl } : prev);
   }, []);
 
+  // Cập nhật số dư ai_tokens trong state ngay lập tức (không cần gọi lại API)
+  const updateAiTokens = useCallback((newCount: number) => {
+    setUser(prev => prev ? { ...prev, ai_tokens: newCount } : prev);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser, updateAvatar }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser, updateAvatar, updateAiTokens }}>
       {children}
     </AuthContext.Provider>
   );

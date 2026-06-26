@@ -13,6 +13,35 @@ const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+// ─── Dual Token Helper ────────────────────────────────────────────────────────
+// Access Token: ngắn hạn (15 phút) → gửi trong JSON body, lưu localStorage
+// Refresh Token: dài hạn (30 ngày) → set vào HttpOnly Cookie, chống XSS
+const REFRESH_SECRET: string = process.env.REFRESH_TOKEN_SECRET || 'refresh-dev-secret-key';
+
+const generateTokenPair = (userId: string, email: string) => {
+  const accessToken = jwt.sign(
+    { id: userId, email },
+    JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+  const refreshToken = jwt.sign(
+    { id: userId, email, type: 'refresh' },
+    REFRESH_SECRET,
+    { expiresIn: '30d' }
+  );
+  return { accessToken, refreshToken };
+};
+
+const setRefreshTokenCookie = (res: Response, refreshToken: string) => {
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,                                  // Chống đọc từ JS (XSS)
+    secure: process.env.NODE_ENV === 'production',   // HTTPS only ở production
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000,              // 30 ngày (ms)
+    path: '/',
+  });
+};
+
 export const register = async (req: Request, res: Response) => {
   const { email, password, name } = req.body;
 
@@ -67,14 +96,8 @@ export const verifyOtp = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({ error: 'K thấy user này' });
     }
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    const { accessToken, refreshToken } = generateTokenPair(user.id, user.email);
+    setRefreshTokenCookie(res, refreshToken);
 
     const userDto: UserDTO = {
       id: user.id,
@@ -84,7 +107,7 @@ export const verifyOtp = async (req: Request, res: Response) => {
       is_verified: user.is_verified
     };
 
-    res.json({ user: userDto, token });
+    res.json({ user: userDto, token: accessToken });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -156,18 +179,12 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    const { accessToken, refreshToken } = generateTokenPair(user.id, user.email);
+    setRefreshTokenCookie(res, refreshToken);
 
     return res.json({
-      user: { id: user.id, email: user.email, name: user.name, role: user.role, is_verified: user.is_verified },
-      token
+      user: { id: user.id, email: user.email, name: user.name, role: user.role, is_verified: user.is_verified, ai_tokens: (user as any).ai_tokens ?? 0 },
+      token: accessToken
     });
 
   } catch (error) {
@@ -205,18 +222,12 @@ export const verifyAdmin2FA = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Không đủ quyền' });
     }
 
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    const { accessToken, refreshToken } = generateTokenPair(user.id, user.email);
+    setRefreshTokenCookie(res, refreshToken);
 
     return res.json({
       user: { id: user.id, email: user.email, name: user.name, role: user.role, is_verified: user.is_verified },
-      token
+      token: accessToken
     });
   } catch (error) {
     console.error('[verifyAdmin2FA]', error);
@@ -243,6 +254,7 @@ export const getMe = async (req: Request, res: Response) => {
       avatar_url: row.avatar_url || null,
       storage_used_bytes: row.storage_used_bytes || 0,
       max_storage_gb: row.max_storage_gb || 5,
+      ai_tokens: row.ai_tokens ?? 0,
       subscription: row.sub_id ? {
         id: row.sub_id,
         plan_id: row.plan_id,
@@ -266,7 +278,55 @@ export const getMe = async (req: Request, res: Response) => {
 
 export const logout = (req: Request, res: Response) => {
   res.clearCookie('token');
+  res.clearCookie('refreshToken', { path: '/' });
   res.json({ message: 'Logged out' });
+};
+
+// ─── Refresh Token Controller ─────────────────────────────────────────────────
+/**
+ * POST /api/auth/refresh-token
+ * Frontend Interceptor gọi endpoint này ngầm khi Access Token hết hạn (401).
+ * Đọc refreshToken từ HttpOnly Cookie → verify → cấp lại Access Token mới.
+ */
+export const refreshAccessToken = async (req: Request, res: Response) => {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (!refreshToken) {
+    return res.status(401).json({ error: 'No refresh token', code: 'REFRESH_MISSING' });
+  }
+
+  try {
+    // Verify refresh token bằng REFRESH_SECRET riêng biệt
+    const decoded = jwt.verify(refreshToken, REFRESH_SECRET) as any;
+
+    if (decoded.type !== 'refresh') {
+      return res.status(401).json({ error: 'Invalid token type', code: 'REFRESH_INVALID' });
+    }
+
+    // Kiểm tra user vẫn còn tồn tại và không bị ban
+    const user = await db.getOne(
+      'SELECT id, email, status FROM users WHERE id = $1',
+      [decoded.id]
+    );
+
+    if (!user) {
+      return res.status(401).json({ error: 'User not found', code: 'USER_NOT_FOUND' });
+    }
+    if (user.status === 'banned' || user.status === 'suspended') {
+      res.clearCookie('refreshToken', { path: '/' });
+      return res.status(403).json({ error: 'Account suspended', code: 'ACCOUNT_BANNED' });
+    }
+
+    // Cấp lại cặp token mới (Rotation: Refresh Token cũ → mới để tăng bảo mật)
+    const { accessToken, refreshToken: newRefreshToken } = generateTokenPair(user.id, user.email);
+    setRefreshTokenCookie(res, newRefreshToken);
+
+    return res.json({ token: accessToken });
+  } catch (err: any) {
+    // jwt.verify ném lỗi nếu token hết hạn hoặc chữ ký sai
+    res.clearCookie('refreshToken', { path: '/' });
+    return res.status(401).json({ error: 'Refresh token expired or invalid', code: 'REFRESH_EXPIRED' });
+  }
 };
 
 // ─── Forgot Password

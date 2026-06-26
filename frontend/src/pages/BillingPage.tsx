@@ -179,79 +179,91 @@ export default function BillingPage() {
                     </td>
                   </tr>
 
-                  {/* EXPANDABLE DETAILS ROW */}
+                          {/* EXPANDABLE DETAILS ROW */}
                   {expandedRowId === item.id && (
                     <tr className="bg-slate-50/80 border-b border-slate-100">
                       <td colSpan={5} className="py-6 px-10">
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-                            {/* Gói dịch vụ */}
-                            <div className="flex items-start gap-4">
-                              <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-500 shrink-0 mt-1">
-                                <Package size={20} />
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Gói dịch vụ</p>
-                                <p className="text-base font-black text-slate-800">{(typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata)?.planName || 'Gói KanvaPro'}</p>
-                                <p className="text-xs text-slate-500 mt-1 font-medium">Truy cập toàn bộ tính năng</p>
-                              </div>
-                            </div>
+                          {(() => {
+                            const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
+                            const isToken = meta?.type === 'token';
+                            return (
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                                {/* Gói dịch vụ */}
+                                <div className="flex items-start gap-4">
+                                  <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-500 shrink-0 mt-1">
+                                    {isToken ? <Sparkles size={20} className="text-amber-500" /> : <Package size={20} />}
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Sản phẩm</p>
+                                    <p className="text-base font-black text-slate-800">
+                                      {isToken ? meta?.packageName : (meta?.planName || 'Gói KanvaPro')}
+                                    </p>
+                                    <p className="text-xs text-slate-500 mt-1 font-medium">
+                                      {isToken ? `Nạp ${meta?.tokenAmount} Token AI` : 'Truy cập toàn bộ tính năng'}
+                                    </p>
+                                  </div>
+                                </div>
 
-                            {/* Chi tiết giá */}
-                            <div className="flex items-start gap-4">
-                              <div className="w-10 h-10 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 shrink-0 mt-1">
-                                <CreditCard size={20} />
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Chi tiết thanh toán</p>
-                                <p className="text-sm font-bold text-slate-700">Giá gốc: {formatVND((typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata)?.originalAmount || item.amount)}</p>
-                                {((typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata)?.deductionValue > 0) && (
-                                  <p className="text-xs text-rose-500 font-bold mt-1 bg-rose-50 inline-block px-2 py-0.5 rounded">Cấn trừ: -{formatVND((typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata)?.deductionValue)}</p>
+                                {/* Chi tiết giá */}
+                                <div className="flex items-start gap-4">
+                                  <div className="w-10 h-10 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 shrink-0 mt-1">
+                                    <CreditCard size={20} />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Chi tiết thanh toán</p>
+                                    <p className="text-sm font-bold text-slate-700">Giá gốc: {formatVND(meta?.originalAmount || item.amount)}</p>
+                                    {(meta?.deductionValue > 0) && (
+                                      <p className="text-xs text-rose-500 font-bold mt-1 bg-rose-50 inline-block px-2 py-0.5 rounded">Cấn trừ: -{formatVND(meta?.deductionValue)}</p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Ngày bắt đầu — [ĐÃ SỬA] Lấy từ DB thay vì hardcode */}
+                                <div className="flex items-start gap-4 border-l border-slate-100 pl-8">
+                                  <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-500 shrink-0 mt-1">
+                                    <CalendarDays size={20} />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Ngày mua</p>
+                                    <p className="text-base font-bold text-slate-700">
+                                      {item.current_period_start && !isToken
+                                        ? new Date(item.current_period_start).toLocaleDateString('vi-VN')
+                                        : new Date(item.created_at).toLocaleDateString('vi-VN')
+                                      }
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {/* Ngày kết thúc — [ĐÃ SỬA] Lấy từ DB, không cộng cứng 30 ngày */}
+                                {!isToken && (
+                                  <div className="flex items-start gap-4">
+                                    <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center text-rose-500 shrink-0 mt-1">
+                                      <Clock size={20} />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Ngày kết thúc</p>
+                                      {item.current_period_end ? (
+                                        <>
+                                          <p className="text-base font-bold text-slate-700">{new Date(item.current_period_end).toLocaleDateString('vi-VN')}</p>
+                                          {(() => {
+                                            const now = new Date();
+                                            const end = new Date(item.current_period_end);
+                                            const diff = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                                            if (diff < 0) return <p className="text-xs font-bold mt-1 bg-slate-100 text-slate-500 inline-block px-2 py-0.5 rounded">Đã hết hạn</p>;
+                                            if (diff <= 7) return <p className="text-xs font-bold mt-1 bg-amber-50 text-amber-500 inline-block px-2 py-0.5 rounded">Còn {diff} ngày ⚠️</p>;
+                                            return <p className="text-xs font-bold mt-1 bg-emerald-50 text-emerald-600 inline-block px-2 py-0.5 rounded">Còn {diff} ngày</p>;
+                                          })()}
+                                        </>
+                                      ) : (
+                                        <p className="text-sm text-slate-400">—</p>
+                                      )}
+                                    </div>
+                                  </div>
                                 )}
                               </div>
-                            </div>
-
-                            {/* Ngày bắt đầu — [ĐÃ SỬA] Lấy từ DB thay vì hardcode */}
-                            <div className="flex items-start gap-4 border-l border-slate-100 pl-8">
-                              <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-500 shrink-0 mt-1">
-                                <CalendarDays size={20} />
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Ngày bắt đầu</p>
-                                <p className="text-base font-bold text-slate-700">
-                                  {item.current_period_start
-                                    ? new Date(item.current_period_start).toLocaleDateString('vi-VN')
-                                    : new Date(item.created_at).toLocaleDateString('vi-VN')
-                                  }
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Ngày kết thúc — [ĐÃ SỬA] Lấy từ DB, không cộng cứng 30 ngày */}
-                            <div className="flex items-start gap-4">
-                              <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center text-rose-500 shrink-0 mt-1">
-                                <Clock size={20} />
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Ngày kết thúc</p>
-                                {item.current_period_end ? (
-                                  <>
-                                    <p className="text-base font-bold text-slate-700">{new Date(item.current_period_end).toLocaleDateString('vi-VN')}</p>
-                                    {(() => {
-                                      const now = new Date();
-                                      const end = new Date(item.current_period_end);
-                                      const diff = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-                                      if (diff < 0) return <p className="text-xs font-bold mt-1 bg-slate-100 text-slate-500 inline-block px-2 py-0.5 rounded">Đã hết hạn</p>;
-                                      if (diff <= 7) return <p className="text-xs font-bold mt-1 bg-amber-50 text-amber-500 inline-block px-2 py-0.5 rounded">Còn {diff} ngày ⚠️</p>;
-                                      return <p className="text-xs font-bold mt-1 bg-emerald-50 text-emerald-600 inline-block px-2 py-0.5 rounded">Còn {diff} ngày</p>;
-                                    })()}
-                                  </>
-                                ) : (
-                                  <p className="text-sm text-slate-400">—</p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
+                            );
+                          })()}
 
                           {/* Tính năng của gói */}
                           {(() => {
@@ -336,14 +348,24 @@ export default function BillingPage() {
               <tbody>
                 <tr className="border-b border-slate-200">
                   <td className="py-5">
-                    <p className="font-bold text-lg">{selectedInvoice.metadata?.planName || 'Gói KanvaPro'}</p>
-                    <p className="text-sm text-slate-500">Kích hoạt tài khoản chuyên nghiệp</p>
-                    {/* Hiển thị thời hạn sử dụng từ DB */}
-                    {selectedInvoice.current_period_start && selectedInvoice.current_period_end && (
-                      <p className="text-xs text-slate-400 mt-1">
-                        Hiệu lực: {new Date(selectedInvoice.current_period_start).toLocaleDateString('vi-VN')} — {new Date(selectedInvoice.current_period_end).toLocaleDateString('vi-VN')}
-                      </p>
-                    )}
+                    {(() => {
+                      const meta = typeof selectedInvoice.metadata === 'string' ? JSON.parse(selectedInvoice.metadata) : selectedInvoice.metadata;
+                      const isToken = meta?.type === 'token';
+                      return (
+                        <>
+                          <p className="font-bold text-lg">{isToken ? meta?.packageName : (meta?.planName || 'Gói KanvaPro')}</p>
+                          <p className="text-sm text-slate-500">
+                            {isToken ? `Nạp thêm ${meta?.tokenAmount} Token AI vào tài khoản` : 'Kích hoạt tài khoản chuyên nghiệp'}
+                          </p>
+                          {/* Hiển thị thời hạn sử dụng từ DB */}
+                          {selectedInvoice.current_period_start && selectedInvoice.current_period_end && !isToken && (
+                            <p className="text-xs text-slate-400 mt-1">
+                              Hiệu lực: {new Date(selectedInvoice.current_period_start).toLocaleDateString('vi-VN')} — {new Date(selectedInvoice.current_period_end).toLocaleDateString('vi-VN')}
+                            </p>
+                          )}
+                        </>
+                      );
+                    })()}
                   </td>
                   <td className="py-5 font-bold text-xl text-right">
                     {formatVND(selectedInvoice.amount)}

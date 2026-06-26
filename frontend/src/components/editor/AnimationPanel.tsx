@@ -3,13 +3,34 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { X, Play, Square, GripVertical, Zap, Users, ChevronUp } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 
-const ANIMS = [
-  { id: 'none', label: 'None' }, { id: 'appear', label: 'Appear' },
-  { id: 'fade', label: 'Fade' }, { id: 'flyIn', label: 'Fly In' },
-  { id: 'floatIn', label: 'Float In' }, { id: 'split', label: 'Split' },
-  { id: 'wipe', label: 'Wipe' }, { id: 'zoom', label: 'Zoom' },
-  { id: 'bounce', label: 'Bounce' }, { id: 'swivel', label: 'Swivel' },
+const ANIM_GROUPS = [
+  {
+    label: 'Basic',
+    anims: [
+      { id: 'none', label: 'None' },
+      { id: 'fade', label: 'Fade' },
+      { id: 'panLeft', label: 'Pan Left' },
+      { id: 'panRight', label: 'Pan Right' },
+      { id: 'panUp', label: 'Pan Up' },
+      { id: 'panDown', label: 'Pan Down' },
+      { id: 'rise', label: 'Rise' },
+      { id: 'wipe', label: 'Wipe' },
+      { id: 'pop', label: 'Pop' },
+      { id: 'breathe', label: 'Breathe' },
+    ]
+  },
+  {
+    label: 'Dynamic',
+    anims: [
+      { id: 'tumble', label: 'Tumble' },
+      { id: 'neon', label: 'Neon' },
+      { id: 'scrapbook', label: 'Scrapbook' },
+      { id: 'stomp', label: 'Stomp' },
+      { id: 'bounce', label: 'Bounce' },
+    ]
+  }
 ];
+const ANIMS = ANIM_GROUPS.flatMap(g => g.anims);
 
 // ── Visual thumbnail for easy element identification ──────────────────────
 function ElementThumbnail({ el }: { el: any }) {
@@ -349,22 +370,29 @@ export default function AnimationPanel({
                                 className="overflow-hidden border-t border-slate-100" onClick={e => e.stopPropagation()}>
                                 <div className="p-3 space-y-2.5">
 
-                                  {/* Anim picker */}
-                                  <div className="grid grid-cols-3 gap-1">
-                                    {ANIMS.map(a => {
-                                      const cur = animTab === 'in' ? el.animation?.in : el.animation?.out;
-                                      return (
-                                        <button key={a.id} onClick={() => {
-                                          const na = { ...(el.animation || { in: 'none', out: 'none' }) };
-                                          if (animTab === 'in') { na.in = a.id; if (na.sync !== false) na.out = a.id; }
-                                          else { na.out = a.id; (na as any).sync = false; }
-                                          updateEl(el.id, { animation: na });
-                                        }}
-                                          className={`py-1.5 text-[10px] font-semibold rounded-lg border transition ${cur === a.id ? (animTab === 'in' ? 'bg-violet-100 border-violet-400 text-violet-700' : 'bg-rose-100 border-rose-400 text-rose-700') : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-violet-300'}`}>
-                                          {a.label}
-                                        </button>
-                                      );
-                                    })}
+                                  {/* Anim picker grouped */}
+                                  <div className="space-y-3">
+                                    {ANIM_GROUPS.map(group => (
+                                      <div key={group.label}>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">{group.label}</p>
+                                        <div className="grid grid-cols-3 gap-1">
+                                          {group.anims.map(a => {
+                                            const cur = animTab === 'in' ? el.animation?.in : el.animation?.out;
+                                            return (
+                                              <button key={a.id} onClick={() => {
+                                                const na = { ...(el.animation || { in: 'none', out: 'none' }) };
+                                                if (animTab === 'in') { na.in = a.id; if (na.sync !== false) na.out = a.id; }
+                                                else { na.out = a.id; (na as any).sync = false; }
+                                                updateEl(el.id, { animation: na });
+                                              }}
+                                                className={`py-1.5 text-[10px] font-semibold rounded-lg border transition ${cur === a.id ? (animTab === 'in' ? 'bg-violet-100 border-violet-400 text-violet-700' : 'bg-rose-100 border-rose-400 text-rose-700') : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-violet-300'}`}>
+                                                {a.label}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ))}
                                   </div>
 
                                   {/* Step grouping controls */}

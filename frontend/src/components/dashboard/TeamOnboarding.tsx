@@ -143,7 +143,7 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
               </label>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setSeats(Math.max(1 + emails.length, Math.max(isUpgrade ? currentMaxMembers + 1 : 1, seats - 1)))}
+                  onClick={() => setSeats(Math.max(1 + emails.length, Math.max(2, seats - 1)))}
                   className="w-12 h-12 rounded-2xl bg-white border-2 border-slate-200 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center text-slate-500 font-black text-xl transition"
                 >
                   -

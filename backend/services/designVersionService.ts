@@ -6,8 +6,8 @@ export const designVersionService = {
     createVersionSnapshot: async (designId: string, userId: string) => {
         const client = await db.connect();
         try {
-            // Lấy toàn bộ Pages nguyên gốc từ DB
-            const pagesRes = await client.query(`SELECT * FROM design_pages WHERE design_id = $1`, [designId]);
+            // Lấy toàn bộ Pages nguyên gốc từ DB, Sắp xếp theo thứ tự trang
+            const pagesRes = await client.query(`SELECT * FROM design_pages WHERE design_id = $1 ORDER BY page_order ASC`, [designId]);
             
             // Lấy toàn bộ Elements nguyên gốc từ DB
             const elementsRes = await client.query(`

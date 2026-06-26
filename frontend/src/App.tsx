@@ -40,6 +40,18 @@ function GuestRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Gác cổng cho toàn bộ khu vực Admin — chặn TRƯỚC khi render bất kỳ UI Admin nào.
+// Dùng ở App.tsx thay vì dùng useEffect bên trong AdminLayout (chạy sau khi đã render).
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'admin' && user.role !== 'moderator') return <Navigate to="/" replace />;
+
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -63,7 +75,7 @@ export default function App() {
               <Route path="/storage" element={<ProtectedRoute><StoragePage /></ProtectedRoute>} />
 
               {/* ── Admin Panel ── */}
-              <Route path="/admin" element={<AdminLayout />}>
+              <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
                 <Route index element={<AdminDashboard />} />
                 <Route path="users" element={<AdminUsers />} />
                 <Route path="assets" element={<AdminAssets />} />

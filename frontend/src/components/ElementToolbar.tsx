@@ -1,7 +1,7 @@
 // src/components/ElementToolbar.tsx
 import React, { useState } from 'react';
 import { 
-  Bold, Italic, Underline, ArrowUp, ArrowDown, Trash2, Layers, Zap, Eraser, Brush, Scissors,
+  Bold, Italic, Underline, ArrowUp, ArrowDown, Trash2, Layers, Zap, Eraser, Brush, Scissors, Copy,
   Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Settings, SlidersHorizontal, List, Droplet, Maximize
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,15 +18,16 @@ interface ElementToolbarProps {
   onRemoveBackground?: (element: any) => void;
   onBrushErase?: (element: any) => void;
   onCrop?: (element: any) => void;
+  onDuplicate?: () => void;
 }
 
 export default function ElementToolbar({
   element, onUpdate, onDelete, onMove, fontList,
-  onTogglePosition, onToggleAnimate, onAlign, onRemoveBackground, onBrushErase, onCrop,
+  onTogglePosition, onToggleAnimate, onAlign, onRemoveBackground, onBrushErase, onCrop, onDuplicate
 }: ElementToolbarProps) {
-  const [activePopover, setActivePopover] = useState<'spacing' | 'border' | 'opacity' | 'align' | null>(null);
+  const [activePopover, setActivePopover] = useState<'spacing' | 'border' | 'opacity' | 'align' | 'font' | null>(null);
 
-  const togglePopover = (popover: 'spacing' | 'border' | 'opacity' | 'align') => {
+  const togglePopover = (popover: 'spacing' | 'border' | 'opacity' | 'align' | 'font') => {
     setActivePopover(prev => prev === popover ? null : popover);
   };
 
@@ -81,18 +82,52 @@ export default function ElementToolbar({
       {element.type === 'text' && (
         <>
           <div className="flex items-center border-r border-slate-200 pr-3 gap-2 shrink-0">
-            <div className="relative">
-              <select value={element.fontFamily || 'Arial'} onChange={(e) => handleChange('fontFamily', e.target.value)} className="appearance-none text-[13px] h-[34px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl pl-3 pr-8 w-32 font-bold text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 shadow-sm transition cursor-pointer">
-                {fontList.map(f => (<option key={f} value={f} style={{ fontFamily: f }}>{f}</option>))}
-              </select>
-              <div className="absolute inset-y-0 right-2.5 flex items-center pointer-events-none text-slate-400">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-              </div>
+            <div className="relative group">
+              <button 
+                onClick={() => togglePopover('font')}
+                className="flex items-center justify-between text-[13px] h-[34px] bg-slate-100/80 hover:bg-slate-200/60 border border-transparent hover:border-slate-300 rounded-lg pl-3 pr-2 w-36 sm:w-40 font-semibold text-slate-700 outline-none focus:bg-white focus:border-violet-500 focus:ring-4 focus:ring-violet-500/10 shadow-sm transition-all cursor-pointer"
+                style={{ fontFamily: element.fontFamily || 'Arial' }}
+              >
+                <span className="truncate">{element.fontFamily || 'Arial'}</span>
+                <div className={`text-slate-400 group-hover:text-slate-600 transition-transform duration-200 ${activePopover === 'font' ? 'rotate-180' : ''}`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                </div>
+              </button>
+              
+              <AnimatePresence>
+                {activePopover === 'font' && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -5, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -5, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute top-full left-0 mt-1.5 w-48 max-h-[300px] overflow-y-auto bg-white/95 backdrop-blur-xl border border-slate-200 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.15)] rounded-xl z-[100] p-1.5 scrollbar-thin scrollbar-thumb-slate-200"
+                  >
+                    {fontList.map(f => (
+                      <button
+                        key={f}
+                        onClick={() => { handleChange('fontFamily', f); setActivePopover(null); }}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-[13px] transition-colors flex items-center justify-between ${
+                          (element.fontFamily || 'Arial') === f 
+                            ? 'bg-violet-50 text-violet-700 font-bold' 
+                            : 'text-slate-700 hover:bg-slate-100 font-medium hover:text-slate-900'
+                        }`}
+                        style={{ fontFamily: f }}
+                      >
+                        <span className="truncate">{f}</span>
+                        {(element.fontFamily || 'Arial') === f && (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        )}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             
             <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-sm overflow-hidden h-[34px]">
               <button onClick={() => handleChange('fontSize', Math.max(1, (element.fontSize || 24) - 1))} className="px-2.5 h-full flex items-center justify-center hover:bg-indigo-50 hover:text-indigo-600 transition-colors border-r border-slate-200 font-bold text-slate-600">-</button>
-              <input type="number" value={Math.round(element.fontSize || 24)} onChange={(e) => handleChange('fontSize', parseInt(e.target.value))} className="w-12 text-[13px] font-bold text-slate-800 bg-transparent py-1 outline-none text-center appearance-none" />
+              <input type="number" value={Math.round(element.fontSize || 24)} onChange={(e) => handleChange('fontSize', parseInt(e.target.value) || 1)} className="w-12 text-[13px] font-bold text-slate-800 bg-transparent py-1 outline-none text-center appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
               <button onClick={() => handleChange('fontSize', (element.fontSize || 24) + 1)} className="px-2.5 h-full flex items-center justify-center hover:bg-indigo-50 hover:text-indigo-600 transition-colors border-l border-slate-200 font-bold text-slate-600">+</button>
             </div>
             
@@ -228,7 +263,8 @@ export default function ElementToolbar({
         <button onClick={() => onMove('up')} title="Bring Forward" className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-800 rounded-lg transition"><ArrowUp size={16} strokeWidth={2.5} /></button>
         <button onClick={() => onMove('down')} title="Send Backward" className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-800 rounded-lg transition"><ArrowDown size={16} strokeWidth={2.5} /></button>
         
-        <button onClick={onDelete} title="Delete" className="p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition ml-1"><Trash2 size={16} strokeWidth={2.5} /></button>
+        {onDuplicate && <button onClick={onDuplicate} title="Duplicate" className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-800 rounded-lg transition ml-1"><Copy size={16} strokeWidth={2.5} /></button>}
+        <button onClick={onDelete} title="Delete" className="p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition"><Trash2 size={16} strokeWidth={2.5} /></button>
       </div>
       )}
     </div>

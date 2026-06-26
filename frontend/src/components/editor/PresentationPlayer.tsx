@@ -260,32 +260,99 @@ export default function PresentationPlayer({
       window.innerHeight / stageH
     );
 
-    // Apply animation transforms to elements currently animating in
     const applyAnimTransform = (el: any): any => {
+      let a = { ...el };
+      const baseOpacity = el.opacity ?? 1;
+
+      // Hiệu ứng Breathe lặp vô hạn (không dùng animProgress)
+      if (el.animation?.in === 'breathe') {
+        const breathePhase = (Date.now() / 1000) * 3;
+        const scaleMod = 1 + Math.sin(breathePhase) * 0.05;
+        a.scaleX = (el.scaleX || 1) * scaleMod;
+        a.scaleY = (el.scaleY || 1) * scaleMod;
+      }
+
       if (
         animatingStep >= 0 && animProgress < 1 &&
         (el.animationOrder ?? 0) === animatingStep &&
         el.animation?.in && el.animation.in !== 'none'
       ) {
         const ease = 1 - Math.pow(1 - animProgress, 3);
-        const baseOpacity = el.opacity ?? 1;
-        let a = { ...el };
+        
+        const easeOutBack = (x: number): number => {
+          const c1 = 1.70158;
+          const c3 = c1 + 1;
+          return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+        };
+        
+        const easeOutBounce = (x: number): number => {
+          const n1 = 7.5625;
+          const d1 = 2.75;
+          if (x < 1 / d1) return n1 * x * x;
+          if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+          if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+          return n1 * (x -= 2.625 / d1) * x + 0.984375;
+        };
+
         switch (el.animation.in) {
           case 'appear':   a.opacity = animProgress > 0 ? baseOpacity : 0; break;
           case 'fade':     a.opacity = baseOpacity * ease; break;
+          case 'panLeft':  a.x = el.x + 150 * (1 - ease); a.opacity = baseOpacity * ease; break;
+          case 'panRight': a.x = el.x - 150 * (1 - ease); a.opacity = baseOpacity * ease; break;
+          case 'panUp':    a.y = el.y + 150 * (1 - ease); a.opacity = baseOpacity * ease; break;
+          case 'panDown':  a.y = el.y - 150 * (1 - ease); a.opacity = baseOpacity * ease; break;
+          case 'rise':     a.y = el.y + 100 * (1 - ease); a.opacity = baseOpacity * ease; break;
+          case 'wipe':     a.scaleX = (el.scaleX || 1) * ease; a.opacity = baseOpacity * ease; break;
+          case 'pop': {
+            const popEase = easeOutBack(animProgress);
+            a.scaleX = (el.scaleX || 1) * popEase;
+            a.scaleY = (el.scaleY || 1) * popEase;
+            a.opacity = animProgress > 0 ? baseOpacity : 0;
+            break;
+          }
+          case 'tumble':
+            a.rotation = (el.rotation || 0) - 720 * (1 - ease);
+            a.x = el.x - 200 * (1 - ease);
+            a.opacity = baseOpacity * ease;
+            break;
+          case 'neon':
+            a.opacity = Math.random() > 0.5 ? baseOpacity : baseOpacity * 0.2;
+            break;
+          case 'scrapbook': {
+            const steps = 6;
+            const steppedProgress = Math.floor(animProgress * steps) / steps;
+            a.scaleX = (el.scaleX || 1) * steppedProgress;
+            a.scaleY = (el.scaleY || 1) * steppedProgress;
+            a.rotation = (el.rotation || 0) + (Math.random() - 0.5) * 20 * (1 - steppedProgress);
+            a.opacity = baseOpacity * steppedProgress;
+            break;
+          }
+          case 'stomp': {
+            const stompEase = Math.min(1, animProgress * 4);
+            a.scaleX = (el.scaleX || 1) * (1 + 2 * (1 - stompEase));
+            a.scaleY = (el.scaleY || 1) * (1 + 2 * (1 - stompEase));
+            a.opacity = baseOpacity * stompEase;
+            break;
+          }
+          case 'bounce': {
+            const bounceEase = easeOutBounce(animProgress);
+            a.y = el.y - 150 * (1 - bounceEase);
+            a.opacity = animProgress > 0 ? baseOpacity : 0;
+            break;
+          }
+          // Các hiệu ứng cũ
           case 'flyIn':    a.y = el.y + (1 - ease) * 200; a.opacity = baseOpacity * ease; break;
           case 'floatIn':  a.y = el.y + (1 - ease) * 50;  a.opacity = baseOpacity * ease; break;
           case 'zoom':     a.scaleX = (el.scaleX || 1) * ease; a.scaleY = (el.scaleY || 1) * ease; a.opacity = baseOpacity * ease; break;
           case 'growAndTurn': a.scaleX = (el.scaleX||1)*ease; a.scaleY = (el.scaleY||1)*ease; a.rotation = (el.rotation||0) - 90*(1-ease); a.opacity = baseOpacity*ease; break;
           case 'swivel':   a.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2); break;
-          case 'bounce': { const s = 1 - Math.cos(animProgress * Math.PI * 3) * Math.exp(-animProgress * 5); a.scaleX = (el.scaleX||1)*s; a.scaleY = (el.scaleY||1)*s; break; }
-          case 'wipe':     a.scaleX = (el.scaleX || 1) * ease; a.opacity = baseOpacity * ease; break;
-          case 'split':    a.scaleY = (el.scaleY || 1) * ease; a.opacity = baseOpacity * ease; break;
-          default:         a.opacity = baseOpacity * ease; break;
+          default:         if (el.animation.in !== 'breathe') a.opacity = baseOpacity * ease; break;
         }
-        return a;
+      } else if (animatingStep >= 0 && animProgress < 1 && (el.animationOrder ?? 0) > animatingStep) {
+         // Hide future elements entirely if we are currently animating a prior step
+         a.opacity = 0;
       }
-      return el;
+      return a;
     };
 
     const visibleElements = currentPage.elements

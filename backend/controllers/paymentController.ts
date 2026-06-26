@@ -16,6 +16,11 @@ export const paymentController = {
         return res.status(400).json({ error: 'Thiếu thông tin gói (planId, planName)' });
       }
 
+      // Nếu có truyền số lượng thành viên (Gói Team)
+      if (membersCount !== undefined && membersCount < 2) {
+        return res.status(400).json({ error: 'Gói nhóm (Team) yêu cầu phải có tối thiểu 2 thành viên.' });
+      }
+
       if (teamId) {
         const teamCheck = await db.query(
           `SELECT id FROM teams WHERE id = $1 AND owner_id = $2 AND is_deleted = false`,
@@ -44,6 +49,35 @@ export const paymentController = {
     } catch (error: any) {
       console.error('Lỗi ở paymentController.createCheckout:', error);
       res.status(500).json({ error: error?.message || 'Lỗi server khi khởi tạo thanh toán' });
+    }
+  },
+
+  // ----------------------------------------------------------------------
+  // 1b. Tạo link thanh toán cho gói mua Token AI
+  // ----------------------------------------------------------------------
+  createTokenCheckout: async (req: Request, res: Response) => {
+    try {
+      const { packageId } = req.body;
+      const userId = (req as any).user.id;
+
+      if (!packageId) {
+        return res.status(400).json({ error: 'Thiếu packageId' });
+      }
+
+      const checkoutUrl = await paymentService.createPaymentLink(
+        userId,
+        '',       // planId không dùng với token
+        '',       // planName không dùng với token
+        undefined,
+        undefined,
+        undefined,
+        true,     // isToken = true
+        packageId
+      );
+      res.json({ checkoutUrl });
+    } catch (error: any) {
+      console.error('Lỗi ở paymentController.createTokenCheckout:', error);
+      res.status(500).json({ error: error?.message || 'Lỗi server khi khởi tạo thanh toán token' });
     }
   },
 

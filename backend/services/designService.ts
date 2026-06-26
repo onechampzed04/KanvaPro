@@ -226,27 +226,32 @@ export const designService = {
 
     getSharedDesigns: async (userId: string, workspaceId?: string | null): Promise<any[]> => {
         if (workspaceId && workspaceId !== 'personal') {
+            // Đứng ở Team Workspace: Chỉ hiển thị các thiết kế được chia sẻ trực tiếp
+            // nếu thiết kế đó cũng thuộc về team hiện tại.
             const result = await db.query(`
                 SELECT d.*, ds.role as my_permission, u.email as owner_email, u.avatar_url as owner_avatar
                 FROM designs d 
                 JOIN design_shares ds ON d.id = ds.design_id 
                 LEFT JOIN users u ON d.user_id = u.id
                 WHERE ds.user_id = $1 AND d.user_id != $1 AND d.team_id = $2 AND d.is_deleted = false 
-                ORDER BY ds.created_at DESC
+                ORDER BY d.updated_at DESC
             `, [userId, workspaceId]);
             return result.rows;
         } else {
+            // Đứng ở Personal Workspace: Hiển thị TOÀN BỘ các thiết kế được chia sẻ cho user
+            // (bất kể thiết kế đó thuộc về personal hay thuộc team của người khác).
             const result = await db.query(`
                 SELECT d.*, ds.role as my_permission, u.email as owner_email, u.avatar_url as owner_avatar
                 FROM designs d 
                 JOIN design_shares ds ON d.id = ds.design_id 
                 LEFT JOIN users u ON d.user_id = u.id
-                WHERE ds.user_id = $1 AND d.user_id != $1 AND d.team_id IS NULL AND d.is_deleted = false 
-                ORDER BY ds.created_at DESC
+                WHERE ds.user_id = $1 AND d.user_id != $1 AND d.is_deleted = false 
+                ORDER BY d.updated_at DESC
             `, [userId]);
             return result.rows;
         }
     },
+
 
     getDesignById: async (id: string): Promise<Design | null> => {
         const result = await db.query(`SELECT * FROM designs WHERE id = $1`, [id]);

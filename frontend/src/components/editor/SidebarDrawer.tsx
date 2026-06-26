@@ -4,12 +4,13 @@
 // - searchResults grid:  tương tự, tránh render hàng trăm sticker cùng lúc.
 // Layout lưới 2 cột → "row" = 1 cặp item → estimateSize = chiều cao 1 row.
 import React, { useState, useRef } from 'react';
-import { Search, Sparkles, Crown } from 'lucide-react';
+import { Search, Sparkles, Crown, Zap, ShoppingCart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import ProUpgradeModal from './ProUpgradeModal';
-import { type User } from '../../context/AuthContext';
+import { type User, useAuth } from '../../context/AuthContext';
 import { useSubscription } from '../../hooks/useSubscription';
+import TokenPurchaseModal from '../dashboard/TokenPurchaseModal.tsx';
 
 const PPTX_ANIMATIONS = [
   { id: 'none', label: 'None' },
@@ -87,6 +88,8 @@ export default function SidebarDrawer({
   const isOpen = !!((activeTab && activeTab !== 'tools') || showPositionBox || showAnimateBox);
   const [animTab, setAnimTab] = useState<'in' | 'out'>('in');
   const { isPro } = useSubscription();
+  const { user: authUser, updateAiTokens } = useAuth();
+  const aiTokens = authUser?.ai_tokens ?? 0;
 
   // Pro gate modal
   const [proModal, setProModal] = useState<{ feature: string; desc?: string } | null>(null);
@@ -156,30 +159,47 @@ export default function SidebarDrawer({
   // AI Image State
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showTokenModal, setShowTokenModal] = useState(false);
 
   const handleGenerateAiImage = async () => {
     if (!aiPrompt.trim()) return;
-    // ── PRO GATE ──
-    if (!requirePro('AI Image Generator', 'Tạo ảnh bằng AI chỉ dành cho tài khoản Pro. Nâng cấp để mở khóa!')) return;
+    setAiError(null);
     setIsGeneratingAi(true);
     try {
-      const response = await fetch('http://localhost:5000/generate-image', {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/ai/generate-image', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: aiPrompt })
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ prompt: aiPrompt }),
+        credentials: 'include',
       });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to generate image');
-      }
+
       const data = await response.json();
+
+      if (!response.ok) {
+        if (data.code === 'INSUFFICIENT_TOKENS') {
+          setAiError('INSUFFICIENT_TOKENS');
+        } else {
+          setAiError(data.error || 'Đã xảy ra lỗi khi tạo ảnh.');
+        }
+        return;
+      }
+
       if (data.url) {
         addImageOriginal(data.url, 1024, 1024, { createdByAi: true });
         setAiPrompt('');
+        // Cập nhật số dư token trong context ngay lập tức (không cần refetch)
+        if (typeof data.ai_tokens_remaining === 'number') {
+          updateAiTokens(data.ai_tokens_remaining);
+        }
       }
     } catch (error: any) {
-      console.error("AI Image Generation Error:", error);
-      alert(`Đã xảy ra lỗi: ${error.message}`);
+      console.error('AI Image Generation Error:', error);
+      setAiError('Không thể kết nối đến server. Vui lòng thử lại.');
     } finally {
       setIsGeneratingAi(false);
     }
@@ -545,36 +565,99 @@ export default function SidebarDrawer({
               {/* TAB: AI IMAGE */}
               {activeTab === 'ai_image' && (
                 <div className="space-y-4">
+
+                  {/* Token Balance Badge */}
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2">
+                      <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-extrabold shadow-sm ${
+                        aiTokens > 10
+                          ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white'
+                          : aiTokens > 0
+                            ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                            : 'bg-red-100 text-red-700 border border-red-300'
+                      }`}>
+                        <Zap size={11} strokeWidth={2.5} />
+                        {aiTokens} token còn lại
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowTokenModal(true)}
+                      className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition"
+                    >
+                      <ShoppingCart size={11} />
+                      Mua thêm
+                    </button>
+                  </div>
+
+                  {/* INSUFFICIENT_TOKENS Error Banner */}
+                  <AnimatePresence>
+                    {aiError === 'INSUFFICIENT_TOKENS' && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        className="p-3 bg-red-50 border border-red-200 rounded-xl flex flex-col gap-2"
+                      >
+                        <p className="text-[11px] font-bold text-red-700">⚠️ Bạn đã hết token AI!</p>
+                        <p className="text-[10px] text-red-600">Mua thêm gói token để tiếp tục tạo ảnh bằng AI.</p>
+                        <button
+                          onClick={() => { setShowTokenModal(true); setAiError(null); }}
+                          className="w-full py-2 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white text-[11px] font-extrabold rounded-lg shadow-sm flex items-center justify-center gap-1.5 transition-all"
+                        >
+                          <ShoppingCart size={12} />
+                          Mua gói token ngay
+                        </button>
+                      </motion.div>
+                    )}
+                    {aiError && aiError !== 'INSUFFICIENT_TOKENS' && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        className="p-3 bg-red-50 border border-red-200 rounded-xl"
+                      >
+                        <p className="text-[11px] font-bold text-red-700">⚠️ {aiError}</p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Main Generator Card */}
                   <div className="p-4 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 shadow-sm">
-                    <h3 className="font-extrabold text-indigo-900 mb-2 flex items-center gap-2">
+                    <h3 className="font-extrabold text-indigo-900 mb-1 flex items-center gap-2">
                       <Sparkles size={16} className="text-indigo-500" /> AI Image Generator
                     </h3>
-                    <p className="text-[10px] text-indigo-700/80 mb-4 font-bold">Mô tả bức ảnh bạn muốn vẽ, AI sẽ tạo ra nó trong vài giây!</p>
+                    <p className="text-[10px] text-indigo-700/80 mb-4 font-bold">Mô tả bức ảnh bạn muốn vẽ, AI sẽ tạo ra nó trong vài giây! (Tốn 1 token/ảnh)</p>
 
                     <textarea
                       value={aiPrompt}
-                      onChange={(e) => setAiPrompt(e.target.value)}
+                      onChange={(e) => { setAiPrompt(e.target.value); if (aiError) setAiError(null); }}
                       placeholder="Ví dụ: Một chú chó Corgi mặc đồ phi hành gia đang trên sao Hỏa, 3D render..."
                       className="w-full p-3 rounded-xl border-none ring-1 ring-indigo-200 focus:ring-2 focus:ring-indigo-500 bg-white shadow-sm text-xs font-bold text-slate-700 resize-none h-28 mb-3 outline-none"
                     />
 
                     <button
                       onClick={handleGenerateAiImage}
-                      disabled={isGeneratingAi || !aiPrompt.trim()}
-                      className={`w-full py-3 rounded-xl font-extrabold text-white text-xs shadow-md flex items-center justify-center gap-2 transition-all ${isGeneratingAi || !aiPrompt.trim()
-                        ? 'bg-slate-300 cursor-not-allowed'
-                        : 'bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 hover:shadow-lg'
-                        }`}
+                      disabled={isGeneratingAi || !aiPrompt.trim() || aiTokens <= 0}
+                      className={`w-full py-3 rounded-xl font-extrabold text-white text-xs shadow-md flex items-center justify-center gap-2 transition-all ${
+                        isGeneratingAi || !aiPrompt.trim() || aiTokens <= 0
+                          ? 'bg-slate-300 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 hover:shadow-lg'
+                      }`}
                     >
                       {isGeneratingAi ? (
                         <>
                           <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
                           Đang vẽ ảnh...
                         </>
+                      ) : aiTokens <= 0 ? (
+                        <>
+                          <ShoppingCart size={14} strokeWidth={2.5} />
+                          Hết token — Mua thêm
+                        </>
                       ) : (
                         <>
                           <Sparkles size={14} strokeWidth={2.5} />
-                          Tạo ảnh (Generate)
+                          Tạo ảnh ({aiTokens} token)
                         </>
                       )}
                     </button>
@@ -786,6 +869,11 @@ export default function SidebarDrawer({
           featureDescription={proModal.desc}
           onClose={() => setProModal(null)}
         />
+      )}
+
+      {/* Token Purchase Modal */}
+      {showTokenModal && (
+        <TokenPurchaseModal onClose={() => setShowTokenModal(false)} />
       )}
     </>);
 }

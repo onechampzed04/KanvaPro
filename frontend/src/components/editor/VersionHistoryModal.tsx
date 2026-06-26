@@ -13,7 +13,7 @@ interface VersionHistoryModalProps {
 export default function VersionHistoryModal({ designId, versions, isRestoring, isOwner, onClose, onRestore }: VersionHistoryModalProps) {
   return (
     <div className="fixed inset-0 bg-slate-900/40 z-[9999] flex items-center justify-center backdrop-blur-md transition-all">
-      <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] w-[480px] overflow-hidden flex flex-col border border-white/50 relative">
+      <div className="bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] w-[95vw] max-w-[600px] md:max-w-[650px] overflow-hidden flex flex-col border border-white/50 relative">
         
         {/* Glow background effect */}
         <div className="absolute top-0 inset-x-0 h-32 bg-gradient-to-b from-indigo-50/80 to-transparent pointer-events-none" />
@@ -52,48 +52,50 @@ export default function VersionHistoryModal({ designId, versions, isRestoring, i
                   return (
                     <div
                       key={v.id}
-                      className="relative flex items-center justify-between mb-4 group"
+                      className="relative flex items-center mb-4 group"
                     >
                       {/* Timeline dot */}
                       <div className="absolute left-[-16px] w-8 h-8 flex items-center justify-center">
                         <div className={`w-3 h-3 rounded-full border-2 ${index === 0 ? 'bg-white border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] ring-4 ring-indigo-50' : 'bg-slate-200 border-white group-hover:bg-indigo-300'} transition-all z-10`} />
                       </div>
 
-                      <div className={`ml-8 flex-1 p-4 rounded-2xl border transition-all duration-200 flex items-center justify-between ${
+                      <div className={`ml-8 flex-1 min-w-0 p-4 rounded-2xl border transition-all duration-200 flex items-center justify-between gap-2 sm:gap-3 ${
                         index === 0 
                           ? 'bg-gradient-to-r from-indigo-50/50 to-white border-indigo-100 shadow-sm' 
-                          : 'bg-white border-slate-100 shadow-sm hover:shadow-md hover:border-indigo-200'
+                          : 'bg-white border-slate-100 shadow-sm group-hover:shadow-md group-hover:border-indigo-200'
                       }`}>
-                        <div>
+                        {/* Text info — flex-1 min-w-0 để co giãn và tự truncate nếu quá dài */}
+                        <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className={`font-bold text-sm ${index === 0 ? 'text-indigo-700' : 'text-slate-700'}`}>
                               {index === 0 ? 'Mới nhất' : `Phiên bản ${v.version_number}`}
                             </span>
-                            {index === 0 && <CheckCircle2 size={14} className="text-indigo-500" />}
+                            {index === 0 && <CheckCircle2 size={14} className="text-indigo-500 shrink-0" />}
                           </div>
                           <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 mt-1.5">
-                            <Clock size={12} />
-                            <span>{new Date(v.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-                            <span className="mx-1">•</span>
-                            <span className="truncate max-w-[100px]">{v.creator_name || 'You'}</span>
+                            <Clock size={12} className="shrink-0" />
+                            <span className="truncate">{new Date(v.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                            <span className="mx-1 shrink-0">•</span>
+                            <span className="truncate max-w-[120px]">{v.creator_name || 'You'}</span>
                           </div>
                         </div>
 
-                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all focus-within:opacity-100">
+                        {/* Buttons — nằm GỌN TRONG card, shrink-0 để không bao giờ bị bóp méo */}
+                        <div className="shrink-0 flex gap-2 opacity-0 group-hover:opacity-100 transition-all duration-150 focus-within:opacity-100">
                           <button
                             onClick={() => window.open(`/design/${designId}?versionId=${v.id}`, '_blank')}
-                            className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 rounded-xl active:scale-95 shadow-sm hover:shadow"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 rounded-xl shadow-sm hover:shadow whitespace-nowrap active:scale-95"
                           >
-                            <Eye size={14} />
+                            <Eye size={13} />
                             Xem trước
                           </button>
                           {isOwner && (
                             <button
                               onClick={() => onRestore(v.id)}
                               disabled={isRestoring}
-                              className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 rounded-xl active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow"
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 rounded-xl shadow-sm hover:shadow whitespace-nowrap active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <RotateCcw size={14} />
+                              <RotateCcw size={13} />
                               Khôi phục
                             </button>
                           )}

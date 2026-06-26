@@ -16,6 +16,13 @@ export async function initDb() {
       console.log('✅ Schema applied.');
     }
 
+    const migration007Path = path.join(__dirname, 'migrations', '007_ai_tokens_and_packages.sql');
+    if (fs.existsSync(migration007Path)) {
+      const sql = fs.readFileSync(migration007Path, 'utf8');
+      await db.query(sql);
+      console.log('✅ Migration 007_ai_tokens_and_packages applied.');
+    }
+
     const demoEmail = 'demo@example.com';
     // ĐỔI THÀNH $1
     const existingUser = await db.getOne('SELECT * FROM users WHERE email = $1', [demoEmail]);

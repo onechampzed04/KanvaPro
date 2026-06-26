@@ -16,7 +16,7 @@ const payos = new PayOS({
   checksumKey: process.env.PAYOS_CHECKSUM_KEY!,
 });
 
-async function activateSubscription(orderCode: string): Promise<boolean> {
+async function activateSubscription(orderCode: string): Promise<{ isActivated: boolean, metadata?: any }> {
   // SQL Transaction: đảm bảo atomicity và chống Race Condition (Row-level Lock)
   await db.query('BEGIN');
 
@@ -30,7 +30,7 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
     if (paymentResult.rows.length === 0) {
       // Không có pending payment → có thể đã xử lý rồi hoặc không tồn tại
       await db.query('ROLLBACK');
-      return false;
+      return { isActivated: false };
     }
 
     const payment = paymentResult.rows[0];
@@ -44,6 +44,30 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
     const membersCount = metadata.membersCount;
     const inviteEmails = metadata.inviteEmails || [];
     const targetTeamId = metadata.teamId || null;
+
+    // ── [TOKEN] Nếu là thanh toán gói token → cộng token và exit sớm ──────────
+    if (metadata.type === 'token') {
+      const tokenAmount = metadata.tokenAmount;
+      if (!tokenAmount || tokenAmount <= 0) {
+        await db.query('ROLLBACK');
+        console.error('❌ [Token] tokenAmount không hợp lệ trong metadata:', metadata);
+        return { isActivated: false };
+      }
+
+      await db.query(
+        `UPDATE users SET ai_tokens = COALESCE(ai_tokens, 0) + $1 WHERE id = $2`,
+        [tokenAmount, userId]
+      );
+
+      await db.query(
+        `UPDATE payments SET status = 'succeeded' WHERE id = $1`,
+        [paymentId]
+      );
+
+      await db.query('COMMIT');
+      console.log(`✅ [Token] Đã cộng ${tokenAmount} token cho user ${userId}.`);
+      return { isActivated: true, metadata };
+    }
 
     // Chỉ lấy subscription đang active để tránh logic sai
     // khi user có subscription đã expired từ trước.
@@ -213,7 +237,29 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
       }
 
       if (inviteEmails.length > 0) {
-        console.log(`📧 [Team] Cần gửi lời mời đến: ${inviteEmails.join(', ')}`);
+        console.log(`📧 [Team] Bắt đầu tự động thêm thành viên: ${inviteEmails.join(', ')}`);
+        for (const email of inviteEmails) {
+          // Tìm user trong hệ thống
+          const userRes = await db.query("SELECT id FROM users WHERE email = $1 AND status = 'active'", [email]);
+          if (userRes.rows.length > 0) {
+            const targetUserId = userRes.rows[0].id;
+            // Không thêm chính người mua (vì họ mặc định là owner rồi)
+            if (targetUserId !== userId) {
+              // Kiểm tra xem user này đã có trong nhóm chưa
+              const checkMember = await db.query('SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2', [teamIdToUse, targetUserId]);
+              if (checkMember.rows.length === 0) {
+                // Thêm vào với quyền member
+                await db.query(
+                  `INSERT INTO team_members (id, team_id, user_id, role) VALUES ($1, $2, $3, 'member')`,
+                  [crypto.randomUUID(), teamIdToUse, targetUserId]
+                );
+                console.log(`✅ [Team] Đã thêm tự động ${email} vào team ${teamIdToUse}`);
+              }
+            }
+          } else {
+            console.log(`⚠️ [Team] Email ${email} chưa có tài khoản trong hệ thống, bỏ qua.`);
+          }
+        }
       }
     } else {
       // Nếu là gói cá nhân (membersCount = 1), kiểm tra xem user đã có Personal Workspace chưa
@@ -246,7 +292,7 @@ async function activateSubscription(orderCode: string): Promise<boolean> {
 
     await db.query('COMMIT');
     console.log(`✅ [Payment] Kích hoạt thành công! User ${userId} đã lên gói ${planName}.`);
-    return true;
+    return { isActivated: true, metadata };
 
   } catch (err) {
     await db.query('ROLLBACK');
@@ -260,7 +306,73 @@ export const paymentService = {
   // Hàm 1: Tạo link thanh toán khi user bấm "Mua gói"
   // [FIX Vấn đề 3] Bỏ tham số `amount` — giá được tính 100% từ DB, không nhận từ client.
   // =========================================================================
-  createPaymentLink: async (userId: string, planId: string, planName: string, membersCount?: number, inviteEmails?: string[], teamId?: string) => {
+  createPaymentLink: async (
+    userId: string,
+    planId: string,
+    planName: string,
+    membersCount?: number,
+    inviteEmails?: string[],
+    teamId?: string,
+    // ── [TOKEN] Tham số mới cho gói token ────────────────────────────────────
+    isToken?: boolean,
+    tokenPackageId?: string
+  ) => {
+    // ── [TOKEN] Nhánh xử lý gói mua token riêng biệt ─────────────────────────
+    if (isToken && tokenPackageId) {
+      const pkgRes = await db.query(
+        `SELECT id, name, price, token_amount FROM token_packages WHERE id = $1 AND is_active = true`,
+        [tokenPackageId]
+      );
+      if (pkgRes.rows.length === 0) throw new Error('Gói token không tồn tại hoặc đã ngừng bán');
+
+      const pkg = pkgRes.rows[0];
+      const finalAmount = Number(pkg.price);
+      if (finalAmount < 2000) throw new Error('Giá gói token phải tối thiểu 2,000 VNĐ');
+
+      const orderCode = crypto.randomInt(10_000_000, 999_999_999);
+      const description = `Mua ${pkg.token_amount} AI Tokens`.replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 25);
+      const metadata = JSON.stringify({
+        type: 'token',
+        packageId: pkg.id,
+        packageName: pkg.name,
+        tokenAmount: pkg.token_amount,
+      });
+
+      await db.query(
+        `INSERT INTO payments (id, user_id, amount, status, gateway, transaction_id, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [crypto.randomUUID(), userId, finalAmount, 'pending', 'payos', orderCode.toString(), metadata]
+      );
+
+      const body = {
+        orderCode,
+        amount: finalAmount,
+        description,
+        returnUrl: `${process.env.FRONTEND_URL}/payment/success`,
+        cancelUrl: `${process.env.FRONTEND_URL}/payment/cancel`,
+      };
+
+      const PAYOS_TIMEOUT_MS = 10_000;
+      try {
+        const paymentLinkRes = await Promise.race([
+          payos.paymentRequests.create(body),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('PAYOS_TIMEOUT')), PAYOS_TIMEOUT_MS)
+          ),
+        ]) as any;
+        return paymentLinkRes.checkoutUrl;
+      } catch (error: any) {
+        await db.execute(
+          `DELETE FROM payments WHERE transaction_id = $1 AND status = 'pending'`,
+          [orderCode.toString()]
+        );
+        if (error?.message === 'PAYOS_TIMEOUT') {
+          throw new Error('Cổng thanh toán không phản hồi. Vui lòng thử lại sau.');
+        }
+        throw new Error('Không thể tạo link thanh toán gói token');
+      }
+    }
+
     // 1. Lấy thông tin gói mới từ DB để đảm bảo giá chính xác và gói đang active
     const newPlanRes = await db.query(
       `SELECT name, monthly_price FROM subscription_plans WHERE id = $1 AND is_active = true`,
@@ -400,14 +512,14 @@ export const paymentService = {
     }
 
     // 2. Kích hoạt subscription trong DB
-    const activated = await activateSubscription(orderCode);
+    const { isActivated, metadata } = await activateSubscription(orderCode);
 
-    if (!activated) {
+    if (!isActivated) {
       // Có thể đã được xử lý trước đó (webhook kịp về hoặc gọi verify 2 lần)
       return { success: true, message: 'Giao dịch đã được xử lý trước đó' };
     }
 
-    return { success: true, message: 'Kích hoạt gói thành công' };
+    return { success: true, message: 'Kích hoạt gói thành công', metadata };
   },
 
   // =========================================================================

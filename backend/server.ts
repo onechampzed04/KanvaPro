@@ -15,6 +15,7 @@ import paymentRoutes from './routes/paymentRoutes';
 import subscriptionRoute from './routes/subscriptionRoute';
 import adminRoutes from './routes/adminRoutes';
 import teamRoutes from './routes/teamRoutes';
+import aiRoutes from './routes/aiRoutes';
 import cors from 'cors';
 import { setupCollaboration } from './sockets/collaboration';
 import cron from 'node-cron';
@@ -130,6 +131,7 @@ async function startServer() {
   app.use('/api/subscriptions', subscriptionRoute);
   app.use('/api/admin', adminRoutes);
   app.use('/api/teams', teamRoutes);
+  app.use('/api/ai', aiRoutes);
 
   // ── Cron Job: Auto-delete trash older than 30 days ───────────────────────
   cron.schedule('0 0 * * *', async () => {

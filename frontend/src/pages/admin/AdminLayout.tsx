@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { useEffect } from 'react';
+
 import {
   LayoutDashboard, Users, Images, LayoutTemplate,
   LogOut, Shield, ChevronRight, Zap, CreditCard, ArrowLeft, Users2
@@ -17,22 +17,11 @@ const NAV_ITEMS = [
 ];
 
 export default function AdminLayout() {
-  const { user, loading, logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!loading && (!user || (user.role !== 'admin' && user.role !== 'moderator'))) {
-      navigate('/', { replace: true });
-    }
-  }, [user, loading, navigate]);
-
-  if (loading) return (
-    <div className="admin-loading">
-      <div className="admin-spinner" />
-    </div>
-  );
-
-  if (!user || (user.role !== 'admin' && user.role !== 'moderator')) return null;
+  // ━ Không cần kiểm tra role ở đây nữa.
+  // <AdminRoute> trong App.tsx đã chặn tự ngoài vào: chỉ admin/moderator mới đến được đây.
 
   return (
     <div className="admin-shell">

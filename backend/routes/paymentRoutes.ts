@@ -8,6 +8,9 @@ const router = express.Router();
 // 1. Tạo link thanh toán - chỉ user đã đăng nhập
 router.post('/create-checkout', authenticate, paymentController.createCheckout);
 
+// 1b. Tạo link thanh toán gói AI Token
+router.post('/create-token-checkout', authenticate, paymentController.createTokenCheckout);
+
 // 2. Verify giao dịch chủ động (frontend gọi sau khi PayOS redirect về)
 router.get('/verify', authenticate, paymentController.verifyPayment);
 

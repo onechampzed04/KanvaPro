@@ -51,6 +51,7 @@ interface CanvasEditorProps {
   currentPage: any;
   elements: any[];
   selectedIds: string[];
+  setSelectedIds?: (ids: string[] | ((prev: string[]) => string[])) => void;
   editingId: string | null;
   setEditingId: (id: string | null) => void;
   updateElement: (el: any) => void;
@@ -733,6 +734,13 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     // Preview mode: apply đúng animation effect cho elements đang animate vào
     const previewCurrentStep = props.animPreviewCurrentStep;
     const previewProgress = props.animPreviewProgress ?? 1;
+    // Hiệu ứng Breathe lặp vô hạn (chỉ khi previewing hoặc playing timeline)
+    if (el.animation?.in === 'breathe' && (previewCurrentStep !== undefined || props.isPlaying)) {
+      const breathePhase = (Date.now() / 1000) * 3;
+      const scaleMod = 1 + Math.sin(breathePhase) * 0.05;
+      el = { ...el, scaleX: (el.scaleX || 1) * scaleMod, scaleY: (el.scaleY || 1) * scaleMod };
+    }
+
     if (
       previewCurrentStep !== undefined && previewCurrentStep >= 0 &&
       previewProgress < 1 &&
@@ -742,52 +750,75 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       const ease = 1 - Math.pow(1 - previewProgress, 3);
       const baseOpacity = el.opacity ?? 1;
       let newEl = { ...el };
+      
+      const easeOutBack = (x: number): number => {
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+      };
+      
+      const easeOutBounce = (x: number): number => {
+        const n1 = 7.5625;
+        const d1 = 2.75;
+        if (x < 1 / d1) return n1 * x * x;
+        if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+        if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+        return n1 * (x -= 2.625 / d1) * x + 0.984375;
+      };
+
       switch (el.animation.in) {
-        case 'appear':
+        case 'appear':   newEl.opacity = previewProgress > 0 ? baseOpacity : 0; break;
+        case 'fade':     newEl.opacity = baseOpacity * ease; break;
+        case 'panLeft':  newEl.x = el.x + 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'panRight': newEl.x = el.x - 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'panUp':    newEl.y = el.y + 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'panDown':  newEl.y = el.y - 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'rise':     newEl.y = el.y + 100 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'wipe':     newEl.scaleX = (el.scaleX || 1) * ease; newEl.opacity = baseOpacity * ease; break;
+        case 'pop': {
+          const popEase = easeOutBack(previewProgress);
+          newEl.scaleX = (el.scaleX || 1) * popEase;
+          newEl.scaleY = (el.scaleY || 1) * popEase;
           newEl.opacity = previewProgress > 0 ? baseOpacity : 0;
           break;
-        case 'fade':
+        }
+        case 'tumble':
+          newEl.rotation = (el.rotation || 0) - 720 * (1 - ease);
+          newEl.x = el.x - 200 * (1 - ease);
           newEl.opacity = baseOpacity * ease;
           break;
-        case 'flyIn':
-          newEl.y = el.y + (1 - ease) * 200;
-          newEl.opacity = baseOpacity * ease;
+        case 'neon':
+          newEl.opacity = Math.random() > 0.5 ? baseOpacity : baseOpacity * 0.2;
           break;
-        case 'floatIn':
-          newEl.y = el.y + (1 - ease) * 50;
-          newEl.opacity = baseOpacity * ease;
-          break;
-        case 'zoom':
-          newEl.scaleX = (el.scaleX || 1) * ease;
-          newEl.scaleY = (el.scaleY || 1) * ease;
-          newEl.opacity = baseOpacity * ease;
-          break;
-        case 'growAndTurn':
-          newEl.scaleX = (el.scaleX || 1) * ease;
-          newEl.scaleY = (el.scaleY || 1) * ease;
-          newEl.rotation = (el.rotation || 0) - 90 * (1 - ease);
-          newEl.opacity = baseOpacity * ease;
-          break;
-        case 'swivel':
-          newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2);
-          break;
-        case 'bounce': {
-          const spring = 1 - Math.cos(previewProgress * Math.PI * 3) * Math.exp(-previewProgress * 5);
-          newEl.scaleX = (el.scaleX || 1) * spring;
-          newEl.scaleY = (el.scaleY || 1) * spring;
+        case 'scrapbook': {
+          const steps = 6;
+          const steppedProgress = Math.floor(previewProgress * steps) / steps;
+          newEl.scaleX = (el.scaleX || 1) * steppedProgress;
+          newEl.scaleY = (el.scaleY || 1) * steppedProgress;
+          newEl.rotation = (el.rotation || 0) + (Math.random() - 0.5) * 20 * (1 - steppedProgress);
+          newEl.opacity = baseOpacity * steppedProgress;
           break;
         }
-        case 'wipe':
-          newEl.scaleX = (el.scaleX || 1) * ease;
-          newEl.opacity = baseOpacity * ease;
+        case 'stomp': {
+          const stompEase = Math.min(1, previewProgress * 4);
+          newEl.scaleX = (el.scaleX || 1) * (1 + 2 * (1 - stompEase));
+          newEl.scaleY = (el.scaleY || 1) * (1 + 2 * (1 - stompEase));
+          newEl.opacity = baseOpacity * stompEase;
           break;
-        case 'split':
-          newEl.scaleY = (el.scaleY || 1) * ease;
-          newEl.opacity = baseOpacity * ease;
+        }
+        case 'bounce': {
+          const bounceEase = easeOutBounce(previewProgress);
+          newEl.y = el.y - 150 * (1 - bounceEase);
+          newEl.opacity = previewProgress > 0 ? baseOpacity : 0;
           break;
-        default:
-          newEl.opacity = baseOpacity * ease;
-          break;
+        }
+        case 'flyIn':    newEl.y = el.y + (1 - ease) * 200; newEl.opacity = baseOpacity * ease; break;
+        case 'floatIn':  newEl.y = el.y + (1 - ease) * 50;  newEl.opacity = baseOpacity * ease; break;
+        case 'zoom':     newEl.scaleX = (el.scaleX || 1) * ease; newEl.scaleY = (el.scaleY || 1) * ease; newEl.opacity = baseOpacity * ease; break;
+        case 'growAndTurn': newEl.scaleX = (el.scaleX || 1) * ease; newEl.scaleY = (el.scaleY || 1) * ease; newEl.rotation = (el.rotation || 0) - 90 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'swivel':   newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2); break;
+        case 'split':    newEl.scaleY = (el.scaleY || 1) * ease; newEl.opacity = baseOpacity * ease; break;
+        default:         if (el.animation.in !== 'breathe') newEl.opacity = baseOpacity * ease; break;
       }
       return newEl;
     }
@@ -803,6 +834,13 @@ export default function CanvasEditor(props: CanvasEditorProps) {
     const animOut = el.animation?.out || 'none';
 
     let newEl = { ...el };
+    
+    // Xử lý breathe (lặp vô hạn khi đang play)
+    if (el.animation?.in === 'breathe' && props.isPlaying) {
+      const breathePhase = (Date.now() / 1000) * 3;
+      const scaleMod = 1 + Math.sin(breathePhase) * 0.05;
+      newEl = { ...newEl, scaleX: (newEl.scaleX || 1) * scaleMod, scaleY: (newEl.scaleY || 1) * scaleMod };
+    }
 
     if (props.currentTime < start || props.currentTime > end) {
       newEl.opacity = 0;
@@ -825,35 +863,74 @@ export default function CanvasEditor(props: CanvasEditorProps) {
       const ease = 1 - Math.pow(1 - progressIn, 3);
       const baseOpacity = el.opacity ?? 1;
 
+      const easeOutBack = (x: number): number => {
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+      };
+      
+      const easeOutBounce = (x: number): number => {
+        const n1 = 7.5625;
+        const d1 = 2.75;
+        if (x < 1 / d1) return n1 * x * x;
+        if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+        if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+        return n1 * (x -= 2.625 / d1) * x + 0.984375;
+      };
+
       switch (animIn) {
-        case 'appear': newEl.opacity = progressIn > 0 ? baseOpacity : 0; break;
-        case 'fade': newEl.opacity = baseOpacity * ease; break;
-        case 'flyIn': newEl.y = el.y + (1 - ease) * 200; newEl.opacity = baseOpacity * ease; break;
-        case 'floatIn': newEl.y = el.y + (1 - ease) * 50; newEl.opacity = baseOpacity * ease; break;
-        case 'zoom':
-          newEl.scaleX = (el.scaleX || 1) * ease;
-          newEl.scaleY = (el.scaleY || 1) * ease;
+        case 'appear':   newEl.opacity = progressIn > 0 ? baseOpacity : 0; break;
+        case 'fade':     newEl.opacity = baseOpacity * ease; break;
+        case 'panLeft':  newEl.x = el.x + 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'panRight': newEl.x = el.x - 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'panUp':    newEl.y = el.y + 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'panDown':  newEl.y = el.y - 150 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'rise':     newEl.y = el.y + 100 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'wipe':     newEl.scaleX = (el.scaleX || 1) * ease; newEl.opacity = baseOpacity * ease; break;
+        case 'pop': {
+          const popEase = easeOutBack(progressIn);
+          newEl.scaleX = (el.scaleX || 1) * popEase;
+          newEl.scaleY = (el.scaleY || 1) * popEase;
+          newEl.opacity = progressIn > 0 ? baseOpacity : 0;
+          break;
+        }
+        case 'tumble':
+          newEl.rotation = (el.rotation || 0) - 720 * (1 - ease);
+          newEl.x = el.x - 200 * (1 - ease);
           newEl.opacity = baseOpacity * ease;
           break;
-        case 'growAndTurn':
-          newEl.scaleX = (el.scaleX || 1) * ease;
-          newEl.scaleY = (el.scaleY || 1) * ease;
-          newEl.rotation = (el.rotation || 0) - 90 * (1 - ease);
-          newEl.opacity = baseOpacity * ease;
+        case 'neon':
+          newEl.opacity = Math.random() > 0.5 ? baseOpacity : baseOpacity * 0.2;
           break;
-        case 'swivel':
-          newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2);
+        case 'scrapbook': {
+          const steps = 6;
+          const steppedProgress = Math.floor(progressIn * steps) / steps;
+          newEl.scaleX = (el.scaleX || 1) * steppedProgress;
+          newEl.scaleY = (el.scaleY || 1) * steppedProgress;
+          newEl.rotation = (el.rotation || 0) + (Math.random() - 0.5) * 20 * (1 - steppedProgress);
+          newEl.opacity = baseOpacity * steppedProgress;
           break;
-        case 'bounce':
-          const spring = 1 - Math.cos(progressIn * Math.PI * 3) * Math.exp(-progressIn * 5);
-          newEl.scaleX = (el.scaleX || 1) * spring;
-          newEl.scaleY = (el.scaleY || 1) * spring;
+        }
+        case 'stomp': {
+          const stompEase = Math.min(1, progressIn * 4);
+          newEl.scaleX = (el.scaleX || 1) * (1 + 2 * (1 - stompEase));
+          newEl.scaleY = (el.scaleY || 1) * (1 + 2 * (1 - stompEase));
+          newEl.opacity = baseOpacity * stompEase;
           break;
-        default:
-          newEl.scaleX = (el.scaleX || 1) * ease;
-          newEl.scaleY = (el.scaleY || 1) * ease;
-          newEl.opacity = baseOpacity * ease;
+        }
+        case 'bounce': {
+          const bounceEase = easeOutBounce(progressIn);
+          newEl.y = el.y - 150 * (1 - bounceEase);
+          newEl.opacity = progressIn > 0 ? baseOpacity : 0;
           break;
+        }
+        case 'flyIn':    newEl.y = el.y + (1 - ease) * 200; newEl.opacity = baseOpacity * ease; break;
+        case 'floatIn':  newEl.y = el.y + (1 - ease) * 50;  newEl.opacity = baseOpacity * ease; break;
+        case 'zoom':     newEl.scaleX = (el.scaleX || 1) * ease; newEl.scaleY = (el.scaleY || 1) * ease; newEl.opacity = baseOpacity * ease; break;
+        case 'growAndTurn': newEl.scaleX = (el.scaleX || 1) * ease; newEl.scaleY = (el.scaleY || 1) * ease; newEl.rotation = (el.rotation || 0) - 90 * (1 - ease); newEl.opacity = baseOpacity * ease; break;
+        case 'swivel':   newEl.scaleX = (el.scaleX || 1) * Math.cos((1 - ease) * Math.PI / 2); break;
+        case 'split':    newEl.scaleY = (el.scaleY || 1) * ease; newEl.opacity = baseOpacity * ease; break;
+        default:         if (animIn !== 'breathe') newEl.opacity = baseOpacity * ease; break;
       }
     }
 
@@ -1057,8 +1134,26 @@ export default function CanvasEditor(props: CanvasEditorProps) {
           >
             {animatedElements.map((el) => {
               const isActive = selectedIds.includes(el.id) || editingId === el.id;
-              if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
-              if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
+              const handleElementSelect = (e: any) => {
+                if (!props.setSelectedIds) return;
+                const metaPressed = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey;
+                const elId = el.id;
+                if (metaPressed) {
+                  // Dùng functional update để luôn dùng state mới nhất, tránh stale closure
+                  props.setSelectedIds((prev: string[]) => {
+                    if (prev.includes(elId)) return prev.filter(id => id !== elId);
+                    return [...prev, elId];
+                  });
+                } else {
+                  props.setSelectedIds((prev: string[]) => {
+                    if (prev.length === 1 && prev[0] === elId) return prev; // no-op, avoid re-render
+                    return [elId];
+                  });
+                }
+              };
+
+              if (el.type === 'circle') return <CircleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={handleElementSelect} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
+              if (el.type === 'rect' || el.type === 'shape') return <RectangleShape key={el.id} shape={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={handleElementSelect} onDragMove={handleDragMove} onActionStart={props.onActionStart} />;
               if (el.type === 'text') {
                 // [FIX #8] Kiểm tra xem element này có đang bị người khác lock không
                 const lockInfo = props.elementLocks?.get(el.id);
@@ -1080,7 +1175,7 @@ export default function CanvasEditor(props: CanvasEditorProps) {
                       onChange={updateElement}
                       onChangeFinal={updateElementImmediate}
                       isEditing={editingId === el.id}
-                      onSelect={() => { }}
+                      onSelect={handleElementSelect}
                       onDragMove={handleDragMove}
                       onActionStart={props.onActionStart}
                     />
@@ -1117,7 +1212,22 @@ export default function CanvasEditor(props: CanvasEditorProps) {
               }
               if (el.type === 'image') return (
                 <React.Fragment key={el.id}>
-                  <URLImage image={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={() => { }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />
+                  <URLImage image={el} onChange={updateElement} onChangeFinal={updateElementImmediate} onSelect={(e: any) => {
+                    if (!props.setSelectedIds) return;
+                    const metaPressed = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey;
+                    const elId = el.id;
+                    if (metaPressed) {
+                      props.setSelectedIds((prev: string[]) => {
+                        if (prev.includes(elId)) return prev.filter(id => id !== elId);
+                        return [...prev, elId];
+                      });
+                    } else {
+                      props.setSelectedIds((prev: string[]) => {
+                        if (prev.length === 1 && prev[0] === elId) return prev;
+                        return [elId];
+                      });
+                    }
+                  }} onDragMove={handleDragMove} onActionStart={props.onActionStart} />
                   {/* Pro watermark overlay: visible only for Free users on Pro sticker elements */}
                   {el.is_premium && props.isFreeUser && (
                     <ProWatermarkOverlay el={el} />

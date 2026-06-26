@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../config/db';
 // [FIX Vấn đề 18] Import từ shared utility — Single Source of Truth cho hashIp
 import { hashIp } from '../utils/securityUtils';
+import { cloneAssetsForDesign, updateElementSrcs } from './cloneAssetService.js';
+import { incrementStorageUsage } from '../middleware/checkStorageQuota.js';
 
 // ─── Hằng số Nghiệp vụ ────────────────────────────────────────────────────────
 const FREE_TEAM_MAX_MEMBERS = 5;   // Giới hạn thành viên cho team Free
@@ -703,46 +705,36 @@ export const teamService = {
         );
       }
 
-      // [SECURITY FIX - Quota Bypass] Tính tổng dung lượng ảnh thực tế trong design gốc.
-      // Không tính này, Free User có thể clone Design 500MB của Pro User mà không bị trừ quota.
-      // Ta cộng tổng file_size của tất cả assets (ảnh gốc, không phải clone) mà design đang tham chiếu.
-      const assetSizeRes = await client.query(
-        `SELECT COALESCE(SUM(a.file_size), 0)::bigint AS total_bytes
-         FROM assets a
-         WHERE a.url IN (
-           SELECT DISTINCT de.properties->>'src'
-           FROM design_elements de
-           JOIN design_pages dp ON dp.id = de.page_id
-           WHERE dp.design_id = $1
-             AND de.properties->>'src' IS NOT NULL
-             AND de.properties->>'src' != ''
-         )
-         AND a.file_size IS NOT NULL`,
-        [designId]
-      );
-      const designAssetBytes = Number(assetSizeRes.rows[0]?.total_bytes ?? 0);
-
+      // [FIX - Physical Asset Clone]
+      // Thay thế cơ chế Bản ghi B (biên lai ảo) bằng copy file vật lý thực sự.
+      // cloneAssetsForDesign sẽ:
+      //   1. Tìm ảnh trong design_elements của sourceDesign chưa thuộc workspace đích.
+      //   2. Copy file vật lý và tạo bản ghi asset mới cho userId.
+      //   3. Trả về urlMap (oldUrl → newUrl) và tổng bytes.
+      // Sau đó updateElementSrcs sẽ UPDATE properties.src trong các elements của design mới.
       await client.query('COMMIT');
 
-      // Cộng dồn quota vào workspace đích
-      if (designAssetBytes > 0) {
-        if (destTeamId) {
-          await db.execute(
-            `UPDATE teams SET used_storage_bytes = COALESCE(used_storage_bytes, 0) + $1 WHERE id = $2`,
-            [designAssetBytes, destTeamId]
-          );
-        } else {
-          await db.execute(
-            `UPDATE users SET storage_used_bytes = COALESCE(storage_used_bytes, 0) + $1 WHERE id = $2`,
-            [designAssetBytes, userId]
-          );
-        }
+      const { urlMap, totalBytes } = await cloneAssetsForDesign(designId, newDesignId, userId, destTeamId);
+      await updateElementSrcs(newDesignId, urlMap);
+
+
+      // Tính quota cho user với số bytes thực tế vừa copy
+      if (totalBytes > 0) {
+        await incrementStorageUsage(
+          userId,
+          totalBytes,
+          destTeamId ?? undefined,
+          destTeamId ? 'team' : 'personal'
+        ).catch((e: any) => {
+          console.error('[CloneDesign] Failed to increment storage:', e);
+        });
       }
 
       await writeAuditLog(sourceTeamId, userId, 'CLONE_DESIGN', newDesignId, {
         source_design_id: designId,
         cloned_to: destTeamId ? `team:${destTeamId}` : 'personal',
-        estimated_bytes: designAssetBytes,
+        cloned_files: urlMap.size,
+        estimated_bytes: totalBytes,
       }, ipAddress);
 
       return newDesignId;

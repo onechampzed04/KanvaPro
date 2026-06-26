@@ -2,9 +2,114 @@
 
 const BASE_URL = '/api'; // Sử dụng Proxy của Vite
 
-// API design
+// ─── Refresh Token Interceptor ────────────────────────────────────────────────
+//
+// Cơ chế:
+//   1. Mọi fetch đi qua apiFetch()
+//   2. Nếu response trả về 401 → tự động gọi POST /api/auth/refresh-token
+//      (cookie refreshToken được gửi kèm nhờ credentials: 'include')
+//   3. Nếu refresh OK → lưu access token mới → retry request gốc 1 lần
+//   4. Nếu refresh fail (cookie hết hạn) → xóa localStorage → redirect /login
+//
+// isRefreshing + pendingQueue: tránh race condition khi nhiều request
+// đồng thời bị 401 (chỉ gọi refresh 1 lần, queue các request còn lại)
 
-// Hàm helper để lấy header có kèm Token
+let isRefreshing = false;
+let pendingQueue: Array<{
+  resolve: (token: string) => void;
+  reject: (err: any) => void;
+}> = [];
+
+const processQueue = (error: any, token: string | null) => {
+  pendingQueue.forEach(({ resolve, reject }) => {
+    if (error) reject(error);
+    else resolve(token!);
+  });
+  pendingQueue = [];
+};
+
+/**
+ * Gọi endpoint refresh-token, lấy Access Token mới.
+ * refreshToken nằm trong HttpOnly Cookie → tự động gửi kèm qua credentials: 'include'
+ */
+const callRefreshToken = async (): Promise<string> => {
+  const res = await fetch('/api/auth/refresh-token', {
+    method: 'POST',
+    credentials: 'include', // Gửi kèm HttpOnly Cookie
+  });
+  if (!res.ok) throw new Error('REFRESH_FAILED');
+  const data = await res.json();
+  return data.token as string;
+};
+
+/**
+ * apiFetch — wrapper thay thế fetch() có tích hợp interceptor 401.
+ * Dùng thay cho fetch() trong toàn bộ api.ts
+ */
+export const apiFetch = async (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  // Lần gọi đầu tiên
+  let response = await fetch(input, {
+    ...init,
+    credentials: 'include', // Đảm bảo cookie refreshToken luôn được gửi
+  });
+
+  // Chỉ intercept 401, bỏ qua các lỗi khác
+  if (response.status !== 401) return response;
+
+  // Nếu đang có refresh đang chạy → đưa vào queue chờ
+  if (isRefreshing) {
+    return new Promise<Response>((resolve, reject) => {
+      pendingQueue.push({
+        resolve: async (newToken) => {
+          const retryInit = injectToken(init, newToken);
+          resolve(fetch(input, { ...retryInit, credentials: 'include' }));
+        },
+        reject,
+      });
+    });
+  }
+
+  // Bắt đầu quá trình refresh
+  isRefreshing = true;
+
+  try {
+    const newToken = await callRefreshToken();
+    localStorage.setItem('token', newToken); // Lưu Access Token mới
+    processQueue(null, newToken);
+
+    // Retry request gốc với token mới
+    const retryInit = injectToken(init, newToken);
+    return fetch(input, { ...retryInit, credentials: 'include' });
+  } catch (err) {
+    // Refresh Token hết hạn → force logout
+    processQueue(err, null);
+    localStorage.removeItem('token');
+    localStorage.removeItem('kanva_workspaces');
+    localStorage.removeItem('kanva_current_workspace_id');
+    // Phát sự kiện để AuthContext bắt và cập nhật state (không reload ngay)
+    window.dispatchEvent(new CustomEvent('auth:session_expired'));
+    // Sau đó mới redirect về login
+    setTimeout(() => { window.location.href = '/login'; }, 100);
+    throw err;
+  } finally {
+    isRefreshing = false;
+  }
+};
+
+/** Thêm / thay thế Authorization header trong init */
+const injectToken = (init: RequestInit | undefined, token: string): RequestInit => {
+  const headers = new Headers(init?.headers as HeadersInit | undefined);
+  headers.set('Authorization', `Bearer ${token}`);
+  return { ...init, headers };
+};
+
+// ─── Helpers dùng token từ localStorage ───────────────────────────────────────
+// getHeaders / getWorkspaceHeaders vẫn giữ để backward-compatible
+// (dùng trong apiFetch → header được truyền vào init)
+
 const getHeaders = () => {
   const token = localStorage.getItem('token');
   return {
@@ -38,7 +143,7 @@ export const uploadImageFile = async (file: File): Promise<{ url: string; assetI
   const formData = new FormData();
   formData.append('image', file);
 
-  const response = await fetch('/api/assets/upload-image', {
+  const response = await apiFetch('/api/assets/upload-image', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -70,7 +175,7 @@ export const uploadPageThumbnail = async (blob: Blob, pageId: string): Promise<s
   formData.append('thumbnail', blob, `thumb_${pageId}.png`);
   formData.append('pageId', pageId);
 
-  const response = await fetch('/api/assets/upload-thumbnail', {
+  const response = await apiFetch('/api/assets/upload-thumbnail', {
     method: 'POST',
     headers: {
       // [FIX] Thêm Authorization header — endpoint yêu cầu authenticate middleware
@@ -87,7 +192,7 @@ export const uploadPageThumbnail = async (blob: Blob, pageId: string): Promise<s
 
 // 1. Lấy danh sách thiết kế
 export const fetchDesigns = async (tab: string = 'my_designs') => {
-  const response = await fetch(`${BASE_URL}/designs/my?tab=${tab}`, {
+  const response = await apiFetch(`${BASE_URL}/designs/my?tab=${tab}`, {
     headers: getWorkspaceHeaders()
   });
   if (!response.ok) throw new Error('Failed to fetch designs');
@@ -103,7 +208,7 @@ export const createDesign = async (designData: {
   height: number | null,
   team_id?: string | null
 }) => {
-  const response = await fetch(`${BASE_URL}/designs`, {
+  const response = await apiFetch(`${BASE_URL}/designs`, {
     method: 'POST',
     headers: getWorkspaceHeaders(),
     body: JSON.stringify(designData),
@@ -115,7 +220,7 @@ export const createDesign = async (designData: {
 
 export const saveDesign = async (designId: string, payload: any) => {
   const token = localStorage.getItem('token');
-  const response = await fetch(`/api/designs/${designId}/save`, {
+  const response = await apiFetch(`/api/designs/${designId}/save`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -128,7 +233,7 @@ export const saveDesign = async (designId: string, payload: any) => {
 
 export const updateDesignFull = async (designId: string, data: { title: string, pages: any[], version?: string | number | null, thumbnail_url?: string }) => {
   const token = localStorage.getItem('token');
-  const response = await fetch(`/api/designs/${designId}`, {
+  const response = await apiFetch(`/api/designs/${designId}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -149,25 +254,25 @@ export const updateDesignFull = async (designId: string, data: { title: string, 
 };
 
 export const createDesignVersion = async (designId: string) => {
-  const res = await fetch(`/api/designs/${designId}/versions`, { method: 'POST', headers: getHeaders() });
+  const res = await apiFetch(`/api/designs/${designId}/versions`, { method: 'POST', headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to create version');
   return res.json();
 };
 
 export const fetchDesignVersions = async (designId: string) => {
-  const res = await fetch(`/api/designs/${designId}/versions`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/designs/${designId}/versions`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch versions');
   return res.json();
 };
 
 export const fetchDesignVersionSnapshot = async (designId: string, versionId: string) => {
-  const res = await fetch(`/api/designs/${designId}/versions/${versionId}`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/designs/${designId}/versions/${versionId}`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch version snapshot');
   return res.json();
 };
 
 export const restoreDesignVersion = async (designId: string, versionId: string) => {
-  const res = await fetch(`/api/designs/${designId}/versions/${versionId}/restore`, { method: 'POST', headers: getHeaders() });
+  const res = await apiFetch(`/api/designs/${designId}/versions/${versionId}/restore`, { method: 'POST', headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to restore version');
   return res.json();
 };
@@ -187,7 +292,7 @@ export const uploadVideoForExport = async (videoBlob: Blob): Promise<Blob> => {
     const headers: any = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const response = await fetch('/api/designs/export/video', {
+    const response = await apiFetch('/api/designs/export/video', {
       method: 'POST',
       headers: headers,
       body: formData,
@@ -224,7 +329,7 @@ export const uploadVideoForExport = async (videoBlob: Blob): Promise<Blob> => {
 
 // Lấy toàn bộ gói cước (Dành cho trang Admin)
 export const fetchAllAdminSubscriptions = async () => {
-  const res = await fetch('/api/subscriptions', {
+  const res = await apiFetch('/api/subscriptions', {
     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
   });
   if (!res.ok) throw new Error('Lỗi lấy danh sách Subscriptions admin');
@@ -233,7 +338,7 @@ export const fetchAllAdminSubscriptions = async () => {
 
 // Tạo gói mới
 export const createSubscription = async (subscriptionData: any) => {
-  const res = await fetch('/api/subscriptions', {
+  const res = await apiFetch('/api/subscriptions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -247,7 +352,7 @@ export const createSubscription = async (subscriptionData: any) => {
 
 // Cập nhật gói
 export const updateSubscription = async (id: string, subscriptionData: any) => {
-  const res = await fetch(`/api/subscriptions/${id}`, {
+  const res = await apiFetch(`/api/subscriptions/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -260,7 +365,7 @@ export const updateSubscription = async (id: string, subscriptionData: any) => {
 };
 
 export const deleteSubscription = async (id: string) => {
-  const res = await fetch(`/api/subscriptions/${id}`, {
+  const res = await apiFetch(`/api/subscriptions/${id}`, {
     method: 'DELETE',
     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
   });
@@ -269,7 +374,7 @@ export const deleteSubscription = async (id: string) => {
 };
 
 export const fetchActiveSubscriptions = async () => {
-  const res = await fetch('/api/subscriptions'); // Thay bằng endpoint public tương ứng của bạn
+  const res = await apiFetch('/api/subscriptions');
   if (!res.ok) throw new Error('Lỗi lấy danh sách gói cước');
   return res.json();
 };
@@ -277,7 +382,7 @@ export const fetchActiveSubscriptions = async () => {
 // [FIX Vấn đề 3] Bỏ `amount` khỏi request — backend tự tính 100% từ DB.
 // Không gửi giá từ client để tránh price tampering.
 export const createCheckoutSession = async (data: { planId: string, planName: string, membersCount?: number }) => {
-  const res = await fetch('/api/payments/create-checkout', {
+  const res = await apiFetch('/api/payments/create-checkout', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -291,7 +396,7 @@ export const createCheckoutSession = async (data: { planId: string, planName: st
 
 // Lấy thông tin user hiện tại kèm subscription (dùng trong AuthContext.refreshUser)
 export const fetchCurrentUser = async () => {
-  const res = await fetch('/api/auth/me', {
+  const res = await apiFetch('/api/auth/me', {
     headers: {
       'Authorization': `Bearer ${localStorage.getItem('token')}`
     }
@@ -303,7 +408,7 @@ export const fetchCurrentUser = async () => {
 // Xác minh giao dịch với PayOS và kích hoạt subscription trong DB
 // Frontend gọi sau khi PayOS redirect về /payment/success?orderCode=xxx
 export const verifyPayment = async (orderCode: string) => {
-  const res = await fetch(`/api/payments/verify?orderCode=${orderCode}`, {
+  const res = await apiFetch(`/api/payments/verify?orderCode=${orderCode}`, {
     headers: {
       'Authorization': `Bearer ${localStorage.getItem('token')}`
     }
@@ -318,7 +423,7 @@ export const verifyPayment = async (orderCode: string) => {
 // [MỚI] User tự bấm "Tôi đã chuyển khoản - Kiểm tra lại"
 // Gọi cho các giao dịch Pending trong Billing History
 export const verifyOrderByCode = async (orderCode: string) => {
-  const res = await fetch(`/api/payments/verify-order?orderCode=${orderCode}`, {
+  const res = await apiFetch(`/api/payments/verify-order?orderCode=${orderCode}`, {
     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
   });
   const data = await res.json().catch(() => ({}));
@@ -331,7 +436,7 @@ export const verifyOrderByCode = async (orderCode: string) => {
 export const previewUpgrade = async (planId: string, membersCount?: number) => {
   let url = `/api/payments/preview-upgrade?planId=${planId}`;
   if (membersCount) url += `&membersCount=${membersCount}`;
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
   });
   const data = await res.json().catch(() => ({}));
@@ -346,13 +451,13 @@ export const previewUpgrade = async (planId: string, membersCount?: number) => {
 // ==========================================
 
 export const fetchDesignShares = async (designId: string) => {
-  const res = await fetch(`/api/designs/${designId}/shares`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/designs/${designId}/shares`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Lỗi lấy danh sách chia sẻ');
   return res.json();
 };
 
 export const shareDesign = async (designId: string, email: string, role: string) => {
-  const res = await fetch(`/api/designs/${designId}/share`, {
+  const res = await apiFetch(`/api/designs/${designId}/share`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ email, role })
@@ -363,7 +468,7 @@ export const shareDesign = async (designId: string, email: string, role: string)
 };
 
 export const updateShareRole = async (designId: string, userId: string, role: string) => {
-  const res = await fetch(`/api/designs/${designId}/share/${userId}`, {
+  const res = await apiFetch(`/api/designs/${designId}/share/${userId}`, {
     method: 'PUT',
     headers: getHeaders(),
     body: JSON.stringify({ role })
@@ -374,7 +479,7 @@ export const updateShareRole = async (designId: string, userId: string, role: st
 };
 
 export const removeShare = async (designId: string, userId: string) => {
-  const res = await fetch(`/api/designs/${designId}/share/${userId}`, {
+  const res = await apiFetch(`/api/designs/${designId}/share/${userId}`, {
     method: 'DELETE',
     headers: getHeaders()
   });
@@ -384,7 +489,7 @@ export const removeShare = async (designId: string, userId: string) => {
 };
 
 export const togglePublicLink = async (designId: string, isPublic: boolean) => {
-  const res = await fetch(`/api/designs/${designId}/public`, {
+  const res = await apiFetch(`/api/designs/${designId}/public`, {
     method: 'PUT',
     headers: getHeaders(),
     body: JSON.stringify({ is_public: isPublic })
@@ -395,7 +500,7 @@ export const togglePublicLink = async (designId: string, isPublic: boolean) => {
 };
 
 export const fetchShareLink = async (designId: string) => {
-  const res = await fetch(`/api/designs/${designId}/share-link`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/designs/${designId}/share-link`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Lỗi lấy link chia sẻ');
   return res.json();
 };
@@ -404,13 +509,13 @@ export const fetchShareLink = async (designId: string) => {
 // TRASH BIN APIs
 // ==========================================
 export const fetchTrashDesigns = async () => {
-  const res = await fetch(`${BASE_URL}/designs/trash`, { headers: getHeaders() });
+  const res = await apiFetch(`${BASE_URL}/designs/trash`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Lỗi lấy thùng rác');
   return res.json();
 };
 
 export const restoreDesign = async (designId: string) => {
-  const res = await fetch(`${BASE_URL}/designs/trash/${designId}/restore`, {
+  const res = await apiFetch(`${BASE_URL}/designs/trash/${designId}/restore`, {
     method: 'PUT',
     headers: getHeaders(),
   });
@@ -420,7 +525,7 @@ export const restoreDesign = async (designId: string) => {
 };
 
 export const permanentlyDeleteDesign = async (designId: string) => {
-  const res = await fetch(`${BASE_URL}/designs/trash/${designId}/permanent`, {
+  const res = await apiFetch(`${BASE_URL}/designs/trash/${designId}/permanent`, {
     method: 'DELETE',
     headers: getHeaders(),
   });
@@ -430,7 +535,7 @@ export const permanentlyDeleteDesign = async (designId: string) => {
 };
 
 export const bulkDeleteDesigns = async (designIds: string[]) => {
-  const res = await fetch(`${BASE_URL}/designs/bulk-delete`, {
+  const res = await apiFetch(`${BASE_URL}/designs/bulk-delete`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ designIds }),
@@ -441,7 +546,7 @@ export const bulkDeleteDesigns = async (designIds: string[]) => {
 };
 
 export const emptyTrash = async () => {
-  const res = await fetch(`${BASE_URL}/designs/trash/empty`, {
+  const res = await apiFetch(`${BASE_URL}/designs/trash/empty`, {
     method: 'DELETE',
     headers: getHeaders(),
   });
@@ -454,13 +559,13 @@ export const emptyTrash = async () => {
 // TEAM APIs
 // ==========================================
 export const fetchMyTeams = async () => {
-  const res = await fetch(`${BASE_URL}/teams/my-teams`, { headers: getHeaders() });
+  const res = await apiFetch(`${BASE_URL}/teams/my-teams`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Lỗi lấy danh sách nhóm');
   return res.json();
 };
 
 export const createTeam = async (data: { name: string; max_members?: number }) => {
-  const res = await fetch(`${BASE_URL}/teams`, {
+  const res = await apiFetch(`${BASE_URL}/teams`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify(data),
@@ -471,13 +576,13 @@ export const createTeam = async (data: { name: string; max_members?: number }) =
 };
 
 export const fetchTeamById = async (teamId: string) => {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}`, { headers: getHeaders() });
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Lỗi lấy thông tin nhóm');
   return res.json();
 };
 
 export const updateTeam = async (teamId: string, name: string) => {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}`, {
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}`, {
     method: 'PUT',
     headers: getHeaders(),
     body: JSON.stringify({ name }),
@@ -492,7 +597,7 @@ export const updateTeamAvatar = async (teamId: string, file: File) => {
   const formData = new FormData();
   formData.append('avatar', file);
 
-  const res = await fetch(`${BASE_URL}/teams/${teamId}/update-avatar`, {
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}/update-avatar`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -505,7 +610,7 @@ export const updateTeamAvatar = async (teamId: string, file: File) => {
 };
 
 export const inviteTeamMember = async (teamId: string, email: string, role: string = 'member') => {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}/members`, {
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}/members`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ email, role }),
@@ -516,7 +621,7 @@ export const inviteTeamMember = async (teamId: string, email: string, role: stri
 };
 
 export const removeTeamMember = async (teamId: string, memberId: string) => {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}/members/${memberId}`, {
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}/members/${memberId}`, {
     method: 'DELETE',
     headers: getHeaders(),
   });
@@ -526,7 +631,7 @@ export const removeTeamMember = async (teamId: string, memberId: string) => {
 };
 
 export const updateTeamMemberRole = async (teamId: string, memberId: string, role: string) => {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}/members/${memberId}/role`, {
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}/members/${memberId}/role`, {
     method: 'PUT',
     headers: getHeaders(),
     body: JSON.stringify({ role }),
@@ -537,7 +642,7 @@ export const updateTeamMemberRole = async (teamId: string, memberId: string, rol
 };
 
 export const previewTransferOwnership = async (teamId: string, newOwnerId: string) => {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}/preview-transfer?newOwnerId=${newOwnerId}`, {
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}/preview-transfer?newOwnerId=${newOwnerId}`, {
     headers: getHeaders(),
   });
   const data = await res.json();
@@ -546,7 +651,7 @@ export const previewTransferOwnership = async (teamId: string, newOwnerId: strin
 };
 
 export const transferTeamOwnership = async (teamId: string, newOwnerId: string) => {
-  const res = await fetch(`${BASE_URL}/teams/${teamId}/transfer-ownership`, {
+  const res = await apiFetch(`${BASE_URL}/teams/${teamId}/transfer-ownership`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ newOwnerId }),
@@ -564,7 +669,7 @@ export const transferTeamOwnership = async (teamId: string, newOwnerId: string) 
  */
 export const deleteUserAsset = async (assetId: string) => {
   const token = localStorage.getItem('token');
-  const res = await fetch(`/api/assets/${assetId}`, {
+  const res = await apiFetch(`/api/assets/${assetId}`, {
     method: 'DELETE',
     headers: { 'Authorization': `Bearer ${token}` },
   });
@@ -580,7 +685,7 @@ export const deleteUserAsset = async (assetId: string) => {
  * Dùng để hiển thị giá real-time trong màn hình Team Onboarding.
  */
 export const fetchTeamPlan = async () => {
-  const res = await fetch('/api/subscriptions');
+  const res = await apiFetch('/api/subscriptions');
   const data = await res.json();
   if (!res.ok) throw new Error('Không thể lấy thông tin gói Team');
   // Tìm gói có slug = 'pro_team'
@@ -595,7 +700,7 @@ export const createTeamCheckout = async (data: {
   inviteEmails: string[];
   membersCount: number;
 }) => {
-  const res = await fetch('/api/payments/create-checkout', {
+  const res = await apiFetch('/api/payments/create-checkout', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -613,14 +718,14 @@ export const createTeamCheckout = async (data: {
 
 /** Lấy danh sách tất cả template công khai đã được Admin publish */
 export const fetchTemplates = async () => {
-  const res = await fetch(`${BASE_URL}/designs/templates`, { headers: getHeaders() });
+  const res = await apiFetch(`${BASE_URL}/designs/templates`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Lỗi lấy danh sách template');
   return res.json(); // { templates: [...] }
 };
 
 /** Clone template thành design của user hiện tại. Trả về { designId } */
 export const useTemplate = async (templateId: string) => {
-  const res = await fetch(`${BASE_URL}/designs/templates/${templateId}/use`, {
+  const res = await apiFetch(`${BASE_URL}/designs/templates/${templateId}/use`, {
     method: 'POST',
     headers: getWorkspaceHeaders(),
   });

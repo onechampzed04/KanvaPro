@@ -101,16 +101,16 @@ export default function DashboardPage() {
   const personalWorkspace = workspaces.find((w: any) => w.workspace_type === 'personal');
   const activeWorkspace = currentWorkspace || personalWorkspace;
 
-  let maxGb = activeWorkspace?.is_pro 
-    ? Number(activeWorkspace?.plan_storage_gb || activeWorkspace?.max_storage_gb || 5) 
+  let maxGb = activeWorkspace?.is_pro
+    ? Number(activeWorkspace?.plan_storage_gb || activeWorkspace?.max_storage_gb || 5)
     : 5;
-    
+
   if (!maxGb || isNaN(maxGb) || maxGb === 0) {
     maxGb = 5;
   }
   const maxStorageBytes = maxGb * 1024 * 1024 * 1024;
   const storageUsedBytes = activeWorkspace && activeWorkspace.workspace_type !== 'personal'
-    ? Number(activeWorkspace.used_storage_bytes ?? 0) 
+    ? Number(activeWorkspace.used_storage_bytes ?? 0)
     : Number(user?.storage_used_bytes ?? 0);
   const storagePercentage = Math.min((storageUsedBytes / maxStorageBytes) * 100, 100);
   const isStorageWarning = storagePercentage > 90;
@@ -516,9 +516,9 @@ export default function DashboardPage() {
         if (match[3]) {
           maxNum = Math.max(maxNum, parseInt(match[3], 10));
         } else if (match[2] === '') {
-           maxNum = Math.max(maxNum, 1); // " - Bản sao" ko có số thì là 1
+          maxNum = Math.max(maxNum, 1); // " - Bản sao" ko có số thì là 1
         } else {
-           maxNum = Math.max(maxNum, 0); // Chính nó
+          maxNum = Math.max(maxNum, 0); // Chính nó
         }
       }
     }
@@ -598,7 +598,7 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || 'Không thể sao chép');
-      
+
       // Navigate vào design mới luôn
       navigate(`/design/${data.designId}`);
     } catch (err: any) {
@@ -712,14 +712,14 @@ export default function DashboardPage() {
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-bold text-slate-800 truncate">{currentWorkspace ? currentWorkspace.name : 'Không gian Cá nhân'}</h3>
                 <p className="text-xs font-medium text-slate-500 truncate">
-                  {currentWorkspace 
-                    ? (currentWorkspace.is_pro ? 'Team Workspace (Pro)' : 'Team Workspace (Free)') 
+                  {currentWorkspace
+                    ? (currentWorkspace.is_pro ? 'Team Workspace (Pro)' : 'Team Workspace (Free)')
                     : (isPersonalSubscriptionActive(user) ? 'Personal Workspace (Pro)' : 'Personal Workspace (Free)')}
                 </p>
               </div>
             )}
             {!isSidebarCollapsed && (
-               <div className="text-slate-400">▼</div>
+              <div className="text-slate-400">▼</div>
             )}
           </div>
 
@@ -786,20 +786,20 @@ export default function DashboardPage() {
             {!isPro ? (
               (!currentWorkspace || currentWorkspace?.owner_id === user?.id) && (
 
-              <div className="mb-4 bg-gradient-to-br from-indigo-50 to-purple-50 p-4 rounded-2xl border border-purple-100">
-                <div className="flex items-center gap-2 mb-2">
-                  <Crown size={18} className="text-purple-600" strokeWidth={2.5} />
-                  <span className="font-bold text-sm text-purple-900">
-                    {currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'Kanva Team (Free)' : 'KanvaPro Free'}
-                  </span>
+                <div className="mb-4 bg-gradient-to-br from-indigo-50 to-purple-50 p-4 rounded-2xl border border-purple-100">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Crown size={18} className="text-purple-600" strokeWidth={2.5} />
+                    <span className="font-bold text-sm text-purple-900">
+                      {currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'Kanva Team (Free)' : 'KanvaPro Free'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setActivePage(currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'teams' : 'pricing')}
+                    className="block w-full text-center bg-white text-purple-600 text-xs font-bold py-2 rounded-xl border border-purple-200 hover:bg-purple-600 hover:text-white transition-colors"
+                  >
+                    {currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'Gia hạn nhóm' : 'Nâng cấp ngay'}
+                  </button>
                 </div>
-                <button 
-                  onClick={() => setActivePage(currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'teams' : 'pricing')} 
-                  className="block w-full text-center bg-white text-purple-600 text-xs font-bold py-2 rounded-xl border border-purple-200 hover:bg-purple-600 hover:text-white transition-colors"
-                >
-                  {currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'Gia hạn nhóm' : 'Nâng cấp ngay'}
-                </button>
-              </div>
               )
             ) : (
               <div className="mb-4 bg-gradient-to-br from-emerald-50 to-teal-50 p-4 rounded-2xl border border-emerald-100 flex items-center gap-2">
@@ -812,7 +812,7 @@ export default function DashboardPage() {
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-xs font-bold text-slate-500">Lưu trữ cá nhân</span>
                   <span className="text-[10px] font-bold text-slate-400">
-                    {formatResourceSize(storageUsedBytes)} / {maxStorageBytes / (1024 ** 3)}GB 
+                    {formatResourceSize(storageUsedBytes)} / {maxStorageBytes / (1024 ** 3)}GB
                   </span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
@@ -829,8 +829,8 @@ export default function DashboardPage() {
           /* Collapsed footer: chỉ icon logout */
           <div className="py-4 px-2 border-t border-slate-200 flex flex-col items-center gap-3 shrink-0">
             {!isPro && (!currentWorkspace || currentWorkspace?.owner_id === user?.id) && (
-              <button 
-                onClick={() => setActivePage(currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'teams' : 'pricing')} 
+              <button
+                onClick={() => setActivePage(currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? 'teams' : 'pricing')}
                 title={currentWorkspace && currentWorkspace.workspace_type !== 'personal' ? "Gia hạn nhóm" : "Nâng cấp gói"}
                 className="p-2 text-purple-500 hover:bg-purple-50 rounded-xl transition"
               >
@@ -900,19 +900,19 @@ export default function DashboardPage() {
               <div className="relative z-10 max-w-3xl w-full mx-auto">
                 <motion.h2 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: 'easeOut' }}
                   className="text-4xl md:text-[44px] font-medium tracking-tight text-[#4c1d95] mb-8">
-                  What will you design today?
+                  Bạn muốn sáng tạo nội dung gì?
                 </motion.h2>
               </div>
               {/* Search bar */}
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.2 }}
                 className="relative max-w-3xl w-full mx-auto group">
                 <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-[#4c1d95] transition-colors" size={20} />
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Tìm kiếm thiết kế của bạn..." 
-                  className="w-full bg-white border border-slate-200 hover:border-slate-300 text-slate-800 placeholder:text-slate-400 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-[#5E2EE1] focus:ring-4 focus:ring-[#5E2EE1]/10 transition-all font-medium text-[15px] shadow-sm" 
+                  placeholder="Tìm kiếm thiết kế của bạn..."
+                  className="w-full bg-white border border-slate-200 hover:border-slate-300 text-slate-800 placeholder:text-slate-400 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-[#5E2EE1] focus:ring-4 focus:ring-[#5E2EE1]/10 transition-all font-medium text-[15px] shadow-sm"
                 />
               </motion.div>
             </section>
@@ -1103,9 +1103,9 @@ export default function DashboardPage() {
 
                         <div className="aspect-[4/3] bg-slate-50 relative flex items-center justify-center overflow-hidden border-b border-slate-100">
                           {design.thumbnail_url ? (
-                            <img 
-                              src={design.thumbnail_url} 
-                              alt={design.title} 
+                            <img
+                              src={design.thumbnail_url}
+                              alt={design.title}
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
                               onError={(e) => {
                                 // [FIX 404] Ảnh thumbnail bị xóa → hiển thị fallback icon thay vì broken image
@@ -1315,11 +1315,10 @@ export default function DashboardPage() {
                     <button
                       key={idx}
                       onClick={() => setTemplatePage(idx + 1)}
-                      className={`w-8 h-8 rounded-full text-sm font-bold transition-all ${
-                        templatePage === idx + 1
+                      className={`w-8 h-8 rounded-full text-sm font-bold transition-all ${templatePage === idx + 1
                           ? 'bg-violet-600 text-white shadow-md'
                           : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                      }`}
+                        }`}
                     >
                       {idx + 1}
                     </button>

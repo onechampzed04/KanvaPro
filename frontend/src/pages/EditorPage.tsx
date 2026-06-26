@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Zap, MousePointer2, PenTool, Shapes, Minus, StickyNote, Type } from 'lucide-react';
+import { Zap, MousePointer2, PenTool, Shapes, Minus, StickyNote, Type, Square } from 'lucide-react';
 import ShareModal from '../components/editor/ShareModal';
 import Konva from 'konva';
 import JSZip from 'jszip';
@@ -338,9 +338,20 @@ export default function EditorPage() {
   const stageWidth = currentPage?.width || 1920;
   const stageHeight = currentPage?.height || 1080;
   const currentPageType = currentPage?.type || 'canvas';
-  let selectedElement = selectedIds.length === 1 ? elements.find(el => el.id === selectedIds[0]) : null;
-  if (selectedIds.length === 1 && selectedIds[0] === 'bg') {
-    selectedElement = { id: 'bg', type: 'bg', fill: currentPage?.background_color || '#ffffff' };
+  let selectedElement: any = null;
+  if (selectedIds.length > 0) {
+    if (selectedIds.length === 1 && selectedIds[0] === 'bg') {
+      selectedElement = { id: 'bg', type: 'bg', fill: currentPage?.background_color || '#ffffff' };
+    } else {
+      const activeSelectedEls = selectedIds.map(id => elements.find(el => el.id === id)).filter(Boolean);
+      if (activeSelectedEls.length > 0) {
+        const firstType = activeSelectedEls[0].type;
+        const allSameType = activeSelectedEls.every(el => el.type === firstType);
+        if (allSameType) {
+          selectedElement = activeSelectedEls[0];
+        }
+      }
+    }
   }
   const docEditorRef = useRef<DocEditorHandle | null>(null);
 
@@ -700,7 +711,8 @@ export default function EditorPage() {
               try { snapshot = JSON.parse(snapshot); } catch (e) { console.error('Failed to parse snapshot', e); }
             }
 
-            const snapPages = snapshot.pages || [];
+            // Sort pages by page_order to handle older unsorted snapshots
+            const snapPages = (snapshot.pages || []).sort((a: any, b: any) => (a.page_order || 0) - (b.page_order || 0));
             let snapElements = snapshot.elements || [];
 
             // Fallback cho snapshot định dạng cũ (elements nằm trong pages)
@@ -956,15 +968,8 @@ export default function EditorPage() {
       setSelectedIds(['bg']);
       return;
     }
-
-    const clickedOnId = e.target.id();
-    if (!clickedOnId) return;
-    if (!e.evt?.shiftKey) {
-      if (!selectedIds.includes(clickedOnId)) setSelectedIds([clickedOnId]);
-    } else {
-      if (selectedIds.includes(clickedOnId)) setSelectedIds(selectedIds.filter(id => id !== clickedOnId));
-      else setSelectedIds([...selectedIds, clickedOnId]);
-    }
+    // Element clicks are handled by handleElementSelect in CanvasEditor via onClick.
+    // Do NOT set selectedIds here to avoid racing with CanvasEditor's onClick handler.
   };
 
   const handleMouseMove = (e: any) => {
@@ -1026,8 +1031,12 @@ export default function EditorPage() {
         const nodeBox = node.getClientRect();
         return Konva.Util.haveIntersection(selBox, nodeBox);
       }).map(el => el.id);
-
-      setSelectedIds(newSelectedIds);
+      const isMultiSelect = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || e.shiftKey || e.ctrlKey || e.metaKey;
+      if (isMultiSelect) {
+        setSelectedIds(Array.from(new Set([...selectedIds, ...newSelectedIds])));
+      } else {
+        setSelectedIds(newSelectedIds);
+      }
     }
   };
 
@@ -1423,6 +1432,24 @@ export default function EditorPage() {
     setSelectedIds([]);
   };
 
+  const handleDuplicate = () => {
+    const activeIds = selectedIds.filter(id => id !== 'bg');
+    if (activeIds.length === 0) return;
+    const elementsToDuplicate = elements.filter(el => activeIds.includes(el.id));
+    
+    pushUndoSnapshot(elements);
+    const newElements = elementsToDuplicate.map((el: any) => ({
+      ...el,
+      id: crypto.randomUUID(),
+      x: el.x + 20,
+      y: el.y + 20
+    }));
+    syncElementsImmediate([...elements, ...newElements]);
+    setSelectedIds(newElements.map(el => el.id));
+    setCollabNotification(`Đã nhân bản ${newElements.length} phần tử`);
+    setTimeout(() => setCollabNotification(''), 3000);
+  };
+
   const moveElement = (direction: 'up' | 'down') => {
     if (selectedIds.length !== 1) return;
     pushUndoSnapshot(elements); // Push undo trước khi đổi z-index
@@ -1442,8 +1469,30 @@ export default function EditorPage() {
       return;
     }
     pushUndoSnapshot(elements);
-    syncElementsImmediate(elements.map(el => el.id === newAttrs.id ? newAttrs : el));
-  }, [elements, pushUndoSnapshot, syncElementsImmediate, currentPageId, emitPageBackgroundUpdated]);
+    
+    const originalEl = elements.find(el => el.id === newAttrs.id);
+    if (!originalEl) return;
+    
+    // Tính toán các thuộc tính đã bị thay đổi (delta)
+    const changedKeys = Object.keys(newAttrs).filter(k => newAttrs[k] !== originalEl[k]);
+    const isMultiSelect = selectedIds.length > 1 && selectedIds.includes(newAttrs.id);
+
+    syncElementsImmediate(elements.map(el => {
+      if (el.id === newAttrs.id) return newAttrs;
+      
+      // Nếu chọn nhiều phần tử cùng loại, áp dụng delta cho các phần tử còn lại
+      if (isMultiSelect && selectedIds.includes(el.id) && el.type === originalEl.type) {
+        const updated = { ...el };
+        changedKeys.forEach(k => {
+          // Bỏ qua các thuộc tính đặc thù vị trí, kích thước, nội dung gốc
+          if (['id', 'x', 'y', 'width', 'height', 'text', 'src', 'type', 'timeline', 'animation', 'animationOrder'].includes(k)) return;
+          updated[k] = newAttrs[k];
+        });
+        return updated;
+      }
+      return el;
+    }));
+  }, [elements, pushUndoSnapshot, syncElementsImmediate, currentPageId, emitPageBackgroundUpdated, selectedIds]);
 
   const handleLayerDragStart = (e: React.DragEvent, index: number) => {
     setDraggedLayerIdx(index);
@@ -1515,6 +1564,9 @@ export default function EditorPage() {
 
       const uploadRes = await fetch('http://localhost:3000/api/assets/remove-bg', {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
         body: formData,
         credentials: 'include',
       });
@@ -2343,25 +2395,7 @@ export default function EditorPage() {
           }
           return;
         }
-        // Ctrl+V: Paste copied page(s)
-        if (ctrl && key === 'v') {
-          e.preventDefault();
-          if (copiedPageData && Array.isArray(copiedPageData)) {
-            const newPages = copiedPageData.map((p: any, index: number) => {
-              const newPageId = crypto.randomUUID();
-              const newPage = {
-                ...p,
-                id: newPageId,
-                page_order: pages.length + index,
-                elements: (p.elements || []).map((el: any) => ({ ...el, id: crypto.randomUUID() })),
-              };
-              emitPageAdded(newPage);
-              return newPage;
-            });
-            setPages(prev => [...prev, ...newPages]);
-          }
-          return;
-        }
+        // Phím tắt Ctrl+V đã được chuyển sang handlePaste để bắt sự kiện từ OS clipboard
         // Delete/Backspace: Delete selected pages
         if (e.key === 'Delete' || e.key === 'Backspace') {
           e.preventDefault();
@@ -2407,6 +2441,11 @@ export default function EditorPage() {
           setCopiedElementsData(JSON.parse(JSON.stringify(elementsToCopy)));
           setCopiedPageData(null);
           setCollabNotification(`Đã copy ${elementsToCopy.length} phần tử`);
+          // Ghi marker vào OS clipboard để báo hiệu đây là internal copy.
+          // Khi paste: nếu clipboard có marker này → dán element nội bộ.
+          // Nếu user sau đó copy ảnh từ ngoài, browser sẽ ghi đè clipboard (xóa marker)
+          // → paste sẽ thấy ảnh, không thấy marker → dán ảnh ngoài.
+          navigator.clipboard.writeText('__kanva__').catch(() => {});
           setTimeout(() => setCollabNotification(''), 3000);
         } else if (currentPageId) {
           const cur = pages.find(p => p.id === currentPageId);
@@ -2414,61 +2453,14 @@ export default function EditorPage() {
             setCopiedPageData([JSON.parse(JSON.stringify(cur))]);
             setCopiedElementsData(null);
             setCollabNotification('Đã copy toàn bộ trang hiện tại');
+            navigator.clipboard.writeText('__kanva__').catch(() => {});
             setTimeout(() => setCollabNotification(''), 3000);
           }
         }
         return;
       }
 
-      // ── Ctrl + V: Paste elements or single page ──
-      if (ctrl && key === 'v') {
-        if (copiedElementsData && copiedElementsData.length > 0) {
-          // Paste internal elements (Ctrl+C elements trong canvas)
-          e.preventDefault();
-          pushUndoSnapshot(elements);
-          const newElements = copiedElementsData.map((el: any) => ({
-            ...el,
-            id: crypto.randomUUID(),
-            x: el.x + 20,
-            y: el.y + 20
-          }));
-          syncElementsImmediate([...elements, ...newElements]);
-          setSelectedIds(newElements.map((el: any) => el.id));
-          setCollabNotification(`Đã dán ${newElements.length} phần tử`);
-          setTimeout(() => setCollabNotification(''), 3000);
-        } else if (copiedPageData && copiedPageData.length > 0) {
-          // Paste internal pages (Ctrl+C page trong grid view)
-          e.preventDefault();
-          const curIdx = pages.findIndex(p => p.id === currentPageId);
-          const insertIdx = curIdx >= 0 ? curIdx + 1 : pages.length;
-          const newPages = copiedPageData.map((p: any, index: number) => {
-            const newPageId = crypto.randomUUID();
-            const newPage = {
-              ...p,
-              id: newPageId,
-              page_order: insertIdx + index,
-              elements: (p.elements || []).map((el: any) => ({ ...el, id: crypto.randomUUID(), page_id: newPageId })),
-            };
-            emitPageAdded(newPage);
-            return newPage;
-          });
-          setPages(prev => {
-            const updated = [...prev];
-            updated.splice(insertIdx, 0, ...newPages);
-            const sorted = updated.map((p, i) => ({ ...p, page_order: i }));
-            emitPagesReordered(sorted.map(p => p.id));
-            return sorted;
-          });
-          lazyPageLoader.updateCache(newPages[0].id, newPages[0].elements);
-          setElements(newPages[0].elements);
-          setCurrentPageId(newPages[0].id);
-          setCollabNotification('Đã dán trang mới');
-          setTimeout(() => setCollabNotification(''), 3000);
-        }
-        // [FIX] Không e.preventDefault() khi không có nội dung internal để paste
-        // → Để browser xử lý → paste event sẽ fire → handlePaste sẽ bắt ảnh từ clipboard
-        return;
-      }
+      // Sự kiện Ctrl + V đã được chuyển sang handlePaste để ưu tiên OS clipboard
 
       // ── Ctrl + Z: Undo ──
       if (ctrl && key === 'z' && !e.shiftKey) {
@@ -2589,11 +2581,35 @@ export default function EditorPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedIds, elements, editingId, currentPageType, currentPageId, pages, handleUndo, handleRedo, sidebarVisible, showGridView, gridSelectedPages, copiedPageData, copiedElementsData]);
 
-  // Dùng ref để tránh stale closure trong paste handler (addImageOriginal thay đổi mỗi render)
+  // Refs để tránh stale closure trong paste handler (dep array rỗng)
   const addImageRef = useRef<typeof addImageOriginal>(addImageOriginal);
   addImageRef.current = addImageOriginal;
   const isReadOnlyRef = useRef(isReadOnly);
   isReadOnlyRef.current = isReadOnly;
+  const copiedElementsDataRef = useRef(copiedElementsData);
+  copiedElementsDataRef.current = copiedElementsData;
+  const copiedPageDataRef = useRef(copiedPageData);
+  copiedPageDataRef.current = copiedPageData;
+  const elementsRef2 = useRef(elements);
+  elementsRef2.current = elements;
+  const showGridViewRef = useRef(showGridView);
+  showGridViewRef.current = showGridView;
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  // currentPageIdRef already declared at line ~372 — just keep .current updated
+  currentPageIdRef.current = currentPageId;
+  const pushUndoSnapshotRef = useRef(pushUndoSnapshot);
+  pushUndoSnapshotRef.current = pushUndoSnapshot;
+  // syncElementsImmediateRef already declared at line ~96 — just keep .current updated
+  syncElementsImmediateRef.current = syncElementsImmediate;
+  const setSelectedIdsRef = useRef(setSelectedIds);
+  setSelectedIdsRef.current = setSelectedIds;
+  const setCollabNotificationRef = useRef(setCollabNotification);
+  setCollabNotificationRef.current = setCollabNotification;
+  const setEmitPageAddedRef = useRef(emitPageAdded);
+  setEmitPageAddedRef.current = emitPageAdded;
+  const setEmitPagesReorderedRef = useRef(emitPagesReordered);
+  setEmitPagesReorderedRef.current = emitPagesReordered;
 
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
@@ -2605,63 +2621,155 @@ export default function EditorPage() {
       ) return;
       if (isReadOnlyRef.current) return;
 
+      // Read latest state via refs (avoids stale closure)
+      const _copiedElementsData = copiedElementsDataRef.current;
+      const _copiedPageData = copiedPageDataRef.current;
+      const _elements = elementsRef2.current;
+      const _showGridView = showGridViewRef.current;
+      const _pages = pagesRef.current;
+      const _currentPageId = currentPageIdRef.current;
+
       const items = e.clipboardData?.items;
       if (!items) return;
 
+      // ── Dùng clipboard text marker để phân biệt internal copy vs external copy ──
+      // Khi Ctrl+C element trong editor → clipboard có text '__kanva__'
+      // Khi user copy ảnh từ browser → browser ghi đè clipboard bằng ảnh (không còn marker)
+      // Logic: marker có → paste nội bộ. Ảnh có (không có marker) → paste ảnh ngoài.
+      const clipText = e.clipboardData?.getData('text/plain') || '';
+      const isKanvaInternalCopy = clipText === '__kanva__';
+
+      let hasExternalImage = false;
       for (let i = 0; i < items.length; i++) {
         if (items[i].type.indexOf('image') !== -1) {
-          const file = items[i].getAsFile();
-          if (!file) continue;
-          e.preventDefault();
-
-          // Upload lên server trước → nhận server URL → mới thêm vào canvas
-          setUploadProgress({ visible: true, percent: 10 });
-          try {
-            const pastedFile = new File(
-              [file],
-              `clipboard_${Date.now()}.png`,
-              { type: file.type || 'image/png' }
-            );
-            const data = await uploadImageFile(pastedFile);
-            setUploadProgress({ visible: true, percent: 80 });
-
-            // Tính quota
-            refreshUser().catch(console.error);
-
-            // Đọc kích thước ảnh từ server URL
-            const img = new window.Image();
-            img.src = data.url;
-            img.onload = () => {
-              // Thêm vào canvas với server URL (bền vững, Ctrl+C sang tab vẫn OK)
-              addImageRef.current(data.url, img.width, img.height);
-              // Thêm vào sidebar Uploads
-              setUploadedImages(prev => [{
-                id: data.assetId ?? crypto.randomUUID(),
-                url: data.url,
-                width: img.width,
-                height: img.height
-              }, ...prev]);
-              setActiveTab('uploads');
-              setUploadProgress({ visible: true, percent: 100 });
-              setTimeout(() => setUploadProgress({ visible: false, percent: 0 }), 500);
-            };
-            img.onerror = () => {
-              addImageRef.current(data.url, 800, 600);
-              setUploadedImages(prev => [{
-                id: data.assetId ?? crypto.randomUUID(),
-                url: data.url, width: 800, height: 600
-              }, ...prev]);
-              setUploadProgress({ visible: false, percent: 0 });
-            };
-          } catch (err: any) {
-            console.error('[Paste] Upload error:', err);
-            setUploadProgress({ visible: false, percent: 0 });
-            showError(err.message || 'Không thể tải ảnh lên. Vui lòng thử lại!');
-          }
+          hasExternalImage = true;
           break;
         }
       }
+
+      // ── External image paste: ưu tiên nếu clipboard có ảnh VÀ KHÔNG có marker ──
+      if (hasExternalImage && !isKanvaInternalCopy) {
+        // User copy ảnh từ ngoài sau lần copy nội bộ → dán ảnh ngoài
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf('image') !== -1) {
+            const file = items[i].getAsFile();
+            if (!file) continue;
+            e.preventDefault();
+
+            setUploadProgress({ visible: true, percent: 10 });
+            try {
+              const pastedFile = new File(
+                [file],
+                `clipboard_${Date.now()}.png`,
+                { type: file.type || 'image/png' }
+              );
+              const data = await uploadImageFile(pastedFile);
+              setUploadProgress({ visible: true, percent: 80 });
+
+              refreshUser().catch(console.error);
+
+              const img = new window.Image();
+              img.src = data.url;
+              img.onload = () => {
+                addImageRef.current(data.url, img.width, img.height);
+                setUploadedImages(prev => [{
+                  id: data.assetId ?? crypto.randomUUID(),
+                  url: data.url,
+                  width: img.width,
+                  height: img.height
+                }, ...prev]);
+                setActiveTab('uploads');
+                setUploadProgress({ visible: true, percent: 100 });
+                setTimeout(() => setUploadProgress({ visible: false, percent: 0 }), 500);
+              };
+              img.onerror = () => {
+                addImageRef.current(data.url, 800, 600);
+                setUploadedImages(prev => [{
+                  id: data.assetId ?? crypto.randomUUID(),
+                  url: data.url, width: 800, height: 600
+                }, ...prev]);
+                setUploadProgress({ visible: false, percent: 0 });
+              };
+            } catch (err: any) {
+              console.error('[Paste] Upload error:', err);
+              setUploadProgress({ visible: false, percent: 0 });
+              showError(err.message || 'Không thể tải ảnh lên. Vui lòng thử lại!');
+            }
+            break;
+          }
+        }
+        return;
+      }
+
+      // ── Internal paste: marker có trong clipboard HOẶC không có ảnh ngoài ──
+      if (_showGridView) {
+        if (_copiedPageData && Array.isArray(_copiedPageData) && _copiedPageData.length > 0) {
+          e.preventDefault();
+          const newPages = _copiedPageData.map((p: any, index: number) => {
+            const newPageId = crypto.randomUUID();
+            const newPage = {
+              ...p,
+              id: newPageId,
+              page_order: _pages.length + index,
+              elements: (p.elements || []).map((el: any) => ({ ...el, id: crypto.randomUUID() })),
+            };
+            setEmitPageAddedRef.current(newPage);
+            return newPage;
+          });
+          setPages(prev => [...prev, ...newPages]);
+          return;
+        }
+        return;
+      }
+
+      if (_copiedElementsData && _copiedElementsData.length > 0) {
+        e.preventDefault();
+        pushUndoSnapshotRef.current(_elements);
+        const newElements = _copiedElementsData.map((el: any) => ({
+          ...el,
+          id: crypto.randomUUID(),
+          x: el.x + 20,
+          y: el.y + 20
+        }));
+        syncElementsImmediateRef.current([..._elements, ...newElements]);
+        setSelectedIdsRef.current(newElements.map((el: any) => el.id));
+        setCollabNotificationRef.current(`Đã dán ${newElements.length} phần tử`);
+        setTimeout(() => setCollabNotificationRef.current(''), 3000);
+        return;
+      }
+
+      if (_copiedPageData && _copiedPageData.length > 0) {
+        e.preventDefault();
+        const curIdx = _pages.findIndex((p: any) => p.id === _currentPageId);
+        const insertIdx = curIdx >= 0 ? curIdx + 1 : _pages.length;
+        const newPages = _copiedPageData.map((p: any, index: number) => {
+          const newPageId = crypto.randomUUID();
+          const newPage = {
+            ...p,
+            id: newPageId,
+            page_order: insertIdx + index,
+            elements: (p.elements || []).map((el: any) => ({ ...el, id: crypto.randomUUID(), page_id: newPageId })),
+          };
+          setEmitPageAddedRef.current(newPage);
+          return newPage;
+        });
+        setPages(prev => {
+          const updated = [...prev];
+          updated.splice(insertIdx, 0, ...newPages);
+          const sorted = updated.map((p, i) => ({ ...p, page_order: i }));
+          setEmitPagesReorderedRef.current(sorted.map(p => p.id));
+          return sorted;
+        });
+        lazyPageLoader.updateCache(newPages[0].id, newPages[0].elements);
+        setElements(newPages[0].elements);
+        setCurrentPageId(newPages[0].id);
+        setCollabNotificationRef.current('Đã dán trang mới');
+        setTimeout(() => setCollabNotificationRef.current(''), 3000);
+        return;
+      }
+
     };
+
 
     window.addEventListener('paste', handlePaste as any);
     return () => window.removeEventListener('paste', handlePaste as any);
@@ -2781,7 +2889,11 @@ export default function EditorPage() {
             activeTab={activeTab}
             setActiveTab={(tab: any) => {
               setActiveTab(tab);
-              if (tab) { setShowPositionBox(false); setShowAnimateBox(false); }
+              if (tab) { 
+                setShowPositionBox(false); 
+                setShowAnimateBox(false); 
+                setShowAnimPanel(false); // [FIX] Đóng AnimationPanel nếu đang mở
+              }
             }}
             currentPageType={currentPageType}
             showPositionBox={showPositionBox}
@@ -3032,20 +3144,29 @@ export default function EditorPage() {
                   transition={{ duration: 0.25, ease: 'easeOut' }}
                   className="absolute top-2 left-1/2 -translate-x-1/2 z-[60]"
                 >
-                  {selectedIds.length === 1 && selectedElement ? (
+                  {selectedElement ? (
                     <ElementToolbar
                       element={selectedElement}
                       onUpdate={updateElementWithUndo}
                       onDelete={deleteSelectedElement}
                       onMove={moveElement}
+                      onDuplicate={handleDuplicate}
                       fontList={Array.from(new Set(customFonts.map(f => f.name)))}
                       onTogglePosition={() => {
                         setShowPositionBox(!showPositionBox);
                         setShowAnimateBox(false);
                         setShowAnimPanel(false);
+                        // [FIX] X\u00f3a activeTab \u0111\u1ec3 tr\u00e1nh 2 panel render \u0111\u00e8 nhau trong SidebarDrawer.
+                        // N\u1ebfu \u0111ang m\u1edf tab (Uploads, Elements...) m\u00e0 b\u1eadt Layers,
+                        // c\u1ea3 activeTab l\u1eabn showPositionBox \u0111\u1ec1u true \u2192 2 n\u1ed9i dung ch\u1ed3ng nhau.
+                        setActiveTab(null);
                       }}
                       onToggleAnimate={design?.design_type === 'presentation' ? () => {
-                        setShowAnimPanel(prev => !prev);
+                        setShowAnimPanel(prev => {
+                          const newVal = !prev;
+                          if (newVal) setActiveTab(null); // [FIX] Xóa activeTab để ẩn SidebarDrawer dưới nền
+                          return newVal;
+                        });
                         setShowPositionBox(false);
                         setShowAnimateBox(false);
                         setHighlightedAnimId(selectedElement?.id || null);
@@ -3142,11 +3263,11 @@ export default function EditorPage() {
                   if (id) emitCursorMove(id, e.clientX, e.clientY);
                 }}
               >
-                <CanvasEditor
-                  stageRef={stageRef} layerRef={layerRef} trRef={trRef} selectionRectRef={selectionRectRef}
-                  stageWidth={stageWidth} stageHeight={stageHeight} currentPage={currentPage}
-                  elements={elements} selectedIds={selectedIds} editingId={editingId} setEditingId={(id) => {
-                    // Khi bắt đầu edit text: lưu snapshot elements vào ref để push undo sau khi blur
+                  <CanvasEditor
+                    stageRef={stageRef} layerRef={layerRef} trRef={trRef} selectionRectRef={selectionRectRef}
+                    stageWidth={stageWidth} stageHeight={stageHeight} currentPage={currentPage}
+                    elements={elements} selectedIds={selectedIds} setSelectedIds={setSelectedIds} editingId={editingId} setEditingId={(id) => {
+                      // Khi bắt đầu edit text: lưu snapshot elements vào ref để push undo sau khi blur
                     if (id !== null) {
                       originalElementsBeforeTextEditRef.current = JSON.parse(JSON.stringify(elements));
                     }
@@ -3193,6 +3314,7 @@ export default function EditorPage() {
                     {[
                       { id: 'select', icon: <MousePointer2 size={18} />, title: 'Chuột (Select)' },
                       { id: 'draw', icon: <PenTool size={18} />, title: 'Bút vẽ' },
+                      { id: 'shape', icon: <Square size={18} />, title: 'Hình khối' },
                       { id: 'line', icon: <Minus size={18} className="rotate-45" />, title: 'Đường kẻ' },
                       { id: 'text', icon: <Type size={18} />, title: 'Văn bản' },
                     ].map((tool) => (
@@ -3215,23 +3337,43 @@ export default function EditorPage() {
                         {/* Shape Popover */}
                         {tool.id === 'shape' && showShapePopover && activeTool === 'shape' && (
                           <div className="absolute top-1/2 left-full -translate-y-1/2 ml-2 p-2 bg-white rounded-xl shadow-xl border border-slate-100 flex flex-col gap-2">
-                            {['rect', 'circle', 'triangle'].map((type) => (
+                            {['rect', 'rect-hcn', 'circle', 'rect-rounded'].map((type) => (
                               <button
                                 key={type}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  // Xử lý thêm vật thể sẽ được trigger qua prop hoặc xử lý trực tiếp (tạm thời đặt icon mồi)
-                                  // Trong thực tế, EditorPage cần có hàm `addElement` 
-                                  // Để gọn, CanvasEditor sẽ lắng nghe sự kiện onClick/Drag
+                                  const w = type === 'rect-hcn' ? 200 : 150;
+                                  const h = type === 'rect-hcn' ? 100 : 150;
+                                  const r = type === 'circle' ? 75 : 0;
+                                  const corner = type === 'rect-rounded' ? 20 : 0;
+                                  
+                                  const newShape = {
+                                    id: crypto.randomUUID(),
+                                    type: type === 'circle' ? 'circle' : 'rect',
+                                    x: stageWidth / 2 - w / 2,
+                                    y: stageHeight / 2 - h / 2,
+                                    width: w,
+                                    height: h,
+                                    radius: r,
+                                    fill: '#CBD5E1',
+                                    cornerRadius: corner,
+                                    timeline: { start: 0, duration: 5, lane: elements.length },
+                                    animation: { in: 'none' }
+                                  };
+                                  
+                                  pushUndoSnapshot(elements);
+                                  syncElementsImmediate([...elements, newShape]);
+                                  setSelectedIds([newShape.id]);
                                   setShowShapePopover(false);
+                                  setActiveTool('select');
                                 }}
                                 className="w-10 h-10 flex justify-center items-center rounded-lg bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition"
+                                title={type === 'rect' ? 'Hình vuông' : type === 'rect-hcn' ? 'Hình chữ nhật' : type === 'circle' ? 'Hình tròn' : 'Hình vuông bo góc'}
                               >
                                 {type === 'rect' && <div className="w-5 h-5 border-2 border-current rounded-sm"></div>}
+                                {type === 'rect-hcn' && <div className="w-6 h-4 border-2 border-current rounded-sm"></div>}
                                 {type === 'circle' && <div className="w-5 h-5 border-2 border-current rounded-full"></div>}
-                                {type === 'triangle' && (
-                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3L2 21h20L12 3z" /></svg>
-                                )}
+                                {type === 'rect-rounded' && <div className="w-5 h-5 border-2 border-current rounded-[6px]"></div>}
                               </button>
                             ))}
                           </div>
@@ -3286,11 +3428,21 @@ export default function EditorPage() {
                     .filter(el => el.animation?.in && el.animation.in !== 'none')
                     .sort((a, b) => (a.animationOrder ?? 999) - (b.animationOrder ?? 999));
 
-                  return animEls.map((el, idx) => {
+                  let currentStep = 1;
+                  const stepMap: Record<string, number> = {};
+                  animEls.forEach((el, i) => {
+                    if (i > 0 && (el.animationOrder ?? 999) !== (animEls[i-1].animationOrder ?? 999)) {
+                      currentStep++;
+                    }
+                    stepMap[el.id] = currentStep;
+                  });
+
+                  return animEls.map((el) => {
                     // Position badge at top-left of element on canvas
                     const px = (el.x ?? 0) * scaleX + stageX;
                     const py = (el.y ?? 0) * scaleY + stageY;
                     const isHighlighted = selectedIds.includes(el.id);
+                    const stepNum = stepMap[el.id];
 
                     return (
                       <div
@@ -3301,13 +3453,13 @@ export default function EditorPage() {
                           setSelectedIds([el.id]);
                           setHighlightedAnimId(el.id);
                         }}
-                        title={`Animation ${idx + 1}: ${el.animation?.in}`}
+                        title={`Animation ${stepNum}: ${el.animation?.in}`}
                       >
                         <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shadow-md border-2 transition-all ${isHighlighted
                           ? 'bg-violet-600 border-white text-white shadow-violet-300'
                           : 'bg-violet-500 border-white text-white shadow-violet-200'
                           }`}>
-                          {idx + 1}
+                          {stepNum}
                         </div>
                       </div>
                     );

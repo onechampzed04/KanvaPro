@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Loader2, Crown, Sparkles, BadgeCheck, X, ArrowRight, Tag, RefreshCw } from 'lucide-react';
+import { Check, Loader2, Crown, Sparkles, BadgeCheck, X, ArrowRight, Tag, RefreshCw, Zap } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
@@ -18,9 +18,11 @@ export default function PricingPage() {
   const navigate = useNavigate();
 
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [tokenPackages, setTokenPackages] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCheckingOut, setIsCheckingOut] = useState<string | null>(null);
   const [showTeamOnboarding, setShowTeamOnboarding] = useState(false);
+  const [isTokenCheckout, setIsTokenCheckout] = useState<string | null>(null);
 
   const [previewModal, setPreviewModal] = useState<{
     show: boolean;
@@ -36,15 +38,26 @@ export default function PricingPage() {
       try {
         const data = await fetchActiveSubscriptions();
         let plansData = data.subscriptions || data.plans || data || [];
-        // Không filter gói Free để hiển thị đủ các gói
         setSubscriptions(plansData);
       } catch (error) {
         console.error('Lỗi tải gói cước:', error);
-      } finally {
-        setIsLoading(false);
       }
     };
-    loadPlans();
+    const loadTokens = async () => {
+      try {
+        const res = await fetch('/api/ai/packages');
+        if (res.ok) {
+          const data = await res.json();
+          setTokenPackages(data.packages || []);
+        }
+      } catch (e) {
+        console.error('Lỗi tải gói token:', e);
+      }
+    };
+    
+    Promise.all([loadPlans(), loadTokens()]).finally(() => {
+      setIsLoading(false);
+    });
   }, []);
 
   // [MỚI] Bước 1: Bấm nút → Gọi Preview API → Hiện Modal xác nhận
@@ -66,17 +79,22 @@ export default function PricingPage() {
     let targetTeamId = undefined;
     let targetMembersCount = undefined;
 
-    const userOwnedTeam = workspaces.find(w => w.workspace_type !== 'personal' && w.my_role === 'owner');
-
     if (isTeamPlan) {
       if (currentWorkspace && currentWorkspace.workspace_type !== 'personal') {
+        // User is currently INSIDE a team workspace
+        if (currentWorkspace.my_role !== 'owner') {
+          alert('Chỉ chủ nhóm (Owner) mới có quyền gia hạn nhóm này!');
+          return;
+        }
         targetTeamId = currentWorkspace.id;
         targetMembersCount = currentWorkspace.max_members || 1;
-      } else if (userOwnedTeam) {
-        // User is in personal workspace but already owns a team
-        targetTeamId = userOwnedTeam.id;
-        targetMembersCount = userOwnedTeam.max_members || 1;
       } else {
+        // User is in a personal workspace.
+        const userOwnedTeam = workspaces.find(w => w.workspace_type !== 'personal' && w.my_role === 'owner');
+        if (userOwnedTeam) {
+          alert('Bạn đã sở hữu một nhóm. Mỗi tài khoản chỉ được tạo tối đa 1 nhóm để dễ quản lý.');
+          return;
+        }
         // User does not own any team, show onboarding
         setShowTeamOnboarding(true);
         return;
@@ -114,6 +132,31 @@ export default function PricingPage() {
     } catch (error) {
       alert('Hệ thống thanh toán đang bận. Vui lòng thử lại sau!');
       setIsCheckingOut(null);
+    }
+  };
+
+  const handleTokenCheckout = async (pkg: any) => {
+    if (!user) {
+      alert('Vui lòng đăng nhập để mua token!');
+      navigate('/login');
+      return;
+    }
+    setIsTokenCheckout(pkg.id);
+    try {
+      const res = await fetch('/api/payments/create-token-checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ packageId: pkg.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Lỗi tạo thanh toán');
+      window.location.href = data.checkoutUrl;
+    } catch (error) {
+      alert('Không thể tạo link thanh toán gói token. Vui lòng thử lại sau!');
+      setIsTokenCheckout(null);
     }
   };
 
@@ -272,8 +315,11 @@ export default function PricingPage() {
           }
 
           const isTeamPlan = sub.slug === 'pro_team';
+          const isCurrentWorkspaceTeam = currentWorkspace != null && currentWorkspace.workspace_type !== 'personal';
+          const isTeamRenewal = isTeamPlan && isCurrentWorkspaceTeam && currentWorkspace?.my_role === 'owner';
+          
           const userOwnedTeam = workspaces.find(w => w.workspace_type !== 'personal' && w.my_role === 'owner');
-          const isTeamRenewal = isTeamPlan && !!userOwnedTeam;
+          const isAlreadyOwnedTeam = isTeamPlan && !isCurrentWorkspaceTeam && !!userOwnedTeam;
 
           return (
             <div
@@ -327,8 +373,8 @@ export default function PricingPage() {
 
               <button
                 onClick={() => handleSubscribe(sub)}
-                disabled={isCheckingOut === sub.id || isCurrentPlan}
-                className={`mt-10 w-full font-bold py-4 px-6 rounded-xl text-center transition-all duration-300 flex items-center justify-center gap-2 ${isCurrentPlan
+                disabled={isCheckingOut === sub.id || isCurrentPlan || isAlreadyOwnedTeam}
+                className={`mt-10 w-full font-bold py-4 px-6 rounded-xl text-center transition-all duration-300 flex items-center justify-center gap-2 ${(isCurrentPlan || isAlreadyOwnedTeam)
                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
                     : isFree
                       ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -345,6 +391,8 @@ export default function PricingPage() {
                   <><BadgeCheck className="w-5 h-5" /> Gói hiện tại của bạn</>
                 ) : isTeamRenewal ? (
                   <><RefreshCw className="w-5 h-5" /> Gia hạn nhóm</>
+                ) : isAlreadyOwnedTeam ? (
+                  <><BadgeCheck className="w-5 h-5" /> Đã sở hữu nhóm</>
                 ) : (
                   isFree ? "Bắt đầu miễn phí" : `Nâng cấp ${sub.name}`
                 )}
@@ -353,6 +401,53 @@ export default function PricingPage() {
           );
         })}
       </div>
+
+      {/* ─── [MỚI] Phần gói Token AI ─── */}
+      {tokenPackages.length > 0 && (
+        <div className="mt-24 max-w-5xl mx-auto">
+          <div className="text-center mb-10">
+            <h2 className="text-3xl font-black text-slate-900 flex items-center justify-center gap-3">
+              <Sparkles className="text-indigo-500 w-8 h-8" />
+              Gói nạp AI Token
+            </h2>
+            <p className="mt-3 text-slate-500 font-medium max-w-lg mx-auto">
+              Hết token tạo ảnh? Mua lẻ các gói token để tiếp tục sử dụng Vertex AI Imagen 3 mà không cần nâng cấp tài khoản.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+            {tokenPackages.map(pkg => (
+              <div key={pkg.id} className="bg-white rounded-3xl p-6 shadow-xl shadow-slate-200/50 border border-slate-200 flex flex-col items-center text-center hover:border-indigo-300 hover:shadow-indigo-500/10 transition-all">
+                <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center mb-4 text-indigo-500">
+                  <Zap size={24} fill="currentColor" />
+                </div>
+                <h4 className="text-xl font-black text-slate-800">{pkg.name}</h4>
+                <p className="text-sm text-slate-500 mt-1 mb-4">{pkg.description}</p>
+                <div className="flex items-baseline gap-1 mt-auto">
+                  <span className="text-3xl font-black text-indigo-600">{formatVND(pkg.price)}</span>
+                </div>
+                <div className="w-full h-px bg-slate-100 my-5"></div>
+                <p className="text-sm font-bold text-slate-700 flex items-center justify-center gap-2 mb-6">
+                  <Check size={16} className="text-emerald-500" strokeWidth={3} />
+                  Nhận ngay {pkg.token_amount} Token AI
+                </p>
+                <button
+                  onClick={() => handleTokenCheckout(pkg)}
+                  disabled={!!isTokenCheckout}
+                  className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  {isTokenCheckout === pkg.id ? (
+                    <><Loader2 className="w-5 h-5 animate-spin" /> Đang chuyển hướng...</>
+                  ) : (
+                    "Mua ngay"
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

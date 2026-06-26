@@ -9,6 +9,9 @@ import { designPageService } from '../services/designPageService';
 import { globalIo } from '../sockets/collaboration';
 import { revisionStore } from '../ot/revisionStore';
 import { designVersionService } from '../services/designVersionService';
+import { cloneAssetsForDesign, updateElementSrcs } from '../services/cloneAssetService.js';
+import { incrementStorageUsage } from '../middleware/checkStorageQuota.js';
+
 
 import fs from 'fs-extra';
 import path from 'path';
@@ -517,11 +520,6 @@ export const getTrashDesigns = async (req: Request, res: Response) => {
 export const emptyTrash = async (req: Request, res: Response) => {
     const userId = (req as any).user?.id;
     try {
-        // [FIX - Immediate Quota Release]
-        // Trước khi xóa cả lô, tính tổng dung lượng các assets clone gắn với
-        // những design sắp bị xóa để hoàn trả quota ngay cho user.
-        // GC sẽ tự dọn file vật lý lúc 2AM, nhưng quota được giải phóng ngay lập tức.
-
         // Bước 1: Lấy danh sách design_id trong Trash của user
         const trashDesigns = await db.query(
             `SELECT id FROM designs WHERE user_id = $1 AND is_deleted = true`,
@@ -531,38 +529,55 @@ export const emptyTrash = async (req: Request, res: Response) => {
         if (trashDesigns.rows.length > 0) {
             const designIds = trashDesigns.rows.map((d: any) => d.id);
 
-            // Bước 2: Tìm các asset clone thuộc các design này (Bản ghi B),
-            // có file_size > 0 và là điều kiện cuối cùng trỏ tới file đó
-            const orphanAssets = await db.query(
+            // Bước 2: Tìm các asset thực sự của user được clone từ các design này.
+            // Giờ asset clone là bản copy vật lý thật sự (uploaded_by = userId, metadata.dest_design_id trong designIds).
+            const clonedAssets = await db.query(
                 `SELECT a.id, a.url, a.file_size, a.uploaded_by, a.team_id
                  FROM assets a
-                 WHERE a.metadata->>'design_id' = ANY($1::text[])
-                   AND a.metadata->>'design_clone' = 'true'
-                   AND a.file_size > 0
-                   AND NOT EXISTS (
-                     SELECT 1 FROM assets a2
-                     WHERE a2.url = a.url AND a2.id != a.id
-                   )`,
-                [designIds]
+                 WHERE a.uploaded_by = $1
+                   AND a.metadata->>'dest_design_id' = ANY($2::text[])
+                   AND a.file_size > 0`,
+                [userId, designIds]
             );
 
-            // Bước 3: Xóa các design trong trash
+            // Bước 3: Xóa file vật lý và asset record
+            const { fileURLToPath } = await import('url');
+            const pathModule = await import('path');
+            const fsModule = await import('fs');
+            const __dirnameLocal = pathModule.default.dirname(fileURLToPath(import.meta.url));
+            const IMAGES_DIR_LOCAL = pathModule.default.join(__dirnameLocal, '..', 'public', 'uploads', 'images');
+
+            for (const asset of clonedAssets.rows) {
+                try {
+                    const fileName = pathModule.default.basename(asset.url);
+                    const filePath = pathModule.default.join(IMAGES_DIR_LOCAL, fileName);
+                    if (fsModule.default.existsSync(filePath)) {
+                        fsModule.default.unlinkSync(filePath);
+                    }
+                } catch (e) {
+                    console.warn(`[EmptyTrash] Could not delete file for asset ${asset.id}:`, e);
+                }
+            }
+
+            if (clonedAssets.rows.length > 0) {
+                const assetIds = clonedAssets.rows.map((a: any) => a.id);
+                await db.execute(
+                    `DELETE FROM assets WHERE id = ANY($1::uuid[])`,
+                    [assetIds]
+                ).catch((e: any) => console.warn('[EmptyTrash] Failed to delete cloned asset records:', e));
+            }
+
+            // Bước 4: Xóa các design trong trash
             await db.execute(
                 'DELETE FROM designs WHERE user_id = $1 AND is_deleted = true',
                 [userId]
             );
 
-            // Bước 4: Gom tổng dung lượng theo từng chủ sở hữu, rồi UPDATE 1 lần mỗi nhóm.
-            // [FIX Race Condition] Không dùng vòng for tuần tự (nếu 1 fail thì quota bị treo).
-            // Thay bằng: aggregate Map → Promise.allSettled để các UPDATE chạy song song,
-            // 1 cái fail không ảnh hưởng các cái khác. GC sẽ sync lại nếu vẫn còn lệch.
-
-            // Gom bytes: key = "user:<id>" hoặc "team:<id>"
+            // Bước 5: Hoàn trả quota từ các file đã xóa
             const bytesByOwner = new Map<string, { type: 'user' | 'team'; id: string; bytes: number }>();
-            for (const asset of orphanAssets.rows) {
+            for (const asset of clonedAssets.rows) {
                 const bytes = Number(asset.file_size) || 0;
                 if (bytes <= 0) continue;
-
                 if (asset.team_id) {
                     const key = `team:${asset.team_id}`;
                     const existing = bytesByOwner.get(key);
@@ -576,7 +591,6 @@ export const emptyTrash = async (req: Request, res: Response) => {
                 }
             }
 
-            // Chạy song song tất cả UPDATE, 1 fail không chặn cái khác
             const updatePromises = Array.from(bytesByOwner.values()).map(({ type, id, bytes }) => {
                 if (type === 'team') {
                     return db.execute(
@@ -590,7 +604,6 @@ export const emptyTrash = async (req: Request, res: Response) => {
                     );
                 }
             });
-
             const results = await Promise.allSettled(updatePromises);
             results.forEach((result, i) => {
                 if (result.status === 'rejected') {
@@ -599,7 +612,6 @@ export const emptyTrash = async (req: Request, res: Response) => {
                 }
             });
         } else {
-            // Trash đã trống sẵn
             await db.execute(
                 'DELETE FROM designs WHERE user_id = $1 AND is_deleted = true',
                 [userId]
@@ -626,15 +638,89 @@ export const restoreDesign = async (req: Request, res: Response) => {
 export const permanentlyDeleteDesign = async (req: Request, res: Response) => {
     const { id } = req.params;
     // [FIX 4 - Trash RBAC] Authorization đã được checkTrashedDesignAccess + requireRole('owner') xử lý.
-    // Không cần hard-code WHERE user_id = $2 nữa — tương thích với Transfer Ownership tương lai.
     try {
+        // Bước 1: Tìm các asset của user được clone từ design này
+        const userId = (req as any).user?.id;
+        const clonedAssets = await db.query(
+            `SELECT a.id, a.url, a.file_size, a.uploaded_by, a.team_id
+             FROM assets a
+             WHERE a.metadata->>'dest_design_id' = $1
+               AND a.file_size > 0`,
+            [id]
+        );
+
+        // Bước 2: Xóa file vật lý của các asset clone
+        const { fileURLToPath } = await import('url');
+        const pathModule = await import('path');
+        const fsModule = await import('fs');
+        const __dirnameLocal = pathModule.default.dirname(fileURLToPath(import.meta.url));
+        const IMAGES_DIR_LOCAL = pathModule.default.join(__dirnameLocal, '..', 'public', 'uploads', 'images');
+
+        for (const asset of clonedAssets.rows) {
+            try {
+                const fileName = pathModule.default.basename(asset.url);
+                const filePath = pathModule.default.join(IMAGES_DIR_LOCAL, fileName);
+                if (fsModule.default.existsSync(filePath)) {
+                    fsModule.default.unlinkSync(filePath);
+                }
+            } catch (e) {
+                console.warn(`[PermanentDelete] Could not delete file for asset ${asset.id}:`, e);
+            }
+        }
+
+        // Bước 3: Xóa asset record
+        if (clonedAssets.rows.length > 0) {
+            const assetIds = clonedAssets.rows.map((a: any) => a.id);
+            await db.execute(
+                `DELETE FROM assets WHERE id = ANY($1::uuid[])`,
+                [assetIds]
+            ).catch((e: any) => console.warn('[PermanentDelete] Failed to delete cloned asset records:', e));
+        }
+
+        // Bước 4: Xóa design
         await db.execute(
             'DELETE FROM designs WHERE id = $1 AND is_deleted = true',
             [id]
         );
+
+        // Bước 5: Hoàn trả quota
+        if (clonedAssets.rows.length > 0) {
+            const bytesByOwner = new Map<string, { type: 'user' | 'team'; id: string; bytes: number }>();
+            for (const asset of clonedAssets.rows) {
+                const bytes = Number(asset.file_size) || 0;
+                if (bytes <= 0) continue;
+                if (asset.team_id) {
+                    const key = `team:${asset.team_id}`;
+                    const existing = bytesByOwner.get(key);
+                    if (existing) existing.bytes += bytes;
+                    else bytesByOwner.set(key, { type: 'team', id: asset.team_id, bytes });
+                } else if (asset.uploaded_by) {
+                    const key = `user:${asset.uploaded_by}`;
+                    const existing = bytesByOwner.get(key);
+                    if (existing) existing.bytes += bytes;
+                    else bytesByOwner.set(key, { type: 'user', id: asset.uploaded_by, bytes });
+                }
+            }
+            const updatePromises = Array.from(bytesByOwner.values()).map(({ type, id: ownerId, bytes }) => {
+                if (type === 'team') {
+                    return db.execute(
+                        `UPDATE teams SET used_storage_bytes = GREATEST(0, COALESCE(used_storage_bytes, 0) - $1) WHERE id = $2`,
+                        [bytes, ownerId]
+                    );
+                } else {
+                    return db.execute(
+                        `UPDATE users SET storage_used_bytes = GREATEST(0, COALESCE(storage_used_bytes, 0) - $1) WHERE id = $2`,
+                        [bytes, ownerId]
+                    );
+                }
+            });
+            await Promise.allSettled(updatePromises);
+        }
+
         res.json({ message: 'Permanently deleted' });
     } catch { res.status(500).json({ error: 'Permanent delete failed' }); }
 };
+
 
 export const bulkDeleteDesigns = async (req: Request, res: Response) => {
     const { designIds } = req.body;
@@ -894,6 +980,23 @@ export const useTemplate = async (req: Request, res: Response) => {
             `UPDATE public_templates SET uses = uses + 1 WHERE design_id = $1`,
             [templateId]
         );
+
+        // 6. [FIX - Physical Asset Clone] Copy vật lý các ảnh trong template về cho user.
+        // Thay thế cơ chế Bản ghi B (biên lai ảo) bằng bản copy thực sự.
+        // Kết quả: mỗi user sở hữu file riêng → admin xóa ảnh gốc không ảnh hưởng user.
+        const { urlMap, totalBytes } = await cloneAssetsForDesign(templateId, newDesignId, userId, teamId);
+        await updateElementSrcs(newDesignId, urlMap);
+
+        if (totalBytes > 0) {
+            await incrementStorageUsage(
+                userId,
+                totalBytes,
+                teamId ?? undefined,
+                teamId ? 'team' : 'personal'
+            ).catch((e: any) => {
+                console.error('[useTemplate] Failed to increment storage:', e);
+            });
+        }
 
         res.status(201).json({
             success: true,
