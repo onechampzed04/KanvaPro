@@ -21,7 +21,9 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
   const [loading, setLoading] = useState(false);
   const [planLoading, setPlanLoading] = useState(true);
   const [error, setError] = useState('');
-  const [seats, setSeats] = useState(isUpgrade ? currentMaxMembers + 1 : 2); // Mặc định mua cho 2 người, nếu upgrade thì +1
+  // isUpgrade: số chỗ mới phải LỚN HƠN số chỗ hiện tại
+  const minSeats = isUpgrade ? currentMaxMembers + 1 : 2;
+  const [seats, setSeats] = useState(minSeats); // Mặc định bằng min hợp lệ
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [previewData, setPreviewData] = useState<any>(null);
@@ -33,7 +35,7 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
   useEffect(() => {
     const requiredSeats = 1 + emails.length;
     if (requiredSeats > seats) {
-      setSeats(requiredSeats);
+      setSeats(Math.max(minSeats, requiredSeats));
     }
   }, [emails.length]);
 
@@ -143,8 +145,9 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
               </label>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setSeats(Math.max(1 + emails.length, Math.max(2, seats - 1)))}
-                  className="w-12 h-12 rounded-2xl bg-white border-2 border-slate-200 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center text-slate-500 font-black text-xl transition"
+                  onClick={() => setSeats(Math.max(minSeats, Math.max(1 + emails.length, seats - 1)))}
+                  disabled={seats <= minSeats}
+                  className="w-12 h-12 rounded-2xl bg-white border-2 border-slate-200 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center text-slate-500 font-black text-xl transition disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:text-slate-500"
                 >
                   -
                 </button>
@@ -158,7 +161,13 @@ export default function TeamOnboarding({ onTeamCreated, isUpgrade, currentMaxMem
                   +
                 </button>
               </div>
-              <p className="mt-2 text-xs text-slate-500 font-medium">Bạn có thể thanh toán trước và mời thành viên sau.</p>
+              {isUpgrade ? (
+                <p className="mt-2 text-xs font-semibold text-amber-600">
+                  ⚠️ Số chỗ mới phải lớn hơn giới hạn hiện tại ({currentMaxMembers} người). Tối thiểu: {minSeats} người.
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-slate-500 font-medium">Bạn có thể thanh toán trước và mời thành viên sau.</p>
+              )}
             </div>
 
             {/* Tags Input */}

@@ -58,9 +58,6 @@ async function startServer() {
     maxHttpBufferSize: 1e7, // 10 MB — đã chuyển sang upload-image endpoint, không dùng Base64 qua Socket
   });
 
-  // [FIX Vấn đề 6] Kết nối Redis và gắn adapter trước khi setupCollaboration
-  // Nếu REDIS_URL không cấu hình, connectRedis() trả về null và hệ thống
-  // chạy ở chế độ single-instance (in-memory) như cũ — không bị crash.
   const redisClient = await connectRedis();
   if (redisClient) {
     const subClient = redisClient.duplicate();
@@ -73,12 +70,11 @@ async function startServer() {
 
   setupCollaboration(io);
 
-  // [FIX Vấn đề 8] Khởi động Write-Behind Scheduler — flush dirty designs xuống DB mỗi 8s
   startWriteBehindScheduler();
 
   // ── Static Files ──────────────────────────────────────────────────────────
   app.use('/assets', express.static(path.join(__dirname, 'sticker_upload/assets')));
-  app.use('/fonts',  express.static(path.join(__dirname, 'sticker_upload/fonts')));
+  app.use('/fonts', express.static(path.join(__dirname, 'sticker_upload/fonts')));
 
   // ── Database ──────────────────────────────────────────────────────────────
   await initDb();
@@ -198,11 +194,6 @@ async function startServer() {
   });
   console.log('⏰ Cron: Subscription auto-expiry scheduled (daily at 00:05).');
 
-  // ── [FIX Vấn đề 12] Cron Job Đối soát Hàng ngày (Reconciliation) ──────────
-  // Chạy mỗi ngày lúc 00:10 — 5 phút sau cron expiry để tránh xung đột
-  // Mục tiêu: Phát hiện trường hợp DB nội bộ = 'active' nhưng thực tế đã quá hạn
-  // (ví dụ: server crash lúc 00:05 → cron expiry bị bỏ lỡ)
-  // Đây là safety net cuối cùng để đảm bảo tính đồng bộ trạng thái thanh toán.
   cron.schedule('10 0 * * *', async () => {
     try {
       console.log('[Reconciliation] Starting daily subscription reconciliation...');
@@ -248,11 +239,6 @@ async function startServer() {
   });
   console.log('⏰ Cron: Daily subscription reconciliation scheduled (00:10).');
 
-  // ── [Virtual Referencing GC] Dọn file vật lý orphan lúc 2:00 AM ──────────
-  // Logic: Quét mọi file trong /uploads/images và /fonts.
-  // Nếu file không còn BẤT KỲ bản ghi nào trong bảng assets trỏ tới
-  // (kể cả Bản ghi A lẫn Bản ghi B design_clone) → Xóa file vật lý thật.
-  // Đây là safety net đảm bảo dung lượng ổ cứng không bị rò rỉ.
   cron.schedule('0 2 * * *', async () => {
     try {
       await runAssetGarbageCollection();

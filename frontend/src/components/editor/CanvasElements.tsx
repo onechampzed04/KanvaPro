@@ -1,19 +1,3 @@
-// src/components/editor/CanvasElements.tsx
-// [REVERT Fix Vấn đề 3 - node.destroy()]: Đã xác nhận node.destroy() thủ công
-// gây xung đột với react-konva reconciler nội bộ.
-//
-// React-Konva quản lý vòng đời Konva Node hoàn toàn tự động thông qua custom reconciler.
-// Khi component unmount, reconciler gọi instance.destroy() nội bộ.
-// Nếu ta GỌI THÊM node.destroy() trong useEffect cleanup → node bị destroy 2 lần:
-//   Lần 1: useEffect cleanup của chúng ta
-//   Lần 2: React-Konva reconciler unmount
-// → React-Konva cố update props của node đã bị destroy → element "biến mất" sau drag/zoom.
-//
-// GIẢI PHÁP ĐÚNG: Không gọi node.destroy() thủ công.
-// Chỉ gọi node.off() nếu có event listener được đăng ký bằng node.on() thủ công.
-// Với react-konva, tất cả event listeners đăng ký qua props (onClick, onDragMove...)
-// → react-konva tự dọn khi unmount → KHÔNG cần node.off() thủ công.
-// ─────────────────────────────────────────────────────────────────────────────────────────
 
 import React, { useRef, useEffect, useState } from 'react';
 import { Rect, Circle, Text, Image as KonvaImage, Transformer } from 'react-konva';

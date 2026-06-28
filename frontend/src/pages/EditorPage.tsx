@@ -1436,7 +1436,7 @@ export default function EditorPage() {
     const activeIds = selectedIds.filter(id => id !== 'bg');
     if (activeIds.length === 0) return;
     const elementsToDuplicate = elements.filter(el => activeIds.includes(el.id));
-    
+
     pushUndoSnapshot(elements);
     const newElements = elementsToDuplicate.map((el: any) => ({
       ...el,
@@ -1469,17 +1469,17 @@ export default function EditorPage() {
       return;
     }
     pushUndoSnapshot(elements);
-    
+
     const originalEl = elements.find(el => el.id === newAttrs.id);
     if (!originalEl) return;
-    
+
     // Tính toán các thuộc tính đã bị thay đổi (delta)
     const changedKeys = Object.keys(newAttrs).filter(k => newAttrs[k] !== originalEl[k]);
     const isMultiSelect = selectedIds.length > 1 && selectedIds.includes(newAttrs.id);
 
     syncElementsImmediate(elements.map(el => {
       if (el.id === newAttrs.id) return newAttrs;
-      
+
       // Nếu chọn nhiều phần tử cùng loại, áp dụng delta cho các phần tử còn lại
       if (isMultiSelect && selectedIds.includes(el.id) && el.type === originalEl.type) {
         const updated = { ...el };
@@ -1912,7 +1912,6 @@ export default function EditorPage() {
   const executeExport = async () => {
     if (exportStatus !== 'idle') return;
 
-    // ── DOCX / PDF export (bỏ qua check chọn trang và Pro gate vì đây là doc engine) ──
     if (exportConfig.format === 'docx') {
       if (docEditorRef.current) {
         await docEditorRef.current.exportDocx();
@@ -2445,7 +2444,7 @@ export default function EditorPage() {
           // Khi paste: nếu clipboard có marker này → dán element nội bộ.
           // Nếu user sau đó copy ảnh từ ngoài, browser sẽ ghi đè clipboard (xóa marker)
           // → paste sẽ thấy ảnh, không thấy marker → dán ảnh ngoài.
-          navigator.clipboard.writeText('__kanva__').catch(() => {});
+          navigator.clipboard.writeText('__kanva__').catch(() => { });
           setTimeout(() => setCollabNotification(''), 3000);
         } else if (currentPageId) {
           const cur = pages.find(p => p.id === currentPageId);
@@ -2453,7 +2452,7 @@ export default function EditorPage() {
             setCopiedPageData([JSON.parse(JSON.stringify(cur))]);
             setCopiedElementsData(null);
             setCollabNotification('Đã copy toàn bộ trang hiện tại');
-            navigator.clipboard.writeText('__kanva__').catch(() => {});
+            navigator.clipboard.writeText('__kanva__').catch(() => { });
             setTimeout(() => setCollabNotification(''), 3000);
           }
         }
@@ -2889,9 +2888,9 @@ export default function EditorPage() {
             activeTab={activeTab}
             setActiveTab={(tab: any) => {
               setActiveTab(tab);
-              if (tab) { 
-                setShowPositionBox(false); 
-                setShowAnimateBox(false); 
+              if (tab) {
+                setShowPositionBox(false);
+                setShowAnimateBox(false);
                 setShowAnimPanel(false); // [FIX] Đóng AnimationPanel nếu đang mở
               }
             }}
@@ -3263,11 +3262,11 @@ export default function EditorPage() {
                   if (id) emitCursorMove(id, e.clientX, e.clientY);
                 }}
               >
-                  <CanvasEditor
-                    stageRef={stageRef} layerRef={layerRef} trRef={trRef} selectionRectRef={selectionRectRef}
-                    stageWidth={stageWidth} stageHeight={stageHeight} currentPage={currentPage}
-                    elements={elements} selectedIds={selectedIds} setSelectedIds={setSelectedIds} editingId={editingId} setEditingId={(id) => {
-                      // Khi bắt đầu edit text: lưu snapshot elements vào ref để push undo sau khi blur
+                <CanvasEditor
+                  stageRef={stageRef} layerRef={layerRef} trRef={trRef} selectionRectRef={selectionRectRef}
+                  stageWidth={stageWidth} stageHeight={stageHeight} currentPage={currentPage}
+                  elements={elements} selectedIds={selectedIds} setSelectedIds={setSelectedIds} editingId={editingId} setEditingId={(id) => {
+                    // Khi bắt đầu edit text: lưu snapshot elements vào ref để push undo sau khi blur
                     if (id !== null) {
                       originalElementsBeforeTextEditRef.current = JSON.parse(JSON.stringify(elements));
                     }
@@ -3346,7 +3345,7 @@ export default function EditorPage() {
                                   const h = type === 'rect-hcn' ? 100 : 150;
                                   const r = type === 'circle' ? 75 : 0;
                                   const corner = type === 'rect-rounded' ? 20 : 0;
-                                  
+
                                   const newShape = {
                                     id: crypto.randomUUID(),
                                     type: type === 'circle' ? 'circle' : 'rect',
@@ -3360,7 +3359,7 @@ export default function EditorPage() {
                                     timeline: { start: 0, duration: 5, lane: elements.length },
                                     animation: { in: 'none' }
                                   };
-                                  
+
                                   pushUndoSnapshot(elements);
                                   syncElementsImmediate([...elements, newShape]);
                                   setSelectedIds([newShape.id]);
@@ -3431,7 +3430,7 @@ export default function EditorPage() {
                   let currentStep = 1;
                   const stepMap: Record<string, number> = {};
                   animEls.forEach((el, i) => {
-                    if (i > 0 && (el.animationOrder ?? 999) !== (animEls[i-1].animationOrder ?? 999)) {
+                    if (i > 0 && (el.animationOrder ?? 999) !== (animEls[i - 1].animationOrder ?? 999)) {
                       currentStep++;
                     }
                     stepMap[el.id] = currentStep;

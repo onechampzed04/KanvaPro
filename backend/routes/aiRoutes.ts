@@ -11,10 +11,6 @@ const router = express.Router();
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:5000';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/ai/packages
-// Trả về danh sách các gói token đang active để Frontend hiển thị trên Modal mua
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/packages', async (req: Request, res: Response) => {
   try {
     const result = await db.query(
@@ -30,14 +26,6 @@ router.get('/packages', async (req: Request, res: Response) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/ai/generate-image
-// Proxy an toàn:
-//  1. Kiểm tra token còn lại của user (>= 1)
-//  2. Gọi Flask AI Service để tạo ảnh
-//  3. Trừ 1 token sau khi tạo ảnh thành công
-//  4. Trả ảnh về Frontend
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/generate-image', authenticate, async (req: Request, res: Response) => {
   const userId = (req as any).user.id;
   const { prompt } = req.body;

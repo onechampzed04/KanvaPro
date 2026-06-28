@@ -68,7 +68,7 @@ export const validateMagicNumber = async (req: Request, res: Response, next: Nex
   const ALLOWED_MIMES_SET = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
   const FONT_EXTS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
   try {
-    const { fileTypeFromBuffer } = await import('file-type');
+    const { fileTypeFromFile } = await import('file-type');
     for (const file of allFiles) {
       const filePath = file.path;
       const ext = path.extname(file.originalname).toLowerCase();
@@ -85,11 +85,8 @@ export const validateMagicNumber = async (req: Request, res: Response, next: Nex
         }
         continue;
       }
-      const buffer = Buffer.alloc(12);
-      const fd = fs.openSync(filePath, 'r');
-      fs.readSync(fd, buffer, 0, 12, 0);
-      fs.closeSync(fd);
-      const detected = await fileTypeFromBuffer(buffer);
+      
+      const detected = await fileTypeFromFile(filePath);
       if (!detected || !ALLOWED_MIMES_SET.has(detected.mime)) {
         fs.unlinkSync(filePath);
         return res.status(400).json({

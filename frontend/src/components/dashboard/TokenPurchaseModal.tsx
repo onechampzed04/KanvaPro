@@ -111,13 +111,13 @@ export default function TokenPurchaseModal({ onClose }: Props) {
               </div>
               <div>
                 <h2 className="font-extrabold text-lg leading-tight">Mua Token AI</h2>
-                <p className="text-white/70 text-xs font-medium">Tao anh bang Vertex AI Imagen 3</p>
+                <p className="text-white/70 text-xs font-medium">Tạo ảnh bằng Vertex AI Imagen 3</p>
               </div>
             </div>
 
             <div className="flex items-center gap-2 mt-3 text-[11px] font-semibold text-white/80">
               <Sparkles size={12} className="text-yellow-300" />
-              Moi token = 1 lan tao anh AI chat luong cao
+              Mỗi token = 1 lần tạo ảnh đẳng cấp thế giới của gemini
             </div>
           </div>
 
@@ -222,13 +222,13 @@ export default function TokenPurchaseModal({ onClose }: Props) {
                   ) : (
                     <>
                       <ShoppingCart size={16} />
-                      Pay via PayOS
+                      Thanh toán qua Payos
                     </>
                   )}
                 </button>
 
                 <p className="text-center text-[10px] text-slate-400 font-medium mt-3">
-                  Secure payment via PayOS. Tokens credited instantly after payment.
+                  Thanh toán bảo mật thông qua Payos. Bạn sẽ được chuyển hướng đến trang thanh toán của Payos để hoàn tất giao dịch.
                 </p>
               </>
             )}

@@ -1316,8 +1316,8 @@ export default function DashboardPage() {
                       key={idx}
                       onClick={() => setTemplatePage(idx + 1)}
                       className={`w-8 h-8 rounded-full text-sm font-bold transition-all ${templatePage === idx + 1
-                          ? 'bg-violet-600 text-white shadow-md'
-                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                        ? 'bg-violet-600 text-white shadow-md'
+                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                         }`}
                     >
                       {idx + 1}

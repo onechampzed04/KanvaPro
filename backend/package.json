@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "tsx server.ts",
-    "dev": "tsx watch server.ts"
+    "dev": "tsx watch --ignore \"sticker_upload/**\" --ignore \"public/uploads/**\" server.ts"
   },
   "keywords": [],
   "author": "",

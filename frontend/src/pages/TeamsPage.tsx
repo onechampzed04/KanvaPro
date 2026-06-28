@@ -761,8 +761,8 @@ export default function TeamsPage() {
                               const res = await fetch('/api/subscriptions');
                               const data = await res.json();
                               const plans: any[] = data.plans || data.subscriptions || [];
-                              const teamPlan = plans.find((p: any) => p.slug === 'pro_team');
-                              if (!teamPlan) { alert('Không tìm thấy gói Team. Vui lòng liên hệ hỗ trợ.'); return; }
+                              const teamPlan = plans.find((p: any) => p.max_team_members > 1);
+                              if (!teamPlan) { alert('Không tìm thấy gói Team đang hoạt động. Vui lòng liên hệ hỗ trợ.'); return; }
 
                               setRenewPlan(teamPlan);
                               const currentMembers = activeTeam.members?.length || 1;

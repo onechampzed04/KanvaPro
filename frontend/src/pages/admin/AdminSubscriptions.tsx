@@ -230,8 +230,8 @@ function PlansTab({ showToast }: { showToast: Function }) {
 
     const payload = {
       ...editingPlan,
-      max_storage_gb: 0,
-      max_team_members: 0,
+      max_storage_gb: Number(editingPlan.max_storage_gb) || 0,
+      max_team_members: editingPlan.plan_type === 'team' ? (Number(editingPlan.max_team_members) || 5) : 1,
     };
 
     try {
@@ -261,10 +261,71 @@ function PlansTab({ showToast }: { showToast: Function }) {
       <div style={{ padding: 20 }}>
         <h3>Gói Cước Mới</h3>
         <form onSubmit={handleSavePlan} style={{ display: 'flex', flexDirection: 'column', gap: 15, maxWidth: 400, marginTop: 20 }}>
-          <input className="admin-input" placeholder="Tên gói (VD: Pro)" required value={editingPlan.name || ''} onChange={e => setEditingPlan({ ...editingPlan, name: e.target.value })} />
-          <input className="admin-input" placeholder="Slug (VD: pro)" required value={editingPlan.slug || ''} onChange={e => setEditingPlan({ ...editingPlan, slug: e.target.value })} />
-          <input className="admin-input" type="number" placeholder="Giá Tháng" required value={editingPlan.monthly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, monthly_price: Number(e.target.value) })} />
-          <input className="admin-input" type="number" placeholder="Giá Năm" required value={editingPlan.yearly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, yearly_price: Number(e.target.value) })} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Tên gói</label>
+            <input className="admin-input" placeholder="VD: Pro" required value={editingPlan.name || ''} onChange={e => setEditingPlan({ ...editingPlan, name: e.target.value })} />
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Slug (Mã định danh)</label>
+            <input className="admin-input" placeholder="VD: pro" required value={editingPlan.slug || ''} onChange={e => setEditingPlan({ ...editingPlan, slug: e.target.value })} />
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 5 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Loại Gói Cước</label>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div 
+                onClick={() => setEditingPlan({ ...editingPlan, plan_type: 'pro', max_team_members: 1 })}
+                style={{
+                  flex: 1, padding: '14px 15px', borderRadius: 10, cursor: 'pointer',
+                  border: `2px solid ${(editingPlan.plan_type === 'pro' || !editingPlan.plan_type) ? '#8b5cf6' : '#334155'}`,
+                  backgroundColor: (editingPlan.plan_type === 'pro' || !editingPlan.plan_type) ? 'rgba(139,92,246,0.15)' : 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
+                  color: (editingPlan.plan_type === 'pro' || !editingPlan.plan_type) ? '#fff' : '#94a3b8',
+                  transition: 'all 0.2s ease',
+                  boxShadow: (editingPlan.plan_type === 'pro' || !editingPlan.plan_type) ? '0 0 15px rgba(139,92,246,0.2)' : 'none'
+                }}
+              >
+                👤 Cá nhân (Pro)
+              </div>
+              <div 
+                onClick={() => setEditingPlan({ ...editingPlan, plan_type: 'team', max_team_members: 5 })}
+                style={{
+                  flex: 1, padding: '14px 15px', borderRadius: 10, cursor: 'pointer',
+                  border: `2px solid ${editingPlan.plan_type === 'team' ? '#10b981' : '#334155'}`,
+                  backgroundColor: editingPlan.plan_type === 'team' ? 'rgba(16,185,129,0.15)' : 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
+                  color: editingPlan.plan_type === 'team' ? '#fff' : '#94a3b8',
+                  transition: 'all 0.2s ease',
+                  boxShadow: editingPlan.plan_type === 'team' ? '0 0 15px rgba(16,185,129,0.2)' : 'none'
+                }}
+              >
+                👥 Đội nhóm (Team)
+              </div>
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Dung lượng tối đa (GB)</label>
+            <input className="admin-input" type="number" placeholder="VD: 5" required value={editingPlan.max_storage_gb ?? ''} onChange={e => setEditingPlan({ ...editingPlan, max_storage_gb: Number(e.target.value) })} />
+          </div>
+          
+          {editingPlan.plan_type === 'team' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Số lượng thành viên tối đa</label>
+              <input className="admin-input" type="number" placeholder="VD: 5" required value={editingPlan.max_team_members ?? ''} onChange={e => setEditingPlan({ ...editingPlan, max_team_members: Number(e.target.value) })} />
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Giá Tháng (VNĐ)</label>
+            <input className="admin-input" type="number" placeholder="VD: 100000" required value={editingPlan.monthly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, monthly_price: Number(e.target.value) })} />
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Giá Năm (VNĐ)</label>
+            <input className="admin-input" type="number" placeholder="VD: 1000000" required value={editingPlan.yearly_price ?? ''} onChange={e => setEditingPlan({ ...editingPlan, yearly_price: Number(e.target.value) })} />
+          </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
             <input type="checkbox" checked={editingPlan.is_active !== false} onChange={e => setEditingPlan({ ...editingPlan, is_active: e.target.checked })} /> Đang hoạt động
           </label>
@@ -283,7 +344,7 @@ function PlansTab({ showToast }: { showToast: Function }) {
     <>
       <div className="admin-table-toolbar">
         <span className="admin-table-title">Danh sách Gói cước (Mới nhất)</span>
-        <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => setEditingPlan({})}>
+        <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => setEditingPlan({ plan_type: 'pro', max_storage_gb: 5, max_team_members: 5 })}>
           <Plus size={14} /> Thêm Gói
         </button>
       </div>

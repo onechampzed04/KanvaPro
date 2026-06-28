@@ -681,16 +681,16 @@ export const deleteUserAsset = async (assetId: string) => {
 // ─── TEAM PLAN APIs ───────────────────────────────────────────────────────────
 
 /**
- * Lấy thông tin gói pro_team từ Database.
- * Dùng để hiển thị giá real-time trong màn hình Team Onboarding.
+ * Lấy thông tin gói Team từ Database.
+ * Tìm gói có số lượng thành viên > 1 đang active, không phụ thuộc vào tên slug.
  */
 export const fetchTeamPlan = async () => {
   const res = await apiFetch('/api/subscriptions');
   const data = await res.json();
   if (!res.ok) throw new Error('Không thể lấy thông tin gói Team');
-  // Tìm gói có slug = 'pro_team'
+  // Tìm gói đầu tiên có max_team_members > 1 (Gói Đội nhóm)
   const plans: any[] = data.plans || data.subscriptions || data || [];
-  return plans.find((p: any) => p.slug === 'pro_team') || null;
+  return plans.find((p: any) => p.max_team_members > 1) || null;
 };
 
 // [FIX Vấn đề 3] Bỏ `amount` — backend tự tính giá × số thành viên từ DB.

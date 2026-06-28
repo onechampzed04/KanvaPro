@@ -285,18 +285,12 @@ export function useCollaboration({
       callbacksRef.current.onRemotePageBackgroundUpdated?.(pageId, background_color, userName);
     });
 
-    // ── [FIX 6] Page Thumbnail Updated Event ──────────────────────────────
-    // Khi collaborator khác upload thumbnail mới, server broadcast về cho tất cả
     socket.on('page-thumbnail-updated', ({ pageId, thumbUrl }: { pageId: string; thumbUrl: string }) => {
       callbacksRef.current.onRemotePageThumbnailUpdated?.(pageId, thumbUrl);
     });
 
-    // ── [FIX] Permissions Revoked Events (Real-time Kick) ────────────────
-    // Fired when user is COMPLETELY removed from the design (not just role change)
     socket.on('design:access_revoked', ({ designId: dId }: { designId: string }) => {
       if (dId === designId) {
-        // Dispatch a custom event so EditorPage can handle save + navigate
-        // without triggering the browser's "Leave site?" popup
         window.dispatchEvent(new CustomEvent('design:access_revoked', { detail: { designId: dId } }));
       }
     });

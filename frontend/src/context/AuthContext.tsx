@@ -61,7 +61,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // gọi api lấy ttin user hiện tại -> app.tsx
   const fetchCurrentUser = useCallback(async () => {
     try {
-      const res = await fetch('/api/auth/me', {
+      const { apiFetch } = await import('../api/api');
+      const res = await apiFetch('/api/auth/me', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }

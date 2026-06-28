@@ -75,7 +75,7 @@ export default function PricingPage() {
       return;
     }
 
-    const isTeamPlan = sub.slug === 'pro_team';
+    const isTeamPlan = (sub.max_team_members || 0) > 1;
     let targetTeamId = undefined;
     let targetMembersCount = undefined;
 
@@ -303,7 +303,10 @@ export default function PricingPage() {
 
         {subscriptions.map((sub) => {
           const isFree = Number(sub.monthly_price) === 0;
-          const isPro = sub.slug?.toLowerCase().includes('pro'); // Tự động Highlight gói Pro
+          // Nhận diện gói Đội nhóm bằng max_team_members > 1, không phụ thuộc slug
+          const isTeamPlan = (sub.max_team_members || 0) > 1;
+          // Highlight gói Pro (cá nhân, không phải free, không phải team)
+          const isPro = !isFree && !isTeamPlan;
           const isCurrentPlan = isUserPro ? user?.subscription?.plan_id === sub.id : isFree;
 
           // Parse JSONB features từ DB an toàn
@@ -314,7 +317,6 @@ export default function PricingPage() {
             featuresList = sub.features;
           }
 
-          const isTeamPlan = sub.slug === 'pro_team';
           const isCurrentWorkspaceTeam = currentWorkspace != null && currentWorkspace.workspace_type !== 'personal';
           const isTeamRenewal = isTeamPlan && isCurrentWorkspaceTeam && currentWorkspace?.my_role === 'owner';
           
@@ -338,10 +340,17 @@ export default function PricingPage() {
                 </div>
               )}
 
-              {/* Badge "Phổ biến nhất" cho gói Pro */}
+              {/* Badge "Phổ biến nhất" cho gói Pro Cá nhân */}
               {isPro && !isCurrentPlan && (
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 -mt-4 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-md flex items-center gap-1">
                   <Crown size={12} /> PHỔ BIẾN NHẤT
+                </div>
+              )}
+
+              {/* Badge "Dành cho đội nhóm" cho gói Team */}
+              {isTeamPlan && !isCurrentPlan && (
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 -mt-4 bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest shadow-md flex items-center gap-1">
+                  <Sparkles size={12} /> DÀNH CHO ĐỘI NHÓM
                 </div>
               )}
 

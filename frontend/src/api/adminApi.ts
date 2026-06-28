@@ -1,3 +1,4 @@
+import { apiFetch } from './api';
 // frontend/src/api/adminApi.ts
 
 const getHeaders = () => ({
@@ -7,7 +8,7 @@ const getHeaders = () => ({
 
 // ── Metrics ────────────────────────────────────────────────────────────────
 export const fetchAdminMetrics = async () => {
-  const res = await fetch('/api/admin/metrics', { headers: getHeaders() });
+  const res = await apiFetch('/api/admin/metrics', { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch metrics');
   return res.json();
 };
@@ -17,7 +18,7 @@ export const fetchAdminUsersV2 = async (params: {
   page?: number; limit?: number; search?: string; role?: string; status?: string;
 }) => {
   const q = new URLSearchParams(params as any).toString();
-  const res = await fetch(`/api/admin/users-v2?${q}`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/admin/users-v2?${q}`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch users');
   return res.json();
 };
@@ -25,7 +26,7 @@ export const fetchAdminUsersV2 = async (params: {
 
 
 export const banUserV2 = async (userId: string, status: string, reason: string) => {
-  const res = await fetch(`/api/admin/users-v2/${userId}/ban`, {
+  const res = await apiFetch(`/api/admin/users-v2/${userId}/ban`, {
     method: 'POST', headers: getHeaders(),
     body: JSON.stringify({ status, reason }),
   });
@@ -42,14 +43,14 @@ export const fetchAdminAssets = async (params: {
   is_premium?: string; is_active?: string;
 }) => {
   const q = new URLSearchParams(params as any).toString();
-  const res = await fetch(`/api/admin/assets?${q}`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/admin/assets?${q}`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch assets');
   return res.json();
 };
 
 export const bulkUploadAssets = async (formData: FormData) => {
   const token = localStorage.getItem('token');
-  const res = await fetch('/api/admin/assets/bulk', {
+  const res = await apiFetch('/api/admin/assets/bulk', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}` }, // No Content-Type for multipart
     body: formData,
@@ -63,7 +64,7 @@ export interface UpdateAssetData {
 }
 
 export const updateAsset = async (id: string, data: UpdateAssetData) => {
-  const res = await fetch(`/api/admin/assets/${id}`, {
+  const res = await apiFetch(`/api/admin/assets/${id}`, {
     method: 'PATCH', headers: getHeaders(),
     body: JSON.stringify(data),
   });
@@ -75,7 +76,7 @@ export const updateAsset = async (id: string, data: UpdateAssetData) => {
 
 // Toggle is_active cho asset (Admin deactivate/reactivate)
 export const toggleAssetActive = async (id: string) => {
-  const res = await fetch(`/api/admin/assets/${id}/toggle-active`, {
+  const res = await apiFetch(`/api/admin/assets/${id}/toggle-active`, {
     method: 'PUT', headers: getHeaders(),
   });
   if (!res.ok) throw new Error('Failed to toggle asset active state');
@@ -87,13 +88,13 @@ export const fetchAdminDesigns = async (params: {
   page?: number; limit?: number; search?: string;
 }) => {
   const q = new URLSearchParams(params as any).toString();
-  const res = await fetch(`/api/admin/designs?${q}`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/admin/designs?${q}`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch designs');
   return res.json();
 };
 
 export const publishTemplate = async (design_id: string) => {
-  const res = await fetch('/api/admin/templates/publish', {
+  const res = await apiFetch('/api/admin/templates/publish', {
     method: 'POST', headers: getHeaders(),
     body: JSON.stringify({ design_id }),
   });
@@ -102,7 +103,7 @@ export const publishTemplate = async (design_id: string) => {
 };
 
 export const unpublishTemplate = async (design_id: string) => {
-  const res = await fetch(`/api/admin/templates/${design_id}`, {
+  const res = await apiFetch(`/api/admin/templates/${design_id}`, {
     method: 'DELETE', headers: getHeaders(),
   });
   if (!res.ok) throw new Error('Failed to unpublish template');
@@ -114,7 +115,7 @@ export const fetchAdminSubscriptions = async (params: {
   page?: number; limit?: number; search?: string; status?: string;
 }) => {
   const q = new URLSearchParams(params as any).toString();
-  const res = await fetch(`/api/admin/subscriptions?${q}`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/admin/subscriptions?${q}`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch subscriptions');
   return res.json();
 };
@@ -122,7 +123,7 @@ export const fetchAdminSubscriptions = async (params: {
 export const createManualSubscription = async (data: {
   user_id: string; plan_id: string; days?: number;
 }) => {
-  const res = await fetch('/api/admin/subscriptions/manual', {
+  const res = await apiFetch('/api/admin/subscriptions/manual', {
     method: 'POST', headers: getHeaders(), body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to create subscription');
@@ -132,7 +133,7 @@ export const createManualSubscription = async (data: {
 export const updateAdminSubscription = async (id: string, data: {
   status?: string; plan_id?: string; extend_days?: number;
 }) => {
-  const res = await fetch(`/api/admin/subscriptions/${id}`, {
+  const res = await apiFetch(`/api/admin/subscriptions/${id}`, {
     method: 'PUT', headers: getHeaders(), body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to update subscription');
@@ -140,7 +141,7 @@ export const updateAdminSubscription = async (id: string, data: {
 };
 
 export const terminateSubscription = async (id: string) => {
-  const res = await fetch(`/api/admin/subscriptions/${id}`, {
+  const res = await apiFetch(`/api/admin/subscriptions/${id}`, {
     method: 'DELETE', headers: getHeaders(),
   });
   if (!res.ok) throw new Error('Failed to terminate subscription');
@@ -149,13 +150,13 @@ export const terminateSubscription = async (id: string) => {
 
 // ── Plans ──────────────────────────────────────────────────────────────────
 export const fetchAdminPlans = async () => {
-  const res = await fetch('/api/admin/plans', { headers: getHeaders() });
+  const res = await apiFetch('/api/admin/plans', { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch plans');
   return res.json();
 };
 
 export const createPlan = async (data: any) => {
-  const res = await fetch('/api/admin/plans', {
+  const res = await apiFetch('/api/admin/plans', {
     method: 'POST', headers: getHeaders(), body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to create plan');
@@ -163,7 +164,7 @@ export const createPlan = async (data: any) => {
 };
 
 export const updatePlan = async (id: string, data: any) => {
-  const res = await fetch(`/api/admin/plans/${id}`, {
+  const res = await apiFetch(`/api/admin/plans/${id}`, {
     method: 'PUT', headers: getHeaders(), body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to update plan');
@@ -171,7 +172,7 @@ export const updatePlan = async (id: string, data: any) => {
 };
 
 export const deletePlan = async (id: string) => {
-  const res = await fetch(`/api/admin/plans/${id}`, {
+  const res = await apiFetch(`/api/admin/plans/${id}`, {
     method: 'DELETE', headers: getHeaders(),
   });
   if (!res.ok) throw new Error('Failed to delete plan');
@@ -183,14 +184,14 @@ export const fetchAdminPayments = async (params: {
   page?: number; limit?: number; status?: string; gateway?: string; search?: string;
 }) => {
   const q = new URLSearchParams(params as any).toString();
-  const res = await fetch(`/api/admin/payments?${q}`, { headers: getHeaders() });
+  const res = await apiFetch(`/api/admin/payments?${q}`, { headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to fetch payments');
   return res.json();
 };
 
 // [MỚI] Admin duyệt tay giao dịch Pending (PayOS webhook bị miss)
 export const adminForceSuccessPayment = async (paymentId: string) => {
-  const res = await fetch(`/api/admin/payments/${paymentId}/force-success`, {
+  const res = await apiFetch(`/api/admin/payments/${paymentId}/force-success`, {
     method: 'POST', headers: getHeaders(),
   });
   const data = await res.json().catch(() => ({}));
@@ -200,7 +201,7 @@ export const adminForceSuccessPayment = async (paymentId: string) => {
 
 // [MỚI] Admin ngắt dịch vụ ngay lập tức (thay cho terminateSubscription cũ - có audit log)
 export const adminRevokeSubscription = async (subscriptionId: string) => {
-  const res = await fetch(`/api/admin/subscriptions/${subscriptionId}/revoke`, {
+  const res = await apiFetch(`/api/admin/subscriptions/${subscriptionId}/revoke`, {
     method: 'POST', headers: getHeaders(),
   });
   const data = await res.json().catch(() => ({}));
